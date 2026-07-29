@@ -5,6 +5,14 @@
   "type": "module",
   "license": "MIT",
   "author": "takustaqu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/takustaqu/atmosphere.git"
+  },
+  "homepage": "https://github.com/takustaqu/atmosphere#readme",
+  "bugs": {
+    "url": "https://github.com/takustaqu/atmosphere/issues"
+  },
   "keywords": [
     "webgl",
     "sky",
