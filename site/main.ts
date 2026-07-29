@@ -5,6 +5,7 @@
 // see is the library's own, not a crossfade between two images.
 
 import { Atmosphere, DEFAULT_CAMERA } from '../src/index.js';
+import { buildGallery, relabelGallery } from './gallery.js';
 import { sceneCycle, SCENES, type Scene } from './scenes.js';
 
 type Lang = 'ja' | 'en';
@@ -26,7 +27,8 @@ function setLang(lang: Lang): void {
   for (const b of document.querySelectorAll<HTMLButtonElement>('#lang button')) {
     b.setAttribute('aria-pressed', String(b.dataset.setLang === lang));
   }
-  if (current) lineEl.textContent = current[lang];
+  if (current) show(current);   // re-segment: the two languages break differently
+  relabelGallery(lang);
 }
 
 for (const b of document.querySelectorAll<HTMLButtonElement>('#lang button')) {
@@ -51,9 +53,38 @@ if (!sky.available) {
   document.body.classList.add('no-webgl');
 }
 
+// ── setting a line ────────────────────────────────────────
+// The copy arrives a word at a time rather than as a block. Japanese writes
+// no spaces, so splitting on them would give one enormous "word" — Intl
+// .Segmenter knows where the phrase boundaries actually are, in both
+// languages. Whitespace is left as bare text: wrapped in an inline-block it
+// would stop the line breaking there.
+
+const SEG_STEP_MS = 72;
+
+function segment(text: string, lang: Lang): string[] {
+  const S = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+  if (!S) return [...text];   // per character is a decent stand-in
+  return [...new S(lang, { granularity: 'word' }).segment(text)].map((s) => s.segment);
+}
+
 function show(scene: Scene): void {
   current = scene;
-  lineEl.textContent = scene[getLang()];
+  const lang = getLang();
+  let i = 0;
+  lineEl.replaceChildren(
+    ...segment(scene[lang], lang).map((part) => {
+      if (!part.trim()) return document.createTextNode(part);
+      const span = document.createElement('span');
+      span.className = 'seg';
+      span.textContent = part;
+      span.style.setProperty('--d', `${i++ * SEG_STEP_MS}ms`);
+      return span;
+    }),
+  );
+  // the spans are born without .on, so the browser has a "from" state to
+  // animate out of — force the style to settle before flipping it
+  void lineEl.offsetWidth;
   lineEl.classList.add('on');
 }
 
@@ -62,7 +93,9 @@ function show(scene: Scene): void {
 // line has faded in the sky is already most of the way there. Cutting both
 // at the same instant reads as a slideshow; this reads as one continuous sky.
 
-const FADE_MS = 1200;
+// long enough for the outgoing line to be gone (it leaves in 0.5s) before the
+// next one starts arriving word by word
+const FADE_MS = 640;
 const HOLD_MS = 7800;
 let timer = 0;
 
@@ -194,6 +227,11 @@ function onScroll(): void {
 addEventListener('scroll', onScroll, { passive: true });
 addEventListener('resize', onScroll);
 onScroll();   // reloading part-way down the page must not start out wrong
+
+// The preset tiles borrow a second WebGL context for as long as it takes to
+// draw nine frames. Do it after the hero has its own, so if a browser is at
+// its context limit the one that matters is the one that survives.
+buildGallery(getLang());
 
 // expose for headless checks (the Browser pane never fires rAF)
 (globalThis as unknown as { __sky: Atmosphere }).__sky = sky;

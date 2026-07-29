@@ -25,8 +25,8 @@ export const SCENES: readonly Scene[] = [
     conditions: { time: 17.2, weather: 'thunderstorm' },
   },
   {
-    ja: '空の手を伸ばして、受け止めようとした時',
-    en: 'When you reached out an empty hand to catch it',
+    ja: '空に手を伸ばして、受け止めようとした時',
+    en: 'When you reached up to the sky to catch it',
     // flat grey afternoon, snow whiting out the distance
     conditions: { time: 15, weather: 'snow' },
   },
