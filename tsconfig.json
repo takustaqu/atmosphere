@@ -17,5 +17,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "examples", "test"]
+  "include": ["src", "examples", "test", "site"]
 }

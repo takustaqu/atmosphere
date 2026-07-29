@@ -60,6 +60,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
+    "build:site": "node scripts/build-site.mjs",
     "prepack": "pnpm run build",
     "playground": "esbuild examples/playground/main.ts examples/controller/main.ts --bundle --format=esm --outdir=build --outbase=examples --watch --servedir=. --serve=8791"
   },

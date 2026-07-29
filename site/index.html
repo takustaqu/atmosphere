@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="ja" data-lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atmosphere — a sky simulator</title>
+<meta name="description" content="Pass in a time and a weather, and it roughly reproduces that sky. One WebGL fragment shader, no dependencies.">
+<meta property="og:title" content="atmosphere — a sky simulator">
+<meta property="og:description" content="Pass in a time and a weather, and it roughly reproduces that sky.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23234a7a'/><circle cx='22' cy='11' r='4' fill='%23ffe9c4'/></svg>">
+<!-- The wordmark is the only thing set in Lexend Exa, so the request is
+     subset to exactly the letters in "atmosphere" — a few hundred bytes
+     instead of the whole face. display=swap keeps the hero readable while
+     it loads. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend+Exa:wght@100&text=atmosphere&display=swap">
+<script>
+  // Pick the language before first paint, so the page never flashes the
+  // wrong one. localStorage wins over the browser's preference.
+  (() => {
+    let saved = null;
+    try { saved = localStorage.getItem('atmo-lang'); } catch (e) { /* private mode */ }
+    const fromBrowser = (navigator.language || 'en').toLowerCase().startsWith('ja') ? 'ja' : 'en';
+    const lang = saved === 'ja' || saved === 'en' ? saved : fromBrowser;
+    document.documentElement.dataset.lang = lang;
+    document.documentElement.lang = lang;
+  })();
+</script>
+<style>
+  :root {
+    --bg: #0b0e11;
+    --panel: rgba(14, 19, 25, 0.58);
+    --line: rgba(255, 255, 255, 0.11);
+    --ink: #d7dce3;
+    --ink-dim: #838d99;
+    --ink-bright: #f2f5f8;
+    --accent: #8fb6e8;
+    --radius: 12px;
+    --jp: 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic', sans-serif;
+    /* Coding faces first, so anyone who has one gets it; ui-monospace then
+       picks up the platform's own (SF Mono, Cascadia) rather than falling
+       through to the generic `monospace`, which is still Courier in places */
+    --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', 'Source Code Pro',
+            ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  /* the UA stylesheet sets `code { font-family: monospace }`, which beats a
+     family inherited from <pre> — so name the element explicitly */
+  code, kbd, samp, pre { font-family: var(--mono); }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.75 system-ui, -apple-system, 'Segoe UI', var(--jp);
+    -webkit-font-smoothing: antialiased;
+  }
+  [data-lang="ja"] .en, [data-lang="en"] .ja { display: none; }
+  a { color: var(--accent); }
+
+  /* ── top bar ─────────────────────────────── */
+  #bar {
+    position: fixed; inset: 0 0 auto 0; z-index: 5;
+    display: flex; align-items: center; gap: 14px;
+    padding: 11px 18px;
+    background: linear-gradient(rgba(8, 11, 14, 0.62), rgba(8, 11, 14, 0));
+  }
+  #bar .brand {
+    font-weight: 600; letter-spacing: 0.14em; text-transform: lowercase;
+    color: var(--ink-bright); text-decoration: none; font-size: 14px;
+  }
+  #bar .sp { flex: 1; }
+  #bar a.lnk { color: var(--ink-dim); text-decoration: none; font-size: 13px; }
+  #bar a.lnk:hover { color: var(--ink-bright); }
+  #lang {
+    display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden;
+  }
+  #lang button {
+    appearance: none; border: 0; cursor: pointer;
+    padding: 3px 11px; font: inherit; font-size: 12px;
+    background: transparent; color: var(--ink-dim);
+  }
+  #lang button[aria-pressed="true"] { background: rgba(255,255,255,0.11); color: var(--ink-bright); }
+
+  /* ── hero ────────────────────────────────── */
+  #hero { position: relative; height: 100svh; min-height: 520px; overflow: hidden; }
+  /* the whole sky is a skybox, so the hero can be looked around. touch-action
+     keeps vertical swipes as page scroll — the hero fills the viewport, and
+     stealing the scroll gesture would trap a phone visitor here */
+  #sky {
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+    cursor: grab; touch-action: pan-y;
+  }
+  #sky.dragging { cursor: grabbing; }
+  /* the sky is bright at the horizon and in daylight scenes, so the copy sits
+     on a soft vertical scrim rather than a hard box — the edge of a panel
+     would read as a sticker pasted onto the photograph */
+  #hero::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(120% 62% at 50% 52%, rgba(6, 9, 13, 0.52), rgba(6, 9, 13, 0) 72%),
+      linear-gradient(rgba(6, 9, 13, 0.30), rgba(6, 9, 13, 0) 26%, rgba(6, 9, 13, 0) 58%, rgba(6, 9, 13, 0.72));
+  }
+  #stage {
+    position: absolute; inset: 0; z-index: 2;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 96px 24px 56px; text-align: center;
+    /* the canvas underneath has to receive the drag, so the overlay is
+       transparent to pointers except for the things you can actually click */
+    pointer-events: none;
+  }
+  #cta > * { pointer-events: auto; }
+  /* the line sits centred in whatever space the lede leaves, rather than
+     being pushed to the top by the lede's auto margin */
+  #copy { flex: 1; display: flex; align-items: center; justify-content: center; }
+  #line {
+    margin: 0; max-width: 19em;
+    font-size: clamp(21px, 4.1vw, 40px);
+    line-height: 1.66; font-weight: 400; letter-spacing: 0.045em;
+    color: #fff;
+    text-shadow: 0 1px 26px rgba(0, 0, 0, 0.72), 0 0 4px rgba(0, 0, 0, 0.4);
+    /* Japanese has no spaces, so the default breaks anywhere and strands a
+       single character on the last line. auto-phrase breaks at phrase
+       boundaries; balance keeps the lines close in length where it isn't
+       supported */
+    word-break: auto-phrase;
+    text-wrap: balance;
+    opacity: 0; transform: translateY(9px);
+    transition: opacity 1.15s ease, transform 1.15s ease;
+  }
+  #line.on { opacity: 1; transform: none; }
+  #lede { flex: none; }
+  h1 {
+    margin: 0;
+    font-family: 'Lexend Exa', system-ui, sans-serif;
+    /* Lexend Exa is already a wide face, so the tracking that suited the
+       system font would pull it apart. Hairline weight needs a slightly
+       tighter shadow too, or the strokes bloom away over a bright sky */
+    font-size: clamp(30px, 5.4vw, 50px); font-weight: 100;
+    letter-spacing: 0.04em; text-transform: lowercase; color: #fff;
+    text-shadow: 0 1px 14px rgba(0, 0, 0, 0.72), 0 0 3px rgba(0, 0, 0, 0.45);
+  }
+  #tagline {
+    margin: 8px 0 20px; font-size: clamp(13px, 1.7vw, 16px); color: rgba(255,255,255,0.82);
+    text-shadow: 0 1px 16px rgba(0,0,0,0.7);
+  }
+  #cta { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: center; }
+  code.pill, a.pill {
+    display: inline-block; padding: 8px 15px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    font-size: 13px; text-decoration: none; color: var(--ink-bright);
+  }
+  code.pill { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; }
+  a.pill:hover { border-color: rgba(255,255,255,0.3); }
+  #cue {
+    position: absolute; left: 50%; bottom: 16px; z-index: 3; transform: translateX(-50%);
+    color: rgba(255,255,255,0.42); font-size: 11px; letter-spacing: 0.2em;
+    transition: opacity 0.4s ease;
+  }
+  /* discoverability only — it fades for good once you've dragged once */
+  #hint {
+    position: absolute; right: 18px; bottom: 18px; z-index: 3;
+    display: flex; align-items: center; gap: 7px;
+    color: rgba(255,255,255,0.5); font-size: 11.5px; letter-spacing: 0.03em;
+    text-shadow: 0 1px 12px rgba(0,0,0,0.7);
+    transition: opacity 0.6s ease; pointer-events: none;
+  }
+  #hint.gone { opacity: 0; }
+  #hint svg { opacity: 0.8; }
+  @media (max-width: 560px) { #hint { display: none; } }
+  #fallback {
+    position: absolute; inset: 0; z-index: 1; display: none;
+    background: linear-gradient(#16324f, #4d6c88 58%, #9fb0ba);
+  }
+  .no-webgl #fallback { display: block; }
+
+  /* ── body ────────────────────────────────── */
+  main { max-width: 860px; margin: 0 auto; padding: 84px 24px 40px; }
+  section + section { margin-top: 76px; }
+  h2 {
+    margin: 0 0 22px; font-size: 13px; font-weight: 600;
+    letter-spacing: 0.19em; text-transform: uppercase; color: var(--ink-dim);
+  }
+  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .card {
+    padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: rgba(255,255,255,0.022);
+  }
+  .card h3 { margin: 0 0 7px; font-size: 15px; font-weight: 600; color: var(--ink-bright); }
+  .card p { margin: 0; font-size: 13.5px; color: var(--ink-dim); line-height: 1.7; }
+  pre {
+    margin: 0; padding: 18px 20px; overflow-x: auto;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: #0e1216; color: #c6d2de;
+    font-size: 13px; line-height: 1.72; tab-size: 2;
+  }
+  pre code { font-size: inherit; }
+  pre .k { color: #7fa7d8; }
+  pre .s { color: #9fc39a; }
+  pre .c { color: #5d6a78; }
+  pre .n { color: #d8b98a; }
+  .demos { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .demo {
+    display: block; padding: 20px; text-decoration: none; color: inherit;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: rgba(255,255,255,0.022); transition: border-color 0.2s, background 0.2s;
+  }
+  .demo:hover { border-color: rgba(255,255,255,0.26); background: rgba(255,255,255,0.05); }
+  .demo strong { display: block; font-size: 15px; color: var(--ink-bright); margin-bottom: 5px; }
+  .demo span { font-size: 13.5px; color: var(--ink-dim); }
+  footer {
+    max-width: 860px; margin: 0 auto; padding: 40px 24px 64px;
+    border-top: 1px solid var(--line); margin-top: 76px;
+    display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
+    font-size: 13px; color: var(--ink-dim);
+  }
+  footer .sp { flex: 1; }
+  footer a { color: var(--ink-dim); text-decoration: none; }
+  footer a:hover { color: var(--ink-bright); }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    #line { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <a class="brand" href="#top">atmosphere</a>
+  <span class="sp"></span>
+  <a class="lnk" href="https://github.com/takustaqu/atmosphere">GitHub</a>
+  <a class="lnk" href="https://www.npmjs.com/package/@takustaqu/atmosphere">npm</a>
+  <div id="lang">
+    <button type="button" data-set-lang="ja">日本語</button>
+    <button type="button" data-set-lang="en">EN</button>
+  </div>
+</div>
+
+<section id="hero">
+  <div id="fallback"></div>
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <div id="stage">
+    <div id="copy"><p id="line"></p></div>
+    <div id="lede">
+      <h1>atmosphere</h1>
+      <p id="tagline">
+        <span class="ja">時刻と気象を渡すと、その空を概ね再現します。</span>
+        <span class="en">Pass in a time and a weather, and it roughly reproduces that sky.</span>
+      </p>
+      <div id="cta">
+        <code class="pill">npm i @takustaqu/atmosphere</code>
+        <a class="pill" href="examples/controller/">
+          <span class="ja">さわってみる</span><span class="en">Try it</span>
+        </a>
+      </div>
+    </div>
+  </div>
+  <div id="hint">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+      <path d="M4 12h16M4 12l3.5-3.5M4 12l3.5 3.5M20 12l-3.5-3.5M20 12l-3.5 3.5"/>
+    </svg>
+    <span class="ja">ドラッグで空を見回せます</span>
+    <span class="en">Drag to look around</span>
+  </div>
+  <div id="cue">↓</div>
+</section>
+
+<main id="top">
+
+  <section>
+    <h2><span class="ja">これは何か</span><span class="en">What it is</span></h2>
+    <p class="ja">
+      WebGL のフラグメントシェーダ1枚で空を描くレンダラです。依存ライブラリはなく、DOM にも
+      フレームワークにも依存しません。物理的な気象シミュレーションではないので正確ではありませんが、
+      移り変わる空の要素をプロシージャルにかつ手軽に表現できます。
+    </p>
+    <p class="en">
+      A renderer that draws the sky from one WebGL fragment shader. No dependencies, and no
+      coupling to the DOM or to any framework. It isn't a physical weather simulation, so it
+      isn't accurate — it's an easy way to get a sky that keeps changing procedurally.
+    </p>
+  </section>
+
+  <section>
+    <h2><span class="ja">描けるもの</span><span class="en">What it draws</span></h2>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="ja">時刻と場所</span><span class="en">Time and place</span></h3>
+        <p>
+          <span class="ja">緯度経度と日時から実際の太陽位置を計算します。空のグラデーション、夕焼け、星、月、夜の街明かり。</span>
+          <span class="en">The real solar position from latitude, longitude and date. The sky's gradient, sunset, stars, the moon, city lights along the night horizon.</span>
+        </p>
+      </div>
+      <div class="card">
+        <h3><span class="ja">雲の形状</span><span class="en">Cloud shapes</span></h3>
+        <p>
+          <span class="ja">巻雲から積乱雲まで、WMO の十種雲形を量で重ねます。ひとつ選ぶのではなく、実際の空のように混ざります。</span>
+          <span class="en">Cirrus through cumulonimbus, layered by amount rather than picked one at a time — the way a real sky mixes them.</span>
+        </p>
+      </div>
+      <div class="card">
+        <h3><span class="ja">気象</span><span class="en">Weather</span></h3>
+        <p>
+          <span class="ja">雨・雪・風・雷・靄。mm/h や m/s といった観測単位で渡せるので、気象 API の応答をほぼそのまま流し込めます。</span>
+          <span class="en">Rain, snow, wind, lightning and haze — taken in observation units (mm/h, m/s, km), so a weather API's response passes through almost as-is.</span>
+        </p>
+      </div>
+      <div class="card">
+        <h3><span class="ja">カラーフィルタ</span><span class="en">Color filters</span></h3>
+        <p>
+          <span class="ja">セピア、モノクロ、サイアノタイプなど。切り替えると色そのものが補間されるので滑らかに移ります。</span>
+          <span class="en">Sepia, monochrome, cyanotype and the rest. Switching interpolates the colors themselves, so one flows into the next.</span>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="ja">使い方</span><span class="en">Usage</span></h2>
+    <pre><code><span class="k">import</span> { Atmosphere } <span class="k">from</span> <span class="s">'@takustaqu/atmosphere'</span>;
+
+<span class="k">const</span> sky = <span class="k">new</span> <span class="n">Atmosphere</span>(canvas, {
+  time: <span class="k">new</span> <span class="n">Date</span>(),
+  location: { latitude: <span class="n">35.68</span>, longitude: <span class="n">139.77</span> },
+  weather: { cloudCover: <span class="n">0.95</span>, precipitation: <span class="n">12</span>, windSpeed: <span class="n">18</span> },
+});
+
+<span class="c ja">// 数秒かけて滑らかに遷移する</span><span class="c en">// eases over a few seconds</span>
+sky.<span class="n">set</span>({ weather: <span class="s">'clear'</span> });</code></pre>
+  </section>
+
+  <section>
+    <h2><span class="ja">デモ</span><span class="en">Demos</span></h2>
+    <div class="demos">
+      <a class="demo" href="examples/controller/">
+        <strong><span class="ja">コントローラ</span><span class="en">Controller</span></strong>
+        <span class="ja">時刻・雲量・降水・風を自分で動かし、ドラッグで空を見回せます。スカイボックスの焼き出しも。</span>
+        <span class="en">Drive the time, cloud cover, precipitation and wind yourself, and drag to look around. Bakes a skybox too.</span>
+      </a>
+      <a class="demo" href="examples/playground/">
+        <strong><span class="ja">プレイグラウンド</span><span class="en">Playground</span></strong>
+        <span class="ja">プリセットや雲形ごとの空を一覧で見比べられる開発用のシート。</span>
+        <span class="en">A contact sheet comparing the presets and each cloud genus side by side.</span>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span>MIT</span>
+  <span class="sp"></span>
+  <a href="https://github.com/takustaqu/atmosphere">GitHub</a>
+  <a href="https://www.npmjs.com/package/@takustaqu/atmosphere">npm</a>
+</footer>
+
+<script type="module" src="assets/site.js"></script>
+</body>
+</html>
