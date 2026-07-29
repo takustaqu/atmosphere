@@ -17,7 +17,7 @@
 import {
   aggregateCover, defaultCloudFeatures, defaultCloudMix, resolveClouds,
   type CloudFeatures, type CloudMix, type CloudsInput,
-} from './clouds';
+} from './clouds.js';
 
 export type PrecipitationType = 'rain' | 'snow';
 

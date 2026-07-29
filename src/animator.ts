@@ -3,8 +3,8 @@
 // Independent of the renderer (no DOM dependency), so it can be used from any
 // custom render loop.
 
-import { CLOUD_GENERA_IDS } from './clouds';
-import type { AtmosphereState } from './state';
+import { CLOUD_GENERA_IDS } from './clouds.js';
+import type { AtmosphereState } from './state.js';
 
 export interface AnimatorOptions {
   /** time constant of the following, in seconds. Larger = weather changes arrive more slowly */

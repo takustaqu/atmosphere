@@ -3,10 +3,10 @@
 // This is effectively atmosphere's public interface:
 //   Conditions (what a human specifies) → AtmosphereState (what the renderer interprets)
 
-import { resolveFilter, type ColorFilter, type FilterInput } from './filter';
-import { nominalSolarPosition, solarPosition, type GeoLocation } from './sun';
-import { toDate, toTimeOfDay, type TimeInput } from './time';
-import { resolveWeather, type WeatherInput, type WeatherState } from './weather';
+import { resolveFilter, type ColorFilter, type FilterInput } from './filter.js';
+import { nominalSolarPosition, solarPosition, type GeoLocation } from './sun.js';
+import { toDate, toTimeOfDay, type TimeInput } from './time.js';
+import { resolveWeather, type WeatherInput, type WeatherState } from './weather.js';
 
 /**
  * The camera: where the sky is being viewed from.

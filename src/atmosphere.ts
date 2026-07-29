@@ -6,12 +6,12 @@
 // A thin layer that just bundles a canvas, the renderer, and a render loop.
 // To integrate with your own loop instead, use AtmosphereRenderer + StateAnimator directly.
 
-import { StateAnimator, type AnimatorOptions } from './animator';
-import { AtmosphereRenderer } from './renderer';
+import { StateAnimator, type AnimatorOptions } from './animator.js';
+import { AtmosphereRenderer } from './renderer.js';
 import {
   resolveCamera, resolveConditions,
   type AtmosphereState, type Camera, type Conditions,
-} from './state';
+} from './state.js';
 
 export interface AtmosphereOptions extends Conditions {
   /** frame rate cap. Defaults to 30fps (battery-friendly) since this is meant for backgrounds */

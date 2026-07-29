@@ -10,7 +10,7 @@
 //   dist/react/atmosphere.css       styles for the React sample bindings
 //   dist/types/**                     declarations emitted by tsc (see tsconfig.build.json)
 import { build } from 'esbuild';
-import { cp, rm } from 'node:fs/promises';
+import { cp, rm, writeFile } from 'node:fs/promises';
 
 await rm('dist', { recursive: true, force: true });
 
@@ -39,7 +39,7 @@ await build({
     // so instanceof and module-level state agree across both entry points
     name: 'core-as-sibling-bundle',
     setup(b) {
-      b.onResolve({ filter: /^\.\.\/\.\.\/src(\/index)?$/ }, () => ({
+      b.onResolve({ filter: /^\.\.\/\.\.\/src(\/index(\.js)?)?$/ }, () => ({
         path: '../index.js',
         external: true,
       }));
@@ -48,4 +48,12 @@ await build({
 });
 
 await cp('examples/react/atmosphere.css', 'dist/react/atmosphere.css');
+
+// A declaration for the CSS entry. Bundler-based apps usually get `*.css`
+// declared for them (vite/client, next-env.d.ts), but a plain tsc setup
+// reports TS2882 on the side-effect import the README tells people to write.
+// Pointing the export's `types` condition here makes it resolve everywhere;
+// bundlers still take `default` and get the real stylesheet.
+await writeFile('dist/react/atmosphere.css.d.ts', 'export {};\n');
+
 console.log('dist/ bundles written');

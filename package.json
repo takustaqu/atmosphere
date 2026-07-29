@@ -30,7 +30,10 @@
       "types": "./dist/types/examples/react/index.d.ts",
       "default": "./dist/react/index.js"
     },
-    "./react/styles.css": "./dist/react/atmosphere.css"
+    "./react/styles.css": {
+      "types": "./dist/react/atmosphere.css.d.ts",
+      "default": "./dist/react/atmosphere.css"
+    }
   },
   "main": "./dist/index.js",
   "types": "./dist/types/src/index.d.ts",

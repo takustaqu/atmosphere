@@ -12,7 +12,7 @@
 // Dev note: swapping this module out via HMR leaves an already-mounted
 // AtmosphereRenderer running the old shader. Reload the page to see changes.
 
-import { DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state';
+import { DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
 const VERT = `
 attribute vec2 a_pos;

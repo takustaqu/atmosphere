@@ -6,7 +6,7 @@
 // file and rewriting it is the fastest path.
 
 import { useEffect, useRef } from 'react';
-import { Atmosphere, type AtmosphereOptions, type Conditions } from '../../src';
+import { Atmosphere, type AtmosphereOptions, type Conditions } from '../../src/index.js';
 
 // value equality for condition props (plain data: primitives, Date, arrays,
 // plain objects). Conditions are usually written as inline literals —

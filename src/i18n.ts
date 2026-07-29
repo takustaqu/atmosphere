@@ -10,9 +10,9 @@
 // `en` dictionaries are derived from them. Only the translations are literal —
 // otherwise renaming a preset would leave two English names disagreeing.
 
-import { CLOUD_GENERA, type CloudGenus } from './clouds';
-import { FILTER_PRESETS, type FilterId } from './filter';
-import { WEATHER_PRESETS, type WeatherId } from './weather';
+import { CLOUD_GENERA, type CloudGenus } from './clouds.js';
+import { FILTER_PRESETS, type FilterId } from './filter.js';
+import { WEATHER_PRESETS, type WeatherId } from './weather.js';
 
 export type Locale = 'en' | 'ja';
 

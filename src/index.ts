@@ -4,10 +4,10 @@
 //
 // No DOM/framework dependency. React bindings are the sample in examples/.
 
-export { Atmosphere, type AtmosphereOptions } from './atmosphere';
-export { AtmosphereRenderer } from './renderer';
-export { StateAnimator, lerpWrapped, type AnimatorOptions } from './animator';
-export { renderCubeFaces, type CubeFacesOptions } from './cubemap';
+export { Atmosphere, type AtmosphereOptions } from './atmosphere.js';
+export { AtmosphereRenderer } from './renderer.js';
+export { StateAnimator, lerpWrapped, type AnimatorOptions } from './animator.js';
+export { renderCubeFaces, type CubeFacesOptions } from './cubemap.js';
 
 export {
   resolveConditions,
@@ -17,7 +17,7 @@ export {
   type Conditions,
   type AtmosphereState,
   type Camera,
-} from './state';
+} from './state.js';
 
 export {
   CLOUD_GENERA,
@@ -35,7 +35,7 @@ export {
   type CloudMix,
   type CloudsInput,
   type CloudFeatures,
-} from './clouds';
+} from './clouds.js';
 
 export {
   WEATHER_PRESETS,
@@ -48,7 +48,7 @@ export {
   type WeatherPreset,
   type WeatherState,
   type PrecipitationType,
-} from './weather';
+} from './weather.js';
 
 export {
   FILTER_PRESETS,
@@ -59,16 +59,16 @@ export {
   type FilterId,
   type FilterInput,
   type FilterPreset,
-} from './filter';
+} from './filter.js';
 
 export {
   solarPosition,
   nominalSolarPosition,
   type GeoLocation,
   type SolarPosition,
-} from './sun';
+} from './sun.js';
 
-export { formatTod, toTimeOfDay, toDate, type TimeInput } from './time';
+export { formatTod, toTimeOfDay, toDate, type TimeInput } from './time.js';
 
 export {
   weatherLabel,
@@ -79,4 +79,4 @@ export {
   CLOUD_LABELS,
   type Locale,
   type CloudGenusLabel,
-} from './i18n';
+} from './i18n.js';

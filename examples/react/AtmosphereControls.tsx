@@ -9,7 +9,7 @@ import {
   WEATHER_IDS, FILTER_IDS, formatTod,
   weatherLabel as defaultWeatherLabel, filterLabel as defaultFilterLabel,
   type WeatherId, type FilterId, type Locale,
-} from '../../src';
+} from '../../src/index.js';
 
 export interface AtmosphereControlsValue {
   enabled: boolean;

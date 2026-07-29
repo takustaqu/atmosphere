@@ -6,8 +6,8 @@
 // texture, a shared context), drive AtmosphereRenderer + CUBE_FACE_CAMERAS
 // yourself; this file is barely more than that loop.
 
-import { AtmosphereRenderer } from './renderer';
-import { CUBE_FACE_CAMERAS, resolveConditions, type Conditions } from './state';
+import { AtmosphereRenderer } from './renderer.js';
+import { CUBE_FACE_CAMERAS, resolveConditions, type Conditions } from './state.js';
 
 export interface CubeFacesOptions {
   /** face size in pixels (square). Defaults to 512 */
