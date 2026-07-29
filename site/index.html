@@ -16,6 +16,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend+Exa:wght@100&text=atmosphere&display=swap">
+<!-- Zen Old Mincho carries the hero's lines. A Japanese face is hundreds of
+     kilobytes whole, so build-site.mjs replaces the token below with a
+     request subset to exactly the characters used in site/scenes.ts —
+     derived from the source, so editing the copy can't leave a glyph
+     missing. -->
+<!--ZEN_OLD_MINCHO-->
 <script>
   // Pick the language before first paint, so the page never flashes the
   // wrong one. localStorage wins over the browser's preference.
@@ -67,9 +73,18 @@
     padding: 11px 18px;
     background: linear-gradient(rgba(8, 11, 14, 0.62), rgba(8, 11, 14, 0));
   }
+  /* The hero already carries the wordmark, so repeating it in the bar just
+     says the same thing twice. It fades in only once the hero is gone and
+     the name would otherwise be off screen. */
   #bar .brand {
     font-weight: 600; letter-spacing: 0.14em; text-transform: lowercase;
     color: var(--ink-bright); text-decoration: none; font-size: 14px;
+    opacity: 0; transform: translateY(-3px); pointer-events: none;
+    transition: opacity 0.35s ease, transform 0.35s ease;
+  }
+  #bar.past-hero .brand { opacity: 1; transform: none; pointer-events: auto; }
+  @media (prefers-reduced-motion: reduce) {
+    #bar .brand { transition: none; }
   }
   #bar .sp { flex: 1; }
   #bar a.lnk { color: var(--ink-dim); text-decoration: none; font-size: 13px; }
@@ -117,8 +132,10 @@
   #copy { flex: 1; display: flex; align-items: center; justify-content: center; }
   #line {
     margin: 0; max-width: 19em;
+    /* a mincho for the copy: these are recollections, not UI text */
+    font-family: 'Zen Old Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
     font-size: clamp(21px, 4.1vw, 40px);
-    line-height: 1.66; font-weight: 400; letter-spacing: 0.045em;
+    line-height: 1.72; font-weight: 400; letter-spacing: 0.06em;
     color: #fff;
     text-shadow: 0 1px 26px rgba(0, 0, 0, 0.72), 0 0 4px rgba(0, 0, 0, 0.4);
     /* Japanese has no spaces, so the default breaks anywhere and strands a
@@ -184,7 +201,9 @@
     margin: 0 0 22px; font-size: 13px; font-weight: 600;
     letter-spacing: 0.19em; text-transform: uppercase; color: var(--ink-dim);
   }
-  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  /* four cards: 300px keeps it to two columns, so they land 2×2 instead of
+     3 + a lone one */
+  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
   .card {
     padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius);
     background: rgba(255,255,255,0.022);

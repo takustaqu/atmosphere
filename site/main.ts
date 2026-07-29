@@ -155,6 +155,7 @@ for (const type of ['pointerup', 'pointercancel'] as const) {
 // and on a laptop it is audible.
 
 const hero = document.querySelector<HTMLElement>('#hero')!;
+const bar = document.querySelector<HTMLElement>('#bar')!;
 let visible = true;
 
 new IntersectionObserver((entries) => {
@@ -176,11 +177,23 @@ document.addEventListener('visibilitychange', () => {
   else if (visible) { sky.start(); if (!reduced.matches && !timer) timer = window.setTimeout(step, HOLD_MS); }
 });
 
-// the scroll cue is only honest while there is something below the fold
-addEventListener('scroll', () => {
-  const cue = document.querySelector<HTMLElement>('#cue');
+// ── things that depend on how far down the page is ────────
+// Driven by scroll rather than another IntersectionObserver: the cue needs a
+// position, not a boolean, so the listener exists either way — and one place
+// deciding both keeps them from disagreeing mid-scroll.
+
+const cue = document.querySelector<HTMLElement>('#cue');
+
+function onScroll(): void {
+  // the bar picks the wordmark up only once the hero's own has gone
+  bar.classList.toggle('past-hero', scrollY > hero.offsetHeight - 56);
+  // the cue is only honest while there is something below the fold
   if (cue) cue.style.opacity = scrollY > 40 ? '0' : '0.42';
-}, { passive: true });
+}
+
+addEventListener('scroll', onScroll, { passive: true });
+addEventListener('resize', onScroll);
+onScroll();   // reloading part-way down the page must not start out wrong
 
 // expose for headless checks (the Browser pane never fires rAF)
 (globalThis as unknown as { __sky: Atmosphere }).__sky = sky;
