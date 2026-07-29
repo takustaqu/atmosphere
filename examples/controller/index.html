@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atmosphere — weather controller</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    background: #0d1013; color: #c8ccd2;
+    font: 12px/1.55 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  #sky { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+  #sky.dragging { cursor: grabbing; }
+
+  /* -- HUD showing the current bearing while looking around -- */
+  #hud {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 14px; align-items: center;
+    padding: 6px 14px; border-radius: 999px;
+    background: rgba(12, 16, 22, 0.5); border: 1px solid rgba(255,255,255,0.14);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    color: #dfe4ea; font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  #hud b { font-size: 14px; letter-spacing: 0.06em; }
+  #hud span { color: #8a929c; }
+
+  /* -- Control panel -- */
+  #panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 310px;
+    padding: 14px 16px 24px; overflow-y: auto;
+    background: rgba(12, 16, 22, 0.62); border-left: 1px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  }
+  #panel.hidden { transform: translateX(100%); }
+  #panel { transition: transform 0.25s ease; }
+  #toggle {
+    position: fixed; top: 14px; right: 14px; z-index: 2;
+    padding: 6px 12px; border-radius: 10px; cursor: pointer;
+    background: rgba(12,16,22,0.55); border: 1px solid rgba(255,255,255,0.16); color: #c8ccd2;
+  }
+  #toggle:hover { background: rgba(255,255,255,0.14); }
+
+  h2 { margin: 16px 0 8px; font-size: 10px; letter-spacing: 0.14em; color: #6f7883; font-weight: 600; }
+  h2:first-child { margin-top: 4px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 0 0 92px; color: #99a1ab; }
+  .row input[type=range] { flex: 1; accent-color: #5a9bd8; min-width: 0; }
+  .row output { flex: 0 0 48px; text-align: right; font-variant-numeric: tabular-nums; color: #dfe4ea; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 8px; }
+  .chip {
+    padding: 3px 9px; border-radius: 9px; cursor: pointer; font-size: 11px;
+    background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); color: #99a1ab;
+  }
+  .chip:hover { background: rgba(255,255,255,0.14); color: #dfe4ea; }
+  .chip.on { background: rgba(74,144,217,0.42); border-color: rgba(255,255,255,0.42); color: #fff; }
+  .note { margin: 2px 0 8px; color: #6f7883; font-size: 11px; }
+  #state {
+    margin-top: 6px; padding: 8px 10px; border-radius: 8px;
+    background: rgba(0,0,0,0.28); color: #8a929c;
+    font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 10.5px; white-space: pre-wrap;
+  }
+  #faces { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 6px; }
+  #faces figure { margin: 0; }
+  #faces img { width: 100%; display: block; border-radius: 4px; background: #000; }
+  #faces figcaption { color: #6f7883; font-size: 10px; text-align: center; }
+</style>
+</head>
+<body>
+  <canvas id="sky"></canvas>
+  <div id="hud"><b id="bearing">S</b><span id="angles"></span></div>
+  <button id="toggle">Settings</button>
+  <div id="panel"></div>
+  <script type="module" src="../../build/controller/main.js"></script>
+</body>
+</html>

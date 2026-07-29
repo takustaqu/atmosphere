@@ -1,0 +1,156 @@
+/* atmosphere.css — default styling for the React sample
+ *
+ * import '@takustaqu/atmosphere/react/styles.css';
+ *
+ * Skip this if you're building your own look — just use the class names.
+ * Classes: .atmo-canvas / .atmo-off / .atmo-panel-toggle / .atmo-panel
+ *          .atmo-panel-header / .atmo-panel-close / .atmo-toggle
+ *          .atmo-section-label / .atmo-weather-row / .atmo-chip
+ *          .atmo-time-row / .atmo-time-label
+ */
+
+.atmo-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: -1;             /* sit behind normal document flow */
+  transition: opacity 1.2s ease;
+}
+
+.atmo-canvas.atmo-off {
+  opacity: 0;
+}
+
+.atmo-panel-toggle {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  background: rgba(20, 24, 34, 0.45);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.atmo-panel-toggle:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.atmo-panel {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 20;
+  width: 268px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  background: rgba(20, 24, 34, 0.5);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: #ccc;
+  font-size: 12px;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.atmo-panel .atmo-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+
+.atmo-panel .atmo-panel-close {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.atmo-panel .atmo-panel-close:hover { color: #ccc; }
+
+.atmo-panel .atmo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: #888;
+  cursor: pointer;
+  user-select: none;
+}
+
+.atmo-panel .atmo-section-label {
+  margin: 10px 0 5px;
+  color: #777;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.atmo-panel .atmo-weather-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.atmo-panel .atmo-weather-row.disabled,
+.atmo-panel .atmo-time-row.disabled { opacity: 0.45; }
+
+.atmo-panel .atmo-chip {
+  flex: 1 0 auto;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.atmo-panel .atmo-chip:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ccc;
+}
+
+.atmo-panel .atmo-chip.active {
+  background: rgba(74, 144, 217, 0.38);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #fff;
+}
+
+.atmo-panel .atmo-chip:disabled { cursor: default; }
+
+.atmo-panel .atmo-time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.atmo-panel .atmo-time-row input[type='range'] {
+  flex: 1;
+  accent-color: #4a90d9;
+}
+
+.atmo-panel .atmo-time-label {
+  flex: 0 0 34px;
+  color: #ccc;
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 11px;
+  text-align: right;
+}

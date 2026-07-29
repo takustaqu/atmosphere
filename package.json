@@ -1,0 +1,69 @@
+{
+  "name": "@takustaqu/atmosphere",
+  "version": "0.1.0",
+  "description": "A WebGL renderer that reproduces the sky from time and weather",
+  "type": "module",
+  "license": "MIT",
+  "author": "takustaqu",
+  "keywords": [
+    "webgl",
+    "sky",
+    "clouds",
+    "weather",
+    "procedural",
+    "shader",
+    "background",
+    "skybox"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/types/src/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/types/examples/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    },
+    "./react/styles.css": "./dist/react/atmosphere.css"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/types/src/index.d.ts",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "files": [
+    "dist",
+    "src",
+    "examples",
+    "README.md",
+    "README.ja.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build",
+    "playground": "esbuild examples/playground/main.ts examples/controller/main.ts --bundle --format=esm --outdir=build --outbase=examples --watch --servedir=. --serve=8791"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.15",
+    "esbuild": "^0.28.1",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.10"
+  }
+}

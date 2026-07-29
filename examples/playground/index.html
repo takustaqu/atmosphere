@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>atmosphere — playground</title>
+<style>
+  body {
+    margin: 0; padding: 16px;
+    background: #111417; color: #999;
+    font: 12px/1.5 system-ui, -apple-system, sans-serif;
+  }
+  #nav { display: flex; gap: 10px; margin-bottom: 14px; }
+  #nav a { color: #667; text-decoration: none; padding: 3px 9px; border-radius: 8px; background: #1b1f24; }
+  #nav a.on { color: #fff; background: #35506e; }
+  #sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  figure { margin: 0; }
+  canvas { display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: 8px; background: #000; }
+  figcaption { margin-top: 5px; color: #778; }
+</style>
+</head>
+<body>
+  <nav id="nav"></nav>
+  <div id="sheet"></div>
+  <script type="module" src="../../build/playground/main.js"></script>
+</body>
+</html>

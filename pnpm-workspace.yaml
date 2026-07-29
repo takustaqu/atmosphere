@@ -1,0 +1,4 @@
+allowBuilds:
+  # esbuild's postinstall links the platform's native binary; the build script
+  # (scripts/build.mjs) can't run without it
+  esbuild: true
