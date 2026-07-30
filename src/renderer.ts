@@ -12,12 +12,38 @@
 // Dev note: swapping this module out via HMR leaves an already-mounted
 // AtmosphereRenderer running the old shader. Reload the page to see changes.
 
+import { SRGB_TO_DISPLAY_P3, glslMat3, type ColorSpaceOption } from './gamut.js';
 import { DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
 const VERT = `
 attribute vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
 `;
+
+/**
+ * How far the marked light sources reach past sRGB. 0 disables the widening,
+ * making the Display P3 path appearance-identical to the sRGB one; 1 is the
+ * naive "just flip the flag" over-saturation. Per-part strengths are folded
+ * into `wide` at each site in main(), so this is the single global trim.
+ *
+ * **Held at 0 deliberately, on measurement.** The widening does not work on this
+ * palette, and the reason is structural: sRGB and Display P3 share the same blue
+ * primary, so P3's extra room is entirely in red and green — and a sky renderer
+ * is blue-dominated. Its one warm color (`warm`, at magic hour) composites down
+ * to a desaturated salmon that sits nowhere near a gamut boundary. Measured
+ * against a two-space readback diff: at reach 1 the widened pixels land only
+ * 0.7–1.5% outside sRGB and magic hour never leaves sRGB at all; pushing to
+ * reach 6 changes the color a lot (16.8/255 across 46% of the frame) while the
+ * excursion stays at ~1%. It distorts hue inside sRGB rather than reaching past
+ * it, which is the opposite of the point.
+ *
+ * The conversion below is still worth having on its own: it is exactly
+ * appearance-preserving, and highlights that run past 1.0 (the sun's core, a
+ * lightning flash) clip later in P3, so a little more of the blowout survives.
+ *
+ * Raising this only pays off after the palette itself is re-tuned for P3.
+ */
+const GAMUT_REACH = 0.0;
 
 const FRAG = `
 // highp is optional for fragment shaders in WebGL1. Without this guard the
@@ -50,8 +76,149 @@ uniform float u_filtAmt;   // color filter: strength
 uniform vec3  u_filtTint;  //               white point
 uniform float u_filtSat;   //               saturation kept
 uniform float u_filtLift;  //               black lift
+uniform float u_p3;        // 1 when the drawing buffer is Display P3, else 0
+uniform float u_headroom;  // display ceiling in multiples of SDR white. 1 = SDR
+uniform vec4  u_tone;      // tone curve: exposure (stops), contrast, knee, bleach
+uniform vec4  u_pol;       // polarizer: strength, angle, saturation, stopLoss
+uniform vec4  u_sky;       // celestial: bortle, milkyWay, meteors/hr, hasRadiant
+uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
 
 const float PI = 3.14159265;
+
+// ── Linear light ──
+// Every color literal below is authored as an sRGB-encoded value (that is how
+// they were hand-tuned), but compositing them in that space is wrong: mixing two
+// gamma-encoded colors darkens the midpoint, and adding light is only additive in
+// linear light. So each literal is decoded on the way in with L(), the whole
+// composite runs in linear light, and the result is tone-mapped and re-encoded at
+// the end.
+//
+// Two properties make this a small change rather than a rewrite:
+//   - a mix()'s endpoints are preserved exactly; only midpoints move (that IS the fix)
+//   - a multiplicative tint is exactly equivalent, since L(g*v) = L(g)*L(v) above
+//     the knee — so every "* vec3(1.12, 0.92, 0.76)" style gain keeps its meaning
+vec3 L(vec3 c) {
+  c = max(c, 0.0);
+  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+}
+vec3 encodeSrgb(vec3 c) {
+  c = max(c, 0.0);
+  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+}
+
+/**
+ * An artistic overlay: a wash of the whole picture toward some color.
+ *
+ * Unlike adding light, this is not a physical process — it is a chosen
+ * appearance, and every one of these was hand-tuned as a display-space blend. So
+ * do the blend where it was authored and come back to linear. That keeps the
+ * palette exactly as published while the additive light stays correct.
+ */
+vec3 overlay(vec3 lin, vec3 dispCol, float a) {
+  return L(mix(encodeSrgb(lin), dispCol, a));
+}
+
+// How much light each source emits, in multiples of SDR white. Nowhere near
+// physically right (the sun is ~10^5 SDR white); these are set to what reads
+// correctly once the shoulder has them.
+//
+// SUN_LUM deliberately blooms wider than the pre-linear-light renderer did. That
+// is not drift to be corrected — a sun you cannot look at is what the eye
+// actually reports, and it was judged closer to perception than the old flat
+// disc. Emission is the one place this pipeline is *meant* to depart from the
+// published look; brightness that leaks in anywhere else is a bug.
+//
+// Raise u_headroom and this is the range they expand into.
+const float SUN_LUM   = 12.0;
+const float HALO_LUM  = 1.6;
+const float FLASH_LUM = 6.0;
+const float MOON_LUM  = 2.6;
+const float STAR_LUM  = 2.5;
+
+/**
+ * Linear scene light → display.
+ *
+ * Scene-referred, so every stage here means what it says: the exposure is a
+ * multiply, the contrast pivots on 18% grey, and the highlights desaturate the way
+ * film does. None of that was expressible while compositing ran on gamma-encoded
+ * values.
+ *
+ * The shoulder is identity below u_tone.z, so at the default knee of 0.8 only
+ * blown highlights are shaped and the published look is untouched. Bring the knee
+ * down to put the curve through the midtones — that is where it becomes a look.
+ * The same shoulder is what expands into u_headroom when there is HDR to expand
+ * into, so a curve dialled in today stays the curve later.
+ */
+vec3 tonemap(vec3 c) {
+  const float PIVOT = 0.18;   // 18% grey, the photographic anchor
+
+  c = max(c, 0.0) * exp2(u_tone.x);
+
+  if (abs(u_tone.y - 1.0) > 0.001) {
+    c = PIVOT * pow(max(c / PIVOT, 1e-5), vec3(u_tone.y));
+  }
+
+  float knee = u_tone.z;
+
+  // bleach: as a pixel climbs toward the ceiling, pull it toward its own peak
+  // channel. Keeps brightness, drops hue — so a blown sky goes white instead of
+  // clipping into a muddy cast
+  if (u_tone.w > 0.001) {
+    float peak = max(max(c.r, c.g), c.b);
+    float t = clamp((peak - knee) / max(1.0 - knee, 1e-4), 0.0, 1.0);
+    c = mix(c, vec3(peak), t * u_tone.w);
+  }
+
+  // x/(1+x) shoulder, rescaled to start with slope 1 at the knee and approach
+  // the headroom as x grows
+  vec3 hi = max(c - knee, 0.0);
+  float span = max(u_headroom - knee, 1e-4);
+  return min(c, knee) + span * (hi / (span + hi));
+}
+
+/**
+ * Degree of polarization of Rayleigh-scattered skylight along this view ray.
+ *
+ * sin(theta)^2 / (1 + cos(theta)^2) for scattering angle theta — zero straight at
+ * the sun and straight away from it, peaking in the band 90 degrees off. Capped
+ * below 1 because multiple scattering, aerosols and ground bounce all depolarize
+ * a real sky; a clear high-altitude sky tops out near 0.75.
+ */
+float skyPolarization(vec3 rd, vec3 sunDir) {
+  float ct = dot(rd, sunDir);
+  return 0.75 * (1.0 - ct * ct) / (1.0 + ct * ct);
+}
+
+/**
+ * Transmission through a circular polarizer, normalized so unpolarized light
+ * passes unchanged (Malus's law with the filter's flat 50% loss factored out —
+ * u_pol.w reintroduces the real loss if asked for).
+ *
+ * Angle 0 is the crossed orientation, the one that kills the polarized component
+ * and darkens the sky. Rotating by 90 degrees passes it instead and the same band
+ * brightens, which is exactly what happens when you turn the ring on a real one.
+ */
+float polarizerTransmission(float dop, float ePhi) {
+  float d = sin(ePhi - u_pol.y);
+  float t = (1.0 - dop) + 2.0 * dop * d * d;
+  t = mix(1.0, t, u_pol.x);
+  return t * mix(1.0, 0.40, u_pol.w);   // 0.40 ~ the real 1.3-stop bite
+}
+
+// ── Wide gamut ──
+// Everything above is authored and composited as sRGB-encoded values, so the
+// conversion is: decode with the sRGB transfer function, change primaries,
+// re-encode with the same curve (Display P3 shares it). Matrix from gamut.ts.
+const mat3 SRGB_TO_P3 = ${glslMat3(SRGB_TO_DISPLAY_P3)};
+
+vec3 srgbToDisplayP3(vec3 c) {
+  // clamp before every pow(): a negative base is undefined, and mix() computes
+  // both branches, so one NaN would leak into the selected one
+  c = max(c, 0.0);
+  vec3 lin = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+  lin = max(SRGB_TO_P3 * lin, 0.0);
+  return mix(lin * 12.92, 1.055 * pow(lin, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, lin));
+}
 
 float hash11(float n) { return fract(sin(n) * 43758.5453123); }
 float hash12(vec2 p) {
@@ -85,6 +252,10 @@ float fbm4(vec2 p) {
     a *= 0.5;
   }
   return v;
+}
+// two octaves, for modulators that only need broad unevenness cheaply
+float fbm2(vec2 p) {
+  return vnoise(p) * 0.667 + vnoise(p * 2.03 + vec2(17.3, 9.1)) * 0.333;
 }
 // ── Camera ──────────────────────────────────────────────
 // World space is x=east, y=up, z=north. yaw=0 faces north; pitch>0 looks up.
@@ -123,6 +294,221 @@ vec3 dirFromAngles(float elevation, float azimuth) {
   float ce = cos(elevation);
   return vec3(ce * sin(azimuth), sin(elevation), ce * cos(azimuth));
 }
+
+/**
+ * The Milky Way, as a band around a fixed galactic pole.
+ *
+ * The renderer has no sidereal time — the star field is pinned to the view
+ * direction, not to a rotating celestial sphere — so the galactic plane is a
+ * fixed great circle too. Chosen to arc overhead at an angle that reads like a
+ * summer sky rather than to match any particular date.
+ *
+ * Returns additive light, which is only correct because the composite is linear
+ * now: a faint band over a near-black sky is exactly the case where adding in
+ * gamma-encoded values goes wrong.
+ */
+float milkyWayBand(vec3 rd, float amt, out float bulgeOut, out float riftOut,
+                   out float glowOut, out float baseOut) {
+  bulgeOut = 0.0;
+  riftOut = 0.0;
+  glowOut = 0.0;
+  baseOut = 0.0;
+  if (amt < 0.001) return 0.0;
+  const vec3 POLE = vec3(0.4338, 0.8073, 0.4000);
+  float lat = asin(clamp(dot(rd, POLE), -1.0, 1.0));
+
+  // a coordinate running ALONG the band, so structure can be stretched the way
+  // a galaxy's is instead of being isotropic blobs
+  vec3 e1 = normalize(cross(POLE, vec3(0.0, 1.0, 0.0)));
+  vec3 e2 = cross(POLE, e1);
+  float lon = atan(dot(rd, e2), dot(rd, e1));
+
+  // The galactic-centre bulge: the band is not uniform along its length — one
+  // stretch swells wide and bright, and the rest thins away from it. Chord
+  // distance (2 sin(dl/2)) keeps the falloff periodic in lon with no seam.
+  // -2.45 sits low in the default framing's field of view (measured, not
+  // guessed), so the band reads brightest near the horizon and thins overhead.
+  float dl = 2.0 * sin(0.5 * (lon + 2.45));
+  float bulge = exp(-dl * dl * 2.2);
+  bulgeOut = bulge;
+
+  // width swells around the bulge (smaller exponent = wider profile) and the
+  // whole band brightens there
+  float w = mix(1.45, 0.70, bulge);
+  float band = exp(-lat * lat * 30.0 * w) * 0.62 + exp(-lat * lat * 6.0 * w) * 0.38;
+  band *= 0.40 + 1.05 * bulge;
+  // the SMOOTH band, before the star-cloud structure and the dust: the star
+  // grain follows this. Real star density varies gently along the band — the
+  // patchiness the eye sees is absorption, which the rift term carries — and
+  // driving the grain off the structured value instead punches holes of
+  // missing stars into every dip of the glow
+  baseOut = band * amt;
+
+  // star clouds: two octaves, stretched along the band
+  vec2 q = vec2(lon * 2.6, lat * 7.0);
+  float structure = fbm4(q) * 0.62 + fbm(q * 3.4) * 0.38;
+  band *= 0.30 + 1.25 * structure;
+
+  // Dust, three scales. All of it lives close to the plane, so skip the whole
+  // stack for the wide faint skirts of the profile.
+  if (abs(lat) < 0.45) {
+    // the Great Rift: one long dark lane running along the band past the bulge,
+    // wandering off-axis, its width and depth uneven along its length. This is
+    // deliberately a path in (lon, lat), not a threshold on isotropic noise —
+    // that is what keeps it reading as a rift and not as blobs. A second,
+    // finer wobble roughens the shoulders so the edge reads torn, not drawn.
+    float riftPath = (fbm2(vec2(lon * 1.1, 2.7)) - 0.5) * 0.24
+                   + (fbm2(vec2(lon * 6.3, 4.4)) - 0.5) * 0.055;
+    float riftHalf = 0.035 + 0.060 * fbm2(vec2(lon * 1.7, 8.9));
+    float rp = (lat - riftPath) / riftHalf;
+    float riftDepth = smoothstep(0.04, 0.50, bulge)
+                    * (0.45 + 0.55 * fbm2(vec2(lon * 2.3, 15.1)));
+    // exported: the dust sits in FRONT of the star field, so the star layers
+    // multiply this in — a rift that only dims the glow floats behind the
+    // stars. Faded with amt (saturating well below full) or the rift-hidden
+    // stars would pop back the instant the Milky Way crosses zero
+    riftOut = exp(-rp * rp) * riftDepth * min(amt * 2.0, 1.0);
+    band *= 1.0 - 0.85 * riftOut;
+
+    // Several soft irregular mid-scale lanes, not one drawn line — and their
+    // latitude sheared by a longer noise so they cross the band at shifting
+    // angles instead of stacking into corduroy parallel to it
+    float laneLat = lat + (fbm2(vec2(lon * 3.1, 7.7)) - 0.5) * 0.16;
+    float dust = fbm(vec2(lon * 1.9, laneLat * 5.5) + 11.0);
+    float lanes = smoothstep(0.40, 0.66, dust) * smoothstep(0.20, 0.02, abs(laneLat));
+    band *= 1.0 - 0.42 * lanes;
+
+    // small-scale mottling, sheared against the band axis for the same reason:
+    // the patchiness that keeps the bright parts from reading as an airbrush
+    float mott = smoothstep(0.46, 0.80, fbm(vec2(lon * 4.6 + lat * 2.2, lat * 14.0) + 31.0))
+               * smoothstep(0.28, 0.05, abs(lat));
+    band *= 1.0 - 0.50 * mott;
+  }
+
+  // the bulge as light, not only as width: a broad band-shaped swelling for the
+  // glow pass to add in the core color. Rift-cut here so it cannot fill the
+  // dark lane back in
+  glowOut = bulge * bulge * exp(-lat * lat * 7.0) * (1.0 - 0.75 * riftOut) * amt;
+
+  return max(band, 0.0) * amt;
+}
+
+
+/**
+ * One meteor from one independent stream. See meteorStreak for the rate maths.
+ */
+vec3 meteorOne(vec3 rd, float t, float rate, float hasRadiant, vec2 radiant, float seed) {
+  const float CELL = 1.2;                       // seconds per slot
+  // Fraction of the slot the head takes to cross its nominal span. It does not
+  // stop there: BURN_IN..BURN_OUT is when it goes out, and it keeps travelling
+  // the whole time. Halting it and then dimming — which is what this did at
+  // first — reads exactly as "it stopped", because it did.
+  const float FLIGHT = 0.22;
+  const float BURN_IN = 0.72;                   // in units of the nominal flight
+  const float BURN_OUT = 1.20;
+  float slot = floor(t / CELL) + seed;
+  float p = hash11(slot * 1.37);
+  if (p > clamp(rate / 3600.0 * CELL, 0.0, 0.92)) return vec3(0.0);
+
+  float ph = fract(t / CELL);
+  float travel = ph / FLIGHT;                   // 1.0 at the nominal end, keeps rising
+  if (travel > BURN_OUT) return vec3(0.0);
+
+  float a = hash11(slot * 3.11) * 6.2831;
+  float e = 0.12 + hash11(slot * 5.77) * 1.15;
+  vec3 origin = dirFromAngles(e, a);
+  vec3 dir;
+  if (hasRadiant > 0.5) {
+    vec3 rad = dirFromAngles(radiant.x, radiant.y);
+    vec3 away = normalize(origin - rad * dot(origin, rad));
+    origin = normalize(rad + away * (0.10 + hash11(slot * 7.3) * 0.35));
+    // re-derive the tangent AT the moved origin. Reusing away would leave dir
+    // non-orthogonal to origin, and the perp term below — which subtracts both
+    // components — would then never reach zero, hiding the streak completely
+    dir = normalize(origin - rad);
+    dir = normalize(dir - origin * dot(dir, origin));
+  } else {
+    vec3 up = abs(origin.y) > 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    vec3 rt = normalize(cross(up, origin));
+    vec3 uu = cross(origin, rt);
+    float th = hash11(slot * 9.13) * 6.2831;
+    dir = normalize(rt * cos(th) + uu * sin(th));
+  }
+
+  float along = dot(rd, dir);
+  float front = dot(rd, origin);
+  if (front < 0.45) return vec3(0.0);
+  float perp = length(rd - dir * along - origin * front);
+
+  // how far it crosses, in radians. 0.58..1.06 is 33 to 61 degrees
+  float span = 0.58 + hash11(slot * 11.7) * 0.48;
+  float head = travel * span;                   // never clamped — it never halts
+  float back = head - along;
+  if (back < 0.0) return vec3(0.0);
+
+  // the trail marks where the head has already been, so it grows out of nothing
+  // rather than existing at full length on the first frame
+  float maxTrail = span * 0.88;
+  float trailLen = min(maxTrail, head);
+  if (back > trailLen) return vec3(0.0);
+  float u = back / max(trailLen, 1e-4);
+
+  // near-constant width, about a pixel: any taper draws a wedge, and a wedge
+  // reads as a comet. Brightness carries the shape instead
+  float width = mix(0.0019, 0.0016, clamp(u, 0.0, 1.0));
+  float core = exp(-(perp * perp) / (width * width));
+
+  float u01 = clamp(u, 0.0, 1.0);
+  float prof = smoothstep(0.0, 0.07, u01) * (1.0 - smoothstep(0.30, 1.0, u01));
+  // decay on age, not position, so the tail is left behind rather than towed
+  prof *= exp(-(back / max(span, 1e-4) * FLIGHT) * 3.2);
+
+  // It burns out over a long, smooth ramp while still moving, so there is never a
+  // frame where it is stationary and visible. Squared so the last of it goes
+  // gently rather than stepping off.
+  float burn = 1.0 - smoothstep(BURN_IN, BURN_OUT, travel);
+  burn *= burn;
+  float life = smoothstep(0.0, 0.035, ph) * burn;
+
+  float hue = hash11(slot * 17.3);
+  vec3 trailCol = hue < 0.38 ? vec3(0.62, 1.00, 0.70)
+                : hue < 0.72 ? vec3(1.00, 0.88, 0.55)
+                             : vec3(0.86, 0.92, 1.00);
+  vec3 col = mix(trailCol, vec3(1.0), (1.0 - smoothstep(0.0, 0.30, u01)) * 0.7);
+
+  return col * core * prof * life * (0.55 + 0.45 * hash11(slot * 13.9));
+}
+
+/**
+ * Meteors — the same event machinery as lightning: chop the clock into slots,
+ * hash each one, and fire if it clears the threshold.
+ *
+ * Drawn in ray space, so a meteor stays where it is in the sky while the view
+ * swings rather than being glued to the frame.
+ *
+ * zhr is a real ZHR, and a ZHR is defined for an observer watching the *whole
+ * sky*. A 49-degree frame covers under a tenth of it, so an honest ZHR 100 puts
+ * roughly one meteor in shot every few minutes — correct, and useless as a
+ * control. What was actually wrong was the ceiling: one meteor per slot capped
+ * the whole-sky rate no matter how high the number went. Several independent
+ * streams run in parallel now, each carrying its share, so the rate means
+ * something across the range and more than one can be in the air at once (which
+ * is what shower photographs show anyway).
+ */
+vec3 meteorStreak(vec3 rd, float t, float zhr, float hasRadiant, vec2 radiant) {
+  if (zhr < 0.01) return vec3(0.0);
+  const int STREAMS = 4;
+  vec3 total = vec3(0.0);
+  for (int k = 0; k < STREAMS; k++) {
+    float fk = float(k);
+    // offset each stream's clock and its hash, or all four fire together
+    total += meteorOne(rd, t + fk * 0.31, zhr / float(STREAMS), hasRadiant, radiant, fk * 131.7);
+  }
+  return total;
+}
+
+
+
 
 // ── Clouds ──────────────────────────────────────────────
 // cloud field density and lit-ness (x=density 0..1, y=lit-ness -1..1, z=raw density value)
@@ -344,6 +730,10 @@ void main() {
   float churn = clamp(u_wind * 0.9 + u_rain * 0.3, 0.0, 1.0);
 
   // ── Base sky gradient ──
+  // These four and the two ramps below stay display-encoded: the gradient was
+  // hand-tuned as a straight line in that space, and a straight line in linear
+  // light is a different curve (measurably ~+28/255 brighter at the midpoint).
+  // Interpolate where it was authored, then decode once into the scene.
   vec3 dayZen  = vec3(0.10, 0.34, 0.74);      // deep summer blue
   vec3 dayHor  = vec3(0.66, 0.83, 0.96);
   vec3 nightZen = vec3(0.010, 0.018, 0.048);
@@ -354,7 +744,20 @@ void main() {
   // exponentially against elevation
   // (the top of the screen isn't the zenith, so holding this in screen
   // coordinates would make the blue shallower depending on framing)
-  vec3 sky = mix(hor, zen, 1.0 - exp(-max(el, 0.0) * 2.6));
+  vec3 sky = L(mix(hor, zen, 1.0 - exp(-max(el, 0.0) * 2.6)));
+
+  // How much this pixel should reach past sRGB, accumulated by the sections
+  // below (magic hour, stars, moon, sun, lightning) and spent at the very end.
+  // Only saturated light sources claim it — the clouds deliberately don't, since
+  // their sunlit edges are small and high-frequency and widening them would
+  // harden the outline.
+  //
+  // Invariant: a claim is the *fraction of the pixel that source contributes* —
+  // the same weight it composites with, bleed factors included. Claim more and
+  // you widen whatever lies underneath: exp(-sunAng * 4.0) alone still reads 0.1
+  // a third of a radian out, which drags a whole quadrant of plain blue sky with
+  // the sun.
+  float wide = 0.0;
 
   // magic hour: the horizon in the sun's direction turns amber, the sky above turns mauve
   // (since this looks at a compass direction, facing away shows an unlit sky)
@@ -363,15 +766,45 @@ void main() {
   float sunSide = 0.35 + 0.65 * smoothstep(-0.4, 1.0, towardSun);
   vec3 warm = vec3(1.0, 0.47, 0.22);
   vec3 mauve = vec3(0.45, 0.28, 0.45);
-  sky = mix(sky, warm, sunsetF * smoothstep(0.55, 0.0, h) * 0.55 * sunSide);
-  sky = mix(sky, mauve, sunsetF * smoothstep(0.10, 0.50, h) * 0.35);
+  sky = overlay(sky, warm, sunsetF * smoothstep(0.55, 0.0, h) * 0.55 * sunSide);
+  sky = overlay(sky, mauve, sunsetF * smoothstep(0.10, 0.50, h) * 0.35);
+  wide = max(wide, sunsetF * smoothstep(0.55, 0.0, h) * sunSide * 0.5);
+
+  // ── Circular polarizer ──
+  // Applied here on purpose: this is the scattered skylight, and it is the only
+  // thing a CPL acts on. Everything composited after this point — clouds (Mie
+  // scattering, essentially unpolarized), the sun, the moon, the stars — is
+  // direct or depolarized light and passes through untouched. That ordering is
+  // what makes the clouds "pop": the sky behind them drops and they do not.
+  float dop = skyPolarization(rd, sunDir);
+  if (u_pol.x > 0.001) {
+    // The e-vector is perpendicular to the scattering plane, so it already lies
+    // across the view ray; measure its angle in the frame's own basis, or the
+    // filter would not track the camera as it swings.
+    vec3 fwd = dirFromAngles(u_cam.y, u_cam.x);
+    vec3 camRight = normalize(cross(vec3(0.0, 1.0, 0.0), fwd) + vec3(1e-6, 0.0, 0.0));
+    vec3 camUp = cross(fwd, camRight);
+    vec3 e = normalize(cross(rd, sunDir) + vec3(1e-6));
+    float ePhi = atan(dot(e, camUp), dot(e, camRight));
+
+    sky *= polarizerTransmission(dop, ePhi);
+
+    // the veil a polarizer removes is multiply-scattered white light, so what
+    // survives reads more saturated than the darkening alone would explain.
+    // dot() against the Rec.709 coefficients is a real luminance here — in the
+    // old gamma-encoded pipeline it never was
+    if (u_pol.z > 0.001) {
+      float lum = dot(sky, vec3(0.2126, 0.7152, 0.0722));
+      sky = max(mix(vec3(lum), sky, 1.0 + u_pol.z * dop * u_pol.x), 0.0);
+    }
+  }
 
   // overcast: the sky's blue drains toward a bright grey (including the sky peeking through gaps)
   float overcastSky = smoothstep(0.5, 0.95, u_cover);
-  sky = mix(sky, mix(vec3(0.050, 0.055, 0.070), vec3(0.70, 0.73, 0.76), dayF), overcastSky * 0.85);
+  sky = overlay(sky, mix(vec3(0.050, 0.055, 0.070), vec3(0.70, 0.73, 0.76), dayF), overcastSky * 0.85);
 
   // severe weather: darken the whole sky to a leaden grey
-  sky = mix(sky, vec3(0.16, 0.18, 0.21) * (0.25 + 0.75 * dayF), gloom * 0.75);
+  sky = overlay(sky, vec3(0.16, 0.18, 0.21) * (0.25 + 0.75 * dayF), gloom * 0.75);
 
   // ── Stars (night, low cloud. Determined by direction, so they stay pinned to the celestial sphere as the view swings) ──
   {
@@ -381,18 +814,182 @@ void main() {
     vec2 sg = starGrid(rd) * 62.0;
     vec2 cell = floor(sg);
     float sr = hash12(cell);
-    vec2 off = vec2(hash12(cell + 7.7), hash12(cell + 3.3)) - 0.5;
-    float d = length(fract(sg) - 0.5 - off * 0.5);
-    // a few bright stars + faint stars (kept subtle)
-    float bright = step(0.99, sr);
-    float faint = step(0.96, sr) - bright;
-    float star = bright * smoothstep(0.20, 0.0, d) * 0.9
-               + faint * smoothstep(0.11, 0.0, d) * 0.35;
+    // Nearly the full cell. At the old +/-0.25 every star sat in the middle of its
+    // own cell, which reads as a lattice the moment enough of them are visible —
+    // and the magnitude model made a lot more of them visible.
+    vec2 off = (vec2(hash12(cell + 7.7), hash12(cell + 3.3)) - 0.5) * 0.84;
+    float d = length(fract(sg) - 0.5 - off);
+
+    float darkness = (9.0 - u_sky.x) / 8.0;
+    // The Milky Way is a star cloud, not luminous fog: it reaches deeper into the
+    // field where the band runs, and most of its brightness arrives as resolved
+    // stars. The diffuse term below is only the unresolved remainder.
+    // how far below the suburban default this site sits: gates every
+    // dark-sky-only term, so Bortle 6 and up stay exactly the sky this has
+    // always drawn
+    float deep = clamp((6.0 - u_sky.x) / 5.0, 0.0, 1.0);
+    float mwBulge; float mwRift; float mwGlow; float mwBase;
+    float mwHere = milkyWayBand(rd, u_sky.y, mwBulge, mwRift, mwGlow, mwBase);
+
+    // Intrinsic brightness, power-law distributed: a handful of bright stars, a
+    // great many faint ones. This is what carries the variation — deriving
+    // brightness from distance above the visibility limit instead (as this did at
+    // first) puts most of the visible population against the clamp at maximum
+    // size, and every star ends up the same.
+    float mag0 = pow(sr, 8.0);
+
+    // The limit decides *whether* a star shows, not how bright it is. It falls as
+    // the sky darkens, so dragging light pollution reveals fainter stars rather
+    // than switching populations on and off.
+    float cutoff = mix(0.002, 0.93, clamp((u_sky.x - 1.0) / 8.0, 0.0, 1.0));
+    // The band is a star cloud first and a glow second, so it has to reach much
+    // deeper into the field than it did — at 0.55 the density inside the band was
+    // barely distinguishable from the sky beside it and the whole thing read as a
+    // smooth smear. Squared so the dense core pulls far harder than the wings.
+    // (floored: the bulge can push the band past 1, and a negative cutoff would
+    // invert the renormalisation below)
+    cutoff *= max(1.0 - 0.93 * mwHere * (0.45 + 0.55 * mwHere), 0.02);
+    // dust extinction raises the limiting magnitude: inside the Rift the faint
+    // stars vanish outright, not just dim — that is what makes it read as a
+    // thing standing in front of the field
+    cutoff = min(cutoff * (1.0 + 2.5 * mwRift), 0.93);
+    float shows = smoothstep(cutoff * 0.75, cutoff * 1.9 + 0.004, mag0);
+
+    // renormalised across the surviving population so the full range of sizes is
+    // present at every Bortle. cutoff tops out at 0.93, so this cannot blow up
+    float m = clamp((mag0 - cutoff) / max(1.0 - cutoff, 0.07), 0.0, 1.0);
+    float radius = mix(0.030, 0.20, m * m);
+    float amp = mix(0.05, 1.0, m * m * m);          // cubed: the bright ones carry
+    float star = smoothstep(radius, 0.0, d) * amp * shows * (0.55 + 0.45 * darkness);
+    // The band's extra depth cannot come through the cutoff at a dark site —
+    // it is already saturated by Bortle 1 — so it arrives as amplitude, and
+    // the Rift takes it back away: the dust is in front of these stars.
+    star *= (1.0 + 1.0 * mwBase) * (1.0 - 0.70 * mwRift);
     float twinkle = 0.8 + 0.2 * sin(u_time * (1.0 + fract(sr * 13.0) * 2.0) + sr * 40.0);
-    vec3 tint = mix(vec3(0.8, 0.88, 1.0), vec3(1.0, 0.93, 0.85), fract(sr * 71.0));
-    sky += tint * star * twinkle * nightF
-         * smoothstep(0.02, 0.16, h)
-         * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
+    vec3 tint = L(mix(vec3(0.8, 0.88, 1.0), vec3(1.0, 0.93, 0.85), fract(sr * 71.0)));
+    // at a dark site the top of the population splits into its two real color
+    // classes — hot blue-white and cool amber — instead of a uniform grey
+    tint = mix(tint, L(mix(vec3(0.60, 0.76, 1.00), vec3(1.00, 0.78, 0.55),
+                           step(0.5, fract(sr * 71.0)))),
+               deep * smoothstep(0.70, 0.92, m) * 0.85);
+    // atmospheric extinction: near the skyline stars redden and dim rather
+    // than switching off (the suburban horizon keeps its old hard fade)
+    tint *= mix(vec3(1.0), vec3(0.95, 0.72, 0.52), deep * smoothstep(0.30, 0.02, h));
+    // stars reach the skyline at a dark site; under light pollution the
+    // horizon dome still swallows the lowest ones (0.16 is the old suburban
+    // behavior, kept exactly)
+    // the lower edge dips below the horizon at a dark site, so the grain meets
+    // the skyline instead of stopping on a visible line just above it
+    float horizonGate = smoothstep(mix(0.02, -0.02, deep), mix(0.16, 0.05, deep), h);
+    float vis = star * twinkle * nightF
+              * horizonGate
+              * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
+    sky += tint * vis * STAR_LUM;
+    // a star's blue or amber is genuinely outside sRGB — the strongest claim here
+    wide = max(wide, vis * 0.9);
+
+    // the Milky Way shares the star field's occlusion exactly — same night, same
+    // cloud, same gloom — so it is gated here rather than duplicating all of it
+    float mwGate = nightF * horizonGate
+                 * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
+    float mw = mwHere * mwGate;
+
+    // ── Second, finer star layer: the unresolved-into-resolved crowd ──
+    // One star per cell tops out the density the main grid can reach, and a real
+    // dark-sky band is grain, not a ceiling. A denser grid of small faint stars
+    // fills in underneath: thickest inside the band, spreading over the whole
+    // sky as the site darkens. Scaled by deep so it is *exactly* zero at Bortle
+    // 6 and up — the default sky never pays for it or shows it — and fades in
+    // continuously below.
+    if (deep > 0.0) {
+      vec2 sg2 = starGrid(rd) * 158.0;
+      vec2 cell2 = floor(sg2);
+      float sr2 = hash12(cell2 + 19.19);
+      vec2 off2 = (vec2(hash12(cell2 + 5.1), hash12(cell2 + 9.7)) - 0.5) * 0.88;
+      float d2 = length(fract(sg2) - 0.5 - off2);
+      float mag2 = pow(sr2, 6.0);
+      // how far down the population this site+direction reaches: the band shows
+      // most of it, the dark sky beside it a decent fraction
+      // in-band reach tops out near half the cells: any denser and the grains
+      // sit inside each other's contrast radius and fuse into a plateau
+      // the band term starts a little above the profile's skirt, so the deep
+      // wings do not smear the band's density gain over the whole sky
+      float reach = deep * (0.16 + 0.46 * clamp(mwBase * 1.2 - 0.10, 0.0, 1.0))
+                  * (1.0 - 0.60 * mwRift);
+      float c2 = pow(1.0 - 0.88 * reach, 6.0);
+      float shows2 = smoothstep(c2 * 0.6, c2 * 1.9 + 0.003, mag2);
+      float m2 = clamp((mag2 - c2) / max(1.0 - c2, 0.2), 0.0, 1.0);
+      // small and dim on purpose: these read as texture between the resolved
+      // stars, not as a second population of discs
+      // radius floor: cells are ~6px, so anything under ~0.12 cell radius
+      // starts skipping pixel centers and the population thins out unseen
+      float radius2 = mix(0.15, 0.26, m2);
+      // brightened inside the band — the cutoff has no depth left to give at a
+      // dark site, so the density contrast is carried by amplitude — and cut
+      // by the Rift, which stands in front of these stars too. The boost is
+      // moderate on purpose: pushed harder, the grains merge into a texture
+      // and stop reading as stars at all
+      float amp2 = mix(0.06, 0.42, m2 * m2) * deep
+                 * (1.0 + 1.6 * clamp(mwBase - 0.08, 0.0, 1.2)) * (1.0 - 0.75 * mwRift);
+      float star2 = smoothstep(radius2, 0.0, d2) * amp2 * shows2;
+      vec3 tint2 = L(mix(vec3(0.84, 0.89, 1.0), vec3(1.0, 0.93, 0.87), fract(sr2 * 53.0)));
+      sky += tint2 * star2 * mwGate * STAR_LUM;
+      wide = max(wide, star2 * mwGate * 0.5);
+
+      // Third grid, band-only: the near-continuous sand of the star clouds.
+      // One dim, half-resolved star per finer cell; the sky outside the band
+      // never evaluates it, and the default sky never reaches here at all
+      float band3 = deep * clamp(mwBase * 1.1 - 0.12, 0.0, 1.0) * (1.0 - 0.85 * mwRift);
+      if (band3 > 0.0) {
+        vec2 sg3 = starGrid(rd) * 258.0;
+        vec2 cell3 = floor(sg3);
+        float sr3 = hash12(cell3 + 41.7);
+        vec2 off3 = (vec2(hash12(cell3 + 13.1), hash12(cell3 + 27.9)) - 0.5) * 0.86;
+        float d3 = length(fract(sg3) - 0.5 - off3);
+        float mag3 = pow(sr3, 4.0);
+        // visible fraction is 0.30*band3 exactly (the pow4 cancels against the
+        // mag3 distribution): a third of the cells lit keeps the grains
+        // separable — at 90% they fuse into a plateau and stop reading as stars
+        float c3 = pow(1.0 - 0.40 * min(band3, 1.0), 4.0);
+        float shows3 = smoothstep(c3 * 0.6, c3 * 1.9 + 0.003, mag3);
+        float m3 = clamp((mag3 - c3) / max(1.0 - c3, 0.25), 0.0, 1.0);
+        // radius floor matters: these cells are ~3.6px, so a disc under ~0.2
+        // cell radius falls between pixel centers and never draws at all
+        // deliberately just under the eye's "one star" threshold: this layer is
+        // the sand between the countable stars, not a third countable class
+        float star3 = smoothstep(mix(0.22, 0.36, m3), 0.0, d3)
+                    * mix(0.10, 0.25, m3 * m3) * band3 * shows3
+                    * (1.0 - 0.78 * mwRift);
+        vec3 tint3 = L(mix(vec3(0.86, 0.90, 1.0), vec3(1.0, 0.94, 0.88), fract(sr3 * 37.0)));
+        sky += tint3 * star3 * mwGate * STAR_LUM;
+        wide = max(wide, star3 * mwGate * 0.4);
+      }
+    }
+
+    if (mw > 0.0001) {
+      // Colour follows the band's own structure: lavender through the body of
+      // the band, pink-magenta where the bulge swells (reddened by its own
+      // dust), blue out along the thin reaches — the hue map of a long-exposure
+      // photograph, carried well below photographic saturation. Light pollution
+      // then does what it does to everything — washes the colour out and pulls
+      // it toward the sky glow — so the same slider that thins the stars also
+      // drains the band.
+      vec3 core = vec3(1.00, 0.62, 0.80);        // the bulge, reddened by its own dust
+      vec3 body = vec3(0.63, 0.54, 0.94);        // the band's lavender midriff
+      vec3 edge = vec3(0.38, 0.52, 1.00);        // hot young stars out along the arms
+      float dens = clamp(mwHere / max(u_sky.y, 1e-4), 0.0, 1.0);
+      vec3 mwCol = mix(edge, body, smoothstep(0.03, 0.40, dens));
+      mwCol = mix(mwCol, core, mwBulge * smoothstep(0.20, 0.75, dens));
+      float wash = clamp((u_sky.x - 2.0) / 5.0, 0.0, 1.0);
+      mwCol = mix(mwCol, vec3(0.74, 0.75, 0.70), wash * 0.8);
+      // Only the unresolved remainder — the stars carry the rest. Kept low, and
+      // weighted toward the dense parts, so it does not flatten into fog.
+      sky += L(mwCol) * mw * (0.30 + 0.70 * dens) * 0.050;
+      // the bulge carried as luminance too, so the swelling reads as light and
+      // not only as width (rift-cut inside milkyWayBand)
+      sky += L(mix(core, vec3(0.74, 0.75, 0.70), wash * 0.8)) * mwGlow * mwGate * 0.047;
+      wide = max(wide, mw * 0.22);
+    }
   }
 
   // ── Moon (night. Placed opposite the sun — the full-moon relationship) ──
@@ -403,11 +1000,56 @@ void main() {
     // the crescent bite: carve it out with a circle offset slightly from the moon's center
     vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), moonDir));
     vec3 up = cross(moonDir, right);
-    vec3 biteDir = normalize(moonDir + right * 0.016 + up * 0.008);
-    float bite = smoothstep(0.051, 0.045, acos(clamp(dot(rd, biteDir), -1.0, 1.0)));
+    vec3 biteDir = normalize(moonDir - right * 0.013 + up * 0.013);
+    float bite = smoothstep(0.054, 0.048, acos(clamp(dot(rd, biteDir), -1.0, 1.0)));
     float vis = nightF * clamp(1.0 - u_cover * 0.9 - gloom, 0.0, 1.0);
-    sky += vec3(0.93, 0.95, 1.0) * clamp(moon - bite * 0.92, 0.0, 1.0) * vis;
-    sky += vec3(0.4, 0.5, 0.7) * exp(-ang * 14.0) * 0.22 * vis;
+    float cres = clamp(moon - bite, 0.0, 1.0);
+
+    // Moon-fixed frame: the ray projected onto the disc plane, in units of the
+    // disc radius. The mare pattern samples this, so it stays glued to the
+    // surface however the camera swings.
+    vec2 muv = vec2(dot(rd, right), dot(rd, up)) / 0.048;
+    float mare = smoothstep(0.42, 0.72, fbm(muv * 2.3 + vec2(4.7, 9.2)));
+
+    // Earthshine. The shadowed disc is rock, not glass: it occludes the stars
+    // behind it (a replace, not an add) and holds a faint blue-grey glow of
+    // sunlight bounced off the Earth, an order of magnitude under the crescent.
+    // The occlusion saturates early so a clear-night vis of 0.9 does not leak
+    // 10% of every star through the rock, yet it still follows vis down under
+    // cloud so a heavy overcast dims the disc away instead of punching a dark
+    // hole in the cloud glow (and vis=0 keeps the mix an identity by day).
+    vec3 shine = L(vec3(0.62, 0.68, 0.78)) * (1.0 - 0.5 * mare) * 0.016 * MOON_LUM;
+    sky = mix(sky, shine, moon * smoothstep(0.0, 0.55, vis));
+
+    // The lit crescent: overexposed warm white, linear-light emission
+    sky += L(vec3(1.0, 0.96, 0.88)) * cres * vis * MOON_LUM;
+
+    // Bloom leans toward the crescent (away from the bite offset), warm like
+    // the light that causes it; the shadowed limb keeps only a trace. Kept
+    // tight so it does not wash the Milky Way band nearby.
+    vec2 biteOff = normalize(vec2(-0.013, 0.013));
+    float sideW = 0.5 - 0.5 * dot(muv, biteOff) / max(length(muv), 1e-3);
+    sideW = 0.12 + 0.88 * sideW;
+    float rim = exp(-max(ang - 0.045, 0.0) * 30.0) * (1.0 - moon);
+    // near-white with only a hint of warmth: a stronger yellow muddied to
+    // brown against the lavender of the Milky Way band
+    sky += L(vec3(1.0, 0.95, 0.87)) * rim * sideW * 0.30 * vis;
+    // a whisper of scattered moonlight haze just past the limb, all around
+    sky += L(vec3(0.45, 0.55, 0.75)) * exp(-max(ang - 0.045, 0.0) * 11.0)
+         * (1.0 - moon) * 0.035 * vis;
+    wide = max(wide, max(cres, rim * sideW * 0.30) * vis * 0.7);
+  }
+
+  // ── Meteors ──
+  {
+    vec3 m = meteorStreak(rd, u_time, u_sky.z, u_sky.w, u_radiant);
+    float mi = max(max(m.r, m.g), m.b);
+    if (mi > 0.0001) {
+      float vis = nightF * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
+      // burns hot enough to claim gamut like the other light sources
+      sky += L(m) * vis * STAR_LUM * 0.85;
+      wide = max(wide, mi * vis * 0.85);
+    }
   }
 
   // ── Sun (an overexposed blowout. The core saturates flat, the edge falls off steeply) ──
@@ -415,16 +1057,38 @@ void main() {
                * clamp(1.0 - u_cover * 0.75 - gloom * 0.95, 0.0, 1.0);
   float sunAng = acos(clamp(dot(rd, sunDir), -1.0, 1.0));
   {
-    vec3 sunCol = mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF);
+    vec3 sunCol = L(mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF));
     // gain the core and clamp → produces a flat, saturated white patch at the center
     float core = clamp(exp(-sunAng * sunAng * 900.0) * 2.2, 0.0, 1.0);
-    sky = mix(sky, vec3(1.0), core * sunVis);
+    sky = mix(sky, vec3(SUN_LUM), core * sunVis);
     // keep the surrounding bleed subtle (a scattering halo)
-    sky += sunCol * exp(-sunAng * 4.0) * 0.22 * sunVis;
+    float halo = exp(-sunAng * 4.0);
+    sky += sunCol * halo * 0.22 * sunVis * HALO_LUM;
+    // no sunsetF gate: at midday sunCol is near-white and the widening is
+    // self-cancelling, so this only bites once the halo has turned orange.
+    // halo carries the same 0.22 as its bleed — see the invariant above
+    wide = max(wide, max(core, halo * 0.22) * sunVis * 0.6);
   }
 
   // night city lights (a warm glow along the horizon — a Tokyo-like sky)
-  sky += vec3(0.26, 0.16, 0.09) * exp(-h * 8.0) * nightF * 0.4 * (1.0 - gloom * 0.6);
+  // 0.4 at Bortle 6, which is what this has always drawn; nothing at Bortle 1
+  sky += L(vec3(0.26, 0.16, 0.09)) * exp(-h * 8.0) * nightF
+       * (0.4 * (u_sky.x - 1.0) / 5.0) * (1.0 - gloom * 0.6);
+
+  // airglow: at a truly dark site the horizon carries a faint green-grey rim of
+  // atmospheric chemiluminescence instead of city light. A thin rim — a fat
+  // scale height reads as haze and swallows the lowest stars. Shares the second
+  // star layer's gate, so it is exactly absent at Bortle 6 and up.
+  float agDeep = clamp((6.0 - u_sky.x) / 5.0, 0.0, 1.0);
+  if (agDeep > 0.0) {
+    // rippled around the compass — real airglow hangs in uneven waves, and a
+    // uniform rim reads as a printed strip. Seeded off the horizontal ray
+    // components, so it is seamless in azimuth and pinned as the view swings
+    float agN = fbm2(vec2(rd.x, rd.z) * 2.5 + 31.0);
+    sky += L(vec3(0.30, 0.52, 0.38)) * exp(-h * (9.0 + 7.0 * agN)) * nightF
+         * (0.07 * (0.55 + 0.90 * agN) * agDeep)
+         * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
+  }
 
   // ── Lightning (computed before the clouds so it lights them too) ──
   float flash = 0.0;
@@ -445,6 +1109,7 @@ void main() {
   float az = atan(rd.x, rd.z);
   // the cloud plane's coordinate system is world xz; fold the sun direction onto the same plane
   vec2 ldir = normalize(sunDir.xz + vec2(1e-4, 1e-4));
+  // display-encoded: this tints the cloud palette, which is authored there
   vec3 cloudSun = mix(vec3(1.05, 1.0, 0.95), vec3(1.1, 0.55, 0.3), sunsetF);
 
   // the cloud plane's projection scale (= altitude). Higher layers are larger, so the same lump looks smaller
@@ -462,23 +1127,23 @@ void main() {
     float f = filament(planeUV(rd, rdY, ALT_HIGH, u_windOff * 0.3) + vec2(u_windOff * 0.14, 0.0));
     vec3 col = mix(vec3(1.0), vec3(1.05, 0.62, 0.55), sunsetF);
     col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
-    sky = mix(sky, col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
+    sky = overlay(sky, col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
   }
   // Cirrostratus Cs (veil cloud) — a thin veil across the whole sky. Haloes the sun
   if (u_high.y > 0.001) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_HIGH * 0.5, u_windOff * 0.3), 0.35, 0.0);
     vec3 col = mix(vec3(0.86, 0.89, 0.95), vec3(1.02, 0.80, 0.72), sunsetF);
     col = mix(vec3(0.22, 0.26, 0.38), col, max(dayF, sunsetF * 0.8));
-    sky = mix(sky, col, s.x * u_high.y * 0.45 * horizonFade);
+    sky = overlay(sky, col, s.x * u_high.y * 0.45 * horizonFade);
     // the 22° halo (refraction through ice crystals)
-    sky += vec3(1.0, 0.95, 0.85) * smoothstep(0.028, 0.0, abs(sunAng - 0.384))
+    sky += L(vec3(1.0, 0.95, 0.85)) * smoothstep(0.028, 0.0, abs(sunAng - 0.384))
          * u_high.y * sunVis * 0.30;
   }
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
   if (u_high.z > 0.001) {
     vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir);
     vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightF, sunsetF, flash, gloom, 0.5, cloudSun);
-    sky = mix(sky, col, g.x * u_high.z * 0.85 * horizonFade);
+    sky = overlay(sky, col, g.x * u_high.z * 0.85 * horizonFade);
   }
 
   // ── Mid layer, 2000–7000m ───────────────────────────
@@ -506,13 +1171,13 @@ void main() {
          * through * (1.0 - thick * 0.75) * 0.85;
     col += flash * vec3(0.75, 0.80, 1.0) * 0.5;
 
-    sky = mix(sky, col, s.x * u_mid.x * 0.95 * horizonFade);
+    sky = overlay(sky, col, s.x * u_mid.x * 0.95 * horizonFade);
   }
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
   if (u_mid.y > 0.001) {
     vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightF, sunsetF, flash, gloom, 0.9, cloudSun);
-    sky = mix(sky, col, g.x * u_mid.y * 0.95 * horizonFade);
+    sky = overlay(sky, col, g.x * u_mid.y * 0.95 * horizonFade);
   }
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
   if (u_mid.z > 0.001) {
@@ -525,7 +1190,7 @@ void main() {
     // the thicker the cloud, the lower the dark end sinks
     vec3 col = lit * mix(0.74, mix(0.40, 0.20, u_mid.z), s.y);
     col += flash * vec3(0.75, 0.80, 1.0) * 0.6;
-    sky = mix(sky, col, s.x * u_mid.z * 0.99 * horizonFade);
+    sky = overlay(sky, col, s.x * u_mid.z * 0.99 * horizonFade);
   }
 
   // ── Cumulonimbus Cb (thunderhead) ──
@@ -766,7 +1431,12 @@ void main() {
       // clear sky it takes on a clear blue cast — deeper than a photo's
       // "neutral" reading suggests. The overcast pull below neutralizes it
       // again when there's no blue sky to reflect
-      vec3 hi  = mix(vec3(0.13, 0.14, 0.18), vec3(0.985, 0.985, 0.970), dayF);
+      // daytime hi was authored warm of white (R > B) while every other
+      // layer's lit face leans blue (cloudColor: cool ambient + cloudSun),
+      // so the tower read as a cream mass in a neutral sky. Match the other
+      // clouds' color temperature; sunset warmth is layered on below and
+      // keeps its own tint
+      vec3 hi  = mix(vec3(0.13, 0.14, 0.18), vec3(0.918, 0.948, 0.985), dayF);
       vec3 mid = mix(vec3(0.09, 0.10, 0.13), vec3(0.765, 0.825, 0.920), dayF);
       vec3 lo  = mix(vec3(0.05, 0.06, 0.08), vec3(0.415, 0.545, 0.775), dayF);
       hi  = mix(hi,  hi  * vec3(1.10, 0.84, 0.62), sunsetF * 0.85);
@@ -828,7 +1498,7 @@ void main() {
       // the other layers would dissolve the cloud base into haze and make it vanish.
       float cbFade = smoothstep(-0.02, 0.06, rd.y);
       cbMask = clamp(m, 0.0, 1.0) * 0.97 * cbFade;
-      sky = mix(sky, tcol, cbMask);
+      sky = overlay(sky, tcol, cbMask);
     }
 
     // ── Veil cloud (velum) ──
@@ -861,7 +1531,9 @@ void main() {
         // a thin veil, so the edge dissolves broadly into the sky
         float v = smoothstep(-0.16, 0.40, vfield) * u_cbFeat.y;
         if (v > 0.001) {
-          vec3 vcol = mix(vec3(0.11, 0.12, 0.15), vec3(0.96, 0.96, 0.97), dayF);
+          // lean the same slightly-blue white as the tower's daytime hi —
+          // a neutral-warm white here reads as cream against the other layers
+          vec3 vcol = mix(vec3(0.11, 0.12, 0.15), vec3(0.935, 0.950, 0.970), dayF);
           vcol = mix(vcol, vcol * vec3(1.10, 0.88, 0.72), sunsetF * 0.8);
           vcol = mix(vcol, vec3(0.21, 0.22, 0.25) * (0.25 + 0.75 * dayF), gloom * 0.85);
           // the underside sinks into shadow, the top face catches the sun
@@ -869,7 +1541,7 @@ void main() {
           // skin. Multiplicative so it adds texture without changing overall brightness
           float vFray = vnoise(vcyl * 4.2 + 3.0) * 0.6 + vnoise(vcyl * 9.5 + 11.0) * 0.4 - 0.5;
           vcol *= 1.0 + vFray * 0.22;
-          sky = mix(sky, vcol, v * 0.70 * horizonFade);
+          sky = overlay(sky, vcol, v * 0.70 * horizonFade);
         }
       }
     }
@@ -880,7 +1552,7 @@ void main() {
   if (u_low.y > 0.001) {
     vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightF, sunsetF, flash, gloom, 1.05, cloudSun);
-    sky = mix(sky, col, g.x * u_low.y * 0.95 * horizonFade);
+    sky = overlay(sky, col, g.x * u_low.y * 0.95 * horizonFade);
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
   if (u_low.z > 0.02) {
@@ -908,7 +1580,7 @@ void main() {
     // shade from continuous thickness across the wide ramp, not from the saturated density (den)
     float thick = smoothstep(edge, edge + 0.35, dl.z);
     vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightF, sunsetF, flash, gloom, 1.0, cloudSun);
-    sky = mix(sky, c, alpha * 0.97);
+    sky = overlay(sky, c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 1.2, u_windOff * 1.9) + 51.7;
@@ -917,7 +1589,7 @@ void main() {
     float falpha = fl.x * u_low.z * horizonFade * (1.0 - cbMask * 0.6);
     float fthick = smoothstep(fedge, fedge + 0.35, fl.z);
     vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightF, sunsetF, flash, gloom, 1.25, cloudSun);
-    sky = mix(sky, fc, falpha * 0.95);
+    sky = overlay(sky, fc, falpha * 0.95);
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
   if (u_low.x > 0.001) {
@@ -925,7 +1597,7 @@ void main() {
     vec3 col = cloudColor(0.95, -0.25, 0.60,
                           dayF, nightF, sunsetF, flash, gloom, 1.2, cloudSun) * 0.86;
     float lowBias = mix(1.0, 0.40, smoothstep(0.05, 0.55, rd.y));
-    sky = mix(sky, col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
+    sky = overlay(sky, col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
   }
 
   // ── Light leaking in under the cloud base ──
@@ -937,7 +1609,7 @@ void main() {
     vec3 leak = mix(vec3(0.055, 0.058, 0.066), vec3(0.70, 0.70, 0.63), dayF);
     leak = mix(leak, vec3(0.86, 0.60, 0.40), sunsetF * 0.7);
     float band = smoothstep(0.22, 0.005, rd.y) * smoothstep(-0.02, 0.02, rd.y);
-    sky = mix(sky, leak, band * deck * 0.88);
+    sky = overlay(sky, leak, band * deck * 0.88);
   }
 
   // ── Pannus (ragged scud beneath rain clouds) ──
@@ -952,7 +1624,7 @@ void main() {
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 0.42, u_windOff * 2.4) + 77.0;
     vec3 fr = cloudField(fuv, churn + 0.45, ldir, 0.90 - u_mid.z * 0.22, ramp * 2.2);
     vec3 fcol = mix(vec3(0.030, 0.033, 0.040), vec3(0.26, 0.27, 0.29), dayF);
-    sky = mix(sky, fcol, fr.x * u_mid.z * fband * 0.80);
+    sky = overlay(sky, fcol, fr.x * u_mid.z * fband * 0.80);
   }
 
   // ── Below the horizon (out of frame with the default framing; used when looking down and for the skybox's lower hemisphere) ──
@@ -960,7 +1632,7 @@ void main() {
     vec3 ground = mix(vec3(0.020, 0.022, 0.028), vec3(0.17, 0.165, 0.150), dayF);
     ground = mix(ground, ground * 0.6, gloom * 0.5);
     ground += vec3(0.06, 0.03, 0.015) * sunsetF * 0.5;
-    sky = mix(sky, ground, smoothstep(0.0, -0.05, rd.y));
+    sky = overlay(sky, ground, smoothstep(0.0, -0.05, rd.y));
   }
 
   // ── Rain (thin threads slanting with the wind. A lens-face phenomenon, so screen space) ──
@@ -979,7 +1651,7 @@ void main() {
       float line = smoothstep(0.16, 0.05, abs(fract(g.x) - 0.5));
       rain += active * line * smoothstep(0.24, 0.03, drop) * smoothstep(0.0, 0.015, drop);
     }
-    sky = mix(sky, sky * 0.92 + vec3(0.5, 0.55, 0.63) * 0.35, clamp(rain, 0.0, 1.0) * u_rain * 0.32);
+    sky = overlay(sky, encodeSrgb(sky) * 0.92 + vec3(0.5, 0.55, 0.63) * 0.35, clamp(rain, 0.0, 1.0) * u_rain * 0.32);
   }
 
   // ── Snow ──
@@ -1020,16 +1692,20 @@ void main() {
       float edge = mix(0.10, 0.72, k);
       flakes += active * smoothstep(rad, rad * edge, d) * mix(0.55, 1.0, k);
     }
-    sky = mix(sky, vec3(0.95, 0.96, 1.0), clamp(flakes, 0.0, 1.0) * u_snow * 0.85);
+    sky = overlay(sky, vec3(0.95, 0.96, 1.0), clamp(flakes, 0.0, 1.0) * u_snow * 0.85);
 
     // the snowfall itself whites out visibility — flakes alone don't sell the impression of heavy snow.
     // a snowy sky is bright grey, unlike a rain cloud, so lift it here
     vec3 whiteout = mix(vec3(0.28, 0.30, 0.34), vec3(0.92, 0.93, 0.95), dayF);
-    sky = mix(sky, whiteout, u_snow * 0.55);
+    sky = overlay(sky, whiteout, u_snow * 0.55);
   }
 
   // lightning's glow reflected across the whole sky
-  sky += flash * vec3(0.85, 0.9, 1.1) * (0.18 + 0.3 * (1.0 - h));
+  sky += flash * L(vec3(0.85, 0.9, 1.1)) * (0.18 + 0.3 * (1.0 - h)) * FLASH_LUM;
+  // the blue-white of a flash already runs past 1.0 and gets clipped; in P3 more
+  // of it survives. Claimed at the glow's own weight, so it covers the whole sky
+  // during a flash and nothing between flashes
+  wide = max(wide, clamp(flash * (0.18 + 0.3 * (1.0 - h)), 0.0, 1.0) * 0.7);
 
   // ── Haze/mist (the shorter the visibility, the further out — toward the horizon — it crushes white) ──
   if (u_haze > 0.001) {
@@ -1039,7 +1715,9 @@ void main() {
     // thin haze only crushes the horizon; the thicker it gets, the higher it climbs toward the zenith, covering the whole sky
     float reach = mix(0.22, 1.0, u_haze * u_haze);
     float hz = u_haze * mix(1.0, reach, smoothstep(0.0, 0.45, h));
-    sky = mix(sky, hazeCol, clamp(hz, 0.0, 0.96));
+    // cutting haze is half the reason to carry the filter
+    hz *= 1.0 - u_pol.x * dop * 0.45;
+    sky = overlay(sky, hazeCol, clamp(hz, 0.0, 0.96));
   }
 
   // ── Lens flare (only while the sun is on screen. An artifact inside the lens, so screen space) ──
@@ -1053,25 +1731,36 @@ void main() {
       float fl = sunVis * smoothstep(0.02, 0.18, sunEl) * onScreen;
       vec3 flare = vec3(0.0);
       // ghosts lined up along the optical axis (each a different color, from chromatic aberration)
-      flare += vec3(1.0, 0.75, 0.45) * 0.055 * ghost(p, sunPos + axis * 0.45, 0.030, aspect);
-      flare += vec3(0.45, 1.0, 0.60) * 0.045 * ghost(p, sunPos + axis * 0.75, 0.018, aspect);
-      flare += vec3(0.55, 0.65, 1.0) * 0.050 * ghost(p, sunPos + axis * 1.35, 0.055, aspect);
-      flare += vec3(1.0, 0.55, 0.75) * 0.035 * ghost(p, sunPos + axis * 1.80, 0.095, aspect);
+      flare += L(vec3(1.0, 0.75, 0.45)) * 0.055 * ghost(p, sunPos + axis * 0.45, 0.030, aspect);
+      flare += L(vec3(0.45, 1.0, 0.60)) * 0.045 * ghost(p, sunPos + axis * 0.75, 0.018, aspect);
+      flare += L(vec3(0.55, 0.65, 1.0)) * 0.050 * ghost(p, sunPos + axis * 1.35, 0.055, aspect);
+      flare += L(vec3(1.0, 0.55, 0.75)) * 0.035 * ghost(p, sunPos + axis * 1.80, 0.095, aspect);
       // a large, faint colored ring
       float rg = length((p - (sunPos + axis * 1.1)) * vec2(aspect, 1.0));
-      flare += vec3(0.9, 0.75, 1.0) * 0.030 * smoothstep(0.012, 0.0, abs(rg - 0.16));
+      flare += L(vec3(0.9, 0.75, 1.0)) * 0.030 * smoothstep(0.012, 0.0, abs(rg - 0.16));
       // an anamorphic-ish horizontal streak
       vec2 dsun = (p - sunPos) * vec2(aspect, 1.0);
-      flare += vec3(0.8, 0.85, 1.0) * 0.10 * exp(-abs(dsun.y) * 60.0) * exp(-abs(dsun.x) * 4.0);
+      flare += L(vec3(0.8, 0.85, 1.0)) * 0.10 * exp(-abs(dsun.y) * 60.0) * exp(-abs(dsun.x) * 4.0);
       sky += flare * fl;
     }
   }
 
   // the rim of a lens droplet: bleeds slightly dark
-  sky = mix(sky, sky * 0.88 + vec3(0.03), clamp(dropMask, 0.0, 1.0) * 0.55);
+  sky = overlay(sky, encodeSrgb(sky) * 0.88 + vec3(0.03), clamp(dropMask, 0.0, 1.0) * 0.55);
 
   // ── Vignette ──
-  sky *= 1.0 - 0.22 * length(p - vec2(0.5, 0.45));
+  // Display-referred, unlike the polarizer above. A polarizer is a real
+  // transmission and belongs in linear light; a vignette is a chosen falloff that
+  // was dialled in on encoded values, and multiplying linear light by the same
+  // factor lands visibly weaker (0.5 goes to 0.48 instead of 0.45).
+  sky = L(encodeSrgb(sky) * (1.0 - 0.22 * length(p - vec2(0.5, 0.45))));
+
+  // ── Linear light → display ──
+  // Everything above this line is linear scene light and may run far past 1.0
+  // (the sun's core, a lightning flash). Everything below is display-referred:
+  // the film grade, the gamut conversion and the dither all keep their original
+  // meaning only in encoded values, so they stay on this side of the encode.
+  sky = encodeSrgb(tonemap(max(sky, 0.0)));
 
   // ── Color filter ──
   if (u_filtAmt > 0.001) {
@@ -1081,7 +1770,18 @@ void main() {
     sky = mix(sky, g, clamp(u_filtAmt, 0.0, 1.0));
   }
 
-  // dither (to prevent banding)
+  // ── Wide gamut ──
+  if (u_p3 > 0.5) {
+    // Reading the untransformed values as P3 numbers gives "the same nominal
+    // color, at the highest purity P3 can express" — so reaching past sRGB is
+    // exactly undoing part of the conversion. wide=0 is appearance-preserving,
+    // wide=1 degenerates to the naive over-saturated flip; nothing in between
+    // can blow up, and no new color literal is needed.
+    sky = mix(srgbToDisplayP3(sky), sky, clamp(wide, 0.0, 1.0) * ${GAMUT_REACH.toFixed(4)});
+  }
+
+  // dither (to prevent banding). Last, so it lands in whatever space the 8-bit
+  // drawing buffer actually quantizes
   sky += (hash12(gl_FragCoord.xy + fract(u_time)) - 0.5) * (2.0 / 255.0);
 
   gl_FragColor = vec4(sky, 1.0);
@@ -1109,7 +1809,29 @@ const UNIFORM_NAMES = [
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
+  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant',
 ] as const;
+
+export interface RendererOptions {
+  /** which color space to render into. Defaults to `'auto'` — see {@link ColorSpaceOption} */
+  colorSpace?: ColorSpaceOption;
+  /**
+   * Display ceiling, in multiples of SDR white. Defaults to 1 (standard range).
+   *
+   * The scene is composited in linear light and the light sources emit well past
+   * 1.0, so this is the headroom the tone map's shoulder expands into. 1 keeps
+   * the classic look — the sun's core flat white. Above 1 the sun, moon, stars
+   * and lightning get brighter than paper white *if* the output can carry it.
+   *
+   * WebGL has no HDR output path today: `drawingBufferColorSpace` accepts only
+   * `srgb` and `display-p3`, and neither `drawingBufferToneMapping` nor the
+   * `rec2100-*` spaces are implemented in any shipping browser. So values above
+   * 1 are clipped by the 8-bit drawing buffer for now, and this exists so the
+   * shader is already correct when that changes (or when driven from a
+   * float16 WebGPU/WebGL2 target).
+   */
+  headroom?: number;
+}
 
 /**
  * The atmosphere renderer. One `render()` call is one frame (one image seen from one camera).
@@ -1118,18 +1840,21 @@ const UNIFORM_NAMES = [
  */
 export class AtmosphereRenderer {
   private canvas: HTMLCanvasElement;
+  private readonly opts: RendererOptions;
   private gl: WebGLRenderingContext | null = null;
   private program: WebGLProgram | null = null;
   private buffer: WebGLBuffer | null = null;
   private u: Uniforms = {};
   private lost = false;
+  private p3 = false;
   // kept so dispose() can detach them. A disposed renderer that still listens
   // would re-init on a context restore and steal the live renderer's program
   private readonly onLost = (e: Event) => { e.preventDefault(); this.lost = true; };
   private readonly onRestored = () => { this.lost = false; this.init(); };
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, options: RendererOptions = {}) {
     this.canvas = canvas;
+    this.opts = options;
     canvas.addEventListener('webglcontextlost', this.onLost);
     canvas.addEventListener('webglcontextrestored', this.onRestored);
     this.init();
@@ -1138,6 +1863,15 @@ export class AtmosphereRenderer {
   /** false in environments where WebGL isn't available (the caller should keep its fallback background) */
   get available(): boolean { return this.gl !== null; }
 
+  /**
+   * The space actually being rendered into — `'display-p3'` only where the
+   * browser supports it, whatever was requested.
+   *
+   * A 2D canvas that receives a `drawImage` of this one should be created with
+   * the same `colorSpace`, or the wide-gamut pixels get clipped in the copy.
+   */
+  get colorSpace(): PredefinedColorSpace { return this.p3 ? 'display-p3' : 'srgb'; }
+
   private init(): void {
     const gl = this.canvas.getContext('webgl', {
       alpha: false, antialias: false, depth: false, stencil: false,
@@ -1145,6 +1879,15 @@ export class AtmosphereRenderer {
     });
     if (!gl) { this.gl = null; return; }
     this.gl = gl;
+
+    // Assigning an unsupported value is specified to leave the property alone,
+    // so read it back rather than trusting the write. init() also runs on
+    // context restore, which is what re-applies this after a GPU reset
+    this.p3 = false;
+    if (this.opts.colorSpace !== 'srgb' && 'drawingBufferColorSpace' in gl) {
+      gl.drawingBufferColorSpace = 'display-p3';
+      this.p3 = gl.drawingBufferColorSpace === 'display-p3';
+    }
 
     const compile = (type: number, src: string): WebGLShader | null => {
       const sh = gl.createShader(type);
@@ -1243,6 +1986,15 @@ export class AtmosphereRenderer {
     gl.uniform3f(u.u_filtTint, s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]);
     gl.uniform1f(u.u_filtSat, s.filter.saturation);
     gl.uniform1f(u.u_filtLift, s.filter.lift);
+    gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
+    gl.uniform1f(u.u_headroom, Math.max(1, this.opts.headroom ?? 1));
+    const t = s.tone;
+    gl.uniform4f(u.u_tone, t.exposure, t.contrast, t.knee, t.bleach);
+    const pz = s.polarizer;
+    gl.uniform4f(u.u_pol, pz.strength, pz.angle, pz.saturation, pz.stopLoss);
+    const ce = s.celestial;
+    gl.uniform4f(u.u_sky, ce.bortle, ce.milkyWay, ce.meteors, ce.radiant ? 1 : 0);
+    gl.uniform2f(u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

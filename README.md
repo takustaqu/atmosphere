@@ -211,6 +211,152 @@ uploading as cube-map faces. It creates and disposes a throwaway WebGL context
 per call, so it's for baking on a scene change, not for calling every frame
 (it throws when WebGL isn't available).
 
+## The night sky — light pollution, the Milky Way, meteors
+
+The counterpart to `weather`. Weather is what the air is doing; `celestial` is
+what is behind it. They are separate axes because they are independent — a meteor
+shower is not a weather condition, and the same shower looks like nothing at all
+under cloud.
+
+```ts
+sky.set({ celestial: 'perseids' });
+sky.set({ celestial: { bortle: 3 } });                  // Milky Way follows from it
+sky.set({ celestial: { bortle: 2, meteors: 40 } });
+```
+
+Units follow the same rule as weather: whatever the observation is actually
+measured in.
+
+| property | unit | meaning |
+|:---|:---|:---|
+| `bortle` | 1..9 | the **Bortle dark-sky scale**. Drives star density and the horizon glow of city light. Defaults to 6 — the bright suburban sky this has always drawn |
+| `milkyWay` | 0..1 | visibility. Derived from `bortle` when not given: gone by Bortle 6, which is why the default sky has never shown one |
+| `meteors` | /h | **ZHR** (zenithal hourly rate). ~5 is the sporadic background; the Perseids peak near 100, the Geminids near 150. Defaults to 0. **A ZHR counts the whole sky** and a frame covers under a fifth of it, so an honest 150 puts one in shot every few minutes — use values in the thousands if you want them watchable |
+| `radiant` | `[elevation, azimuth]` | where a shower's meteors stream from. `null` gives sporadics, from anywhere |
+
+Presets: `dark-sky` `rural` `suburban` `city` `perseids` `geminids`.
+
+The default is a no-op — `celestial: 'suburban'` is pixel-identical to omitting it
+entirely, so nothing about the existing sky changes until you ask for something.
+
+Two things are worth knowing about how these are drawn:
+
+**The Milky Way is made of stars.** The band raises the local star density rather
+than painting a luminous stripe; the diffuse glow is only the unresolved
+remainder. Drawn the other way it reads as an airbrushed diagonal, which is
+exactly what it looked like before this was fixed. It is additive light in linear
+space — a faint band over a near-black sky is precisely the case that goes wrong
+in gamma-encoded compositing.
+
+**Meteors are events, not objects.** They run on the same machinery as lightning:
+chop the clock into slots, hash each one, fire if it clears the threshold. They
+are drawn in ray space, so a meteor stays where it is in the sky as the view
+swings rather than being glued to the frame.
+
+> Under `prefers-reduced-motion: reduce` the `Atmosphere` loop draws a single
+> still frame, so `meteors` is forced to 0 there — a streak caught mid-flight
+> would sit on the sky as a scratch. Driving `AtmosphereRenderer` yourself, that
+> is your call to make.
+
+## Tone curve
+
+Scene-referred, unlike the color filters below: these act on linear scene light
+before it becomes display values, which is the only place they mean anything. A
+multiply in linear light is an exposure; the same multiply on gamma-encoded values
+is just an odd darkening.
+
+```ts
+sky.set({ tone: 'filmic' });
+sky.set({ tone: { exposure: 0.4, contrast: 1.15 } });
+sky.set({ tone: { id: 'punch', bleach: 0.3 } });
+```
+
+| field | what it does |
+|:---|:---|
+| `exposure` | stops. 0 unchanged, +1 is twice the light |
+| `contrast` | pivoted on 18% grey. 1 unchanged |
+| `knee` | where the highlight shoulder starts. **Identity below it**, so the default 0.8 shapes only blown highlights |
+| `bleach` | 0..1 highlight desaturation toward white — what film does, and what stops a bright sky clipping into a muddy cast |
+
+Presets: `neutral` `flat` `punch` `filmic` `blown`.
+
+The knee is the important one. At 0.8 the published look is untouched; bring it
+down to put the curve through the midtones, and that is where it becomes a look.
+The same shoulder is what expands into `headroom` when there is HDR to expand
+into, so a curve dialled in now stays the curve later.
+
+## Circular polarizer
+
+A CPL emulation — not a grade. It is an optical filter, so it is a transmission
+multiply on scene light, applied to the sky gradient *before* the clouds, sun,
+moon and stars composite over it.
+
+```ts
+sky.set({ polarizer: 'strong' });
+sky.set({ polarizer: { strength: 0.6, angle: Math.PI / 4 } });
+sky.set({ polarizer: true });    // shorthand for a light CPL
+```
+
+The physics it follows: Rayleigh-scattered skylight is partially polarized, most
+strongly 90° from the sun (`sin²θ / (1 + cos²θ)`), while cloud light is Mie-scattered
+off droplets and comes out essentially unpolarized — as does direct sunlight. So
+the filter darkens the sky and leaves the clouds alone, which is the whole reason
+to carry one. Measured on a clear noon sky facing away from the sun at
+`strength: 0.9`:
+
+| | luma vs unfiltered |
+|:---|---:|
+| clear sky, `angle: 0` | **62%** |
+| clear sky, `angle: π/2` | **126%** |
+| overcast (all cloud) | **99.8%** |
+
+Clouds pop because the sky behind them dropped, not because they got brighter.
+Rotating `angle` sweeps smoothly between those extremes with a period of 180°, and
+because the polarization direction rotates across the frame, a wide shot picks up
+an uneven band of darkening — a real artifact of the real filter, reproduced.
+
+| field | what it does |
+|:---|:---|
+| `strength` | 0..1 how much of the polarized component is rejected |
+| `angle` | rotation in radians. ~0 darkens, ~π/2 brightens |
+| `saturation` | 0..1 extra saturation on what survives (the white veil goes with the polarized part) |
+| `stopLoss` | 0..1 how much of the real ~1.3-stop loss to apply. Defaults to 0 — emulating the loss without the exposure compensation just makes the picture dark |
+
+Presets: `none` `light` `strong` `crossed`.
+
+## Display P3
+
+Rendered in Display P3 where the browser supports it, sRGB otherwise. No setup
+needed — `colorSpace` defaults to `'auto'`.
+
+```ts
+const sky = new Atmosphere(canvas, { colorSpace: 'srgb' });   // opt out
+sky.colorSpace;   // 'display-p3' or 'srgb' — what's actually in use
+```
+
+The conversion is appearance-preserving: the palette is untouched, and the sky
+looks the same on either display. What it buys is narrow but real — highlights
+that run past 1.0 (the sun's core, a lightning flash) clip later in P3, so a
+little more of the blowout survives.
+
+It does **not** currently reach outside sRGB, and that's a property of the
+palette, not an oversight. sRGB and Display P3 share the same blue primary, so
+P3's extra room is entirely in red and green — and a sky is blue-dominated. The
+one warm color, magic hour's amber, composites down to a desaturated salmon that
+sits well inside sRGB. Measured with a two-space readback diff, deliberately
+widening the light sources moves them under 1.5% past sRGB, and magic hour never
+leaves sRGB at all. Getting a visible wide-gamut sky means re-tuning the ~60
+color literals against P3 primaries; the machinery for that is in place
+(`GAMUT_REACH` in `renderer.ts`), unused.
+
+Baking wide-gamut faces needs the receiving 2D canvas to agree, or the copy
+clips back to sRGB. `renderCubeFaces` handles this; a hand-rolled loop should
+pass `renderer.colorSpace` through:
+
+```ts
+canvas.getContext('2d', { colorSpace: renderer.colorSpace }).drawImage(source, 0, 0);
+```
+
 ## Reduced motion
 
 A full-screen background in constant motion is hard on users with vestibular
@@ -240,6 +386,9 @@ sky.reducedMotion;   // true while the sky is being held still
 | `WEATHER_PRESETS` / `FILTER_PRESETS` | presets |
 | `DEFAULT_CAMERA` / `CUBE_FACE_CAMERAS` | cameras |
 | `renderCubeFaces(c, opts)` | bake the 6 skybox faces in one call, as 2D canvases |
+| `resolveCelestial(c)` | resolving a night-sky specification |
+| `resolveTone(t)` / `resolvePolarizer(p)` | resolving a tone curve / polarizer specification |
+| `srgbToDisplayP3(c)` / `displayP3ToSrgb(c)` | convert an encoded color between the two spaces |
 | `formatTod(tod)` | `14.5` → `"14:30"` |
 | `weatherLabel(id, locale)` / `filterLabel(id, locale)` / `cloudGenusLabel(id, locale)` | localized labels (`'en'` / `'ja'`) |
 

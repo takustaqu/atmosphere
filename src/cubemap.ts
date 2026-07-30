@@ -6,6 +6,7 @@
 // texture, a shared context), drive AtmosphereRenderer + CUBE_FACE_CAMERAS
 // yourself; this file is barely more than that loop.
 
+import { type ColorSpaceOption } from './gamut.js';
 import { AtmosphereRenderer } from './renderer.js';
 import { CUBE_FACE_CAMERAS, resolveConditions, type Conditions } from './state.js';
 
@@ -14,6 +15,8 @@ export interface CubeFacesOptions {
   size?: number;
   /** the moment for time-based phenomena (rain phase, twinkle). Defaults to 0 */
   timeSec?: number;
+  /** which color space to bake into. Defaults to `'auto'` — the faces come back in the same space */
+  colorSpace?: ColorSpaceOption;
 }
 
 /**
@@ -34,7 +37,7 @@ export function renderCubeFaces(
 ): HTMLCanvasElement[] {
   const size = options.size ?? 512;
   const source = document.createElement('canvas');
-  const renderer = new AtmosphereRenderer(source);
+  const renderer = new AtmosphereRenderer(source, { colorSpace: options.colorSpace });
   if (!renderer.available) {
     renderer.dispose({ loseContext: true });
     throw new Error('atmosphere: WebGL is not available');
@@ -48,8 +51,10 @@ export function renderCubeFaces(
       const face = document.createElement('canvas');
       face.width = size;
       face.height = size;
-      // copy synchronously, before the drawing buffer can be cleared by compositing
-      face.getContext('2d')!.drawImage(source, 0, 0);
+      // copy synchronously, before the drawing buffer can be cleared by
+      // compositing. Match the renderer's space, or a wide-gamut bake gets
+      // clipped back to sRGB right here
+      face.getContext('2d', { colorSpace: renderer.colorSpace })!.drawImage(source, 0, 0);
       return face;
     });
   } finally {

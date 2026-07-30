@@ -5,7 +5,7 @@
 // No DOM/framework dependency. React bindings are the sample in examples/.
 
 export { Atmosphere, type AtmosphereOptions } from './atmosphere.js';
-export { AtmosphereRenderer } from './renderer.js';
+export { AtmosphereRenderer, type RendererOptions } from './renderer.js';
 export { StateAnimator, lerpWrapped, type AnimatorOptions } from './animator.js';
 export { renderCubeFaces, type CubeFacesOptions } from './cubemap.js';
 
@@ -60,6 +60,51 @@ export {
   type FilterInput,
   type FilterPreset,
 } from './filter.js';
+
+export {
+  CELESTIAL_PRESETS,
+  CELESTIAL_IDS,
+  isCelestialId,
+  resolveCelestial,
+  milkyWayFromBortle,
+  DEFAULT_CELESTIAL,
+  type Celestial,
+  type CelestialId,
+  type CelestialInput,
+  type CelestialPreset,
+} from './celestial.js';
+
+export {
+  TONE_PRESETS,
+  TONE_IDS,
+  isToneId,
+  resolveTone,
+  NEUTRAL_TONE,
+  type ToneCurve,
+  type ToneId,
+  type ToneInput,
+  type TonePreset,
+} from './tone.js';
+
+export {
+  POLARIZER_PRESETS,
+  POLARIZER_IDS,
+  isPolarizerId,
+  resolvePolarizer,
+  NO_POLARIZER,
+  type Polarizer,
+  type PolarizerId,
+  type PolarizerInput,
+  type PolarizerPreset,
+} from './polarizer.js';
+
+export {
+  srgbToDisplayP3,
+  displayP3ToSrgb,
+  SRGB_TO_DISPLAY_P3,
+  DISPLAY_P3_TO_SRGB,
+  type ColorSpaceOption,
+} from './gamut.js';
 
 export {
   solarPosition,

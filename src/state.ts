@@ -3,9 +3,12 @@
 // This is effectively atmosphere's public interface:
 //   Conditions (what a human specifies) → AtmosphereState (what the renderer interprets)
 
+import { resolveCelestial, type Celestial, type CelestialInput } from './celestial.js';
 import { resolveFilter, type ColorFilter, type FilterInput } from './filter.js';
+import { resolvePolarizer, type Polarizer, type PolarizerInput } from './polarizer.js';
 import { nominalSolarPosition, solarPosition, type GeoLocation } from './sun.js';
 import { toDate, toTimeOfDay, type TimeInput } from './time.js';
+import { resolveTone, type ToneCurve, type ToneInput } from './tone.js';
 import { resolveWeather, type WeatherInput, type WeatherState } from './weather.js';
 
 /**
@@ -48,8 +51,14 @@ export interface Conditions {
   location?: GeoLocation | null;
   /** weather, either a preset name or raw observation values */
   weather?: WeatherInput;
-  /** color filter */
+  /** color filter — a display-referred grade (sepia, mono, …) */
   filter?: FilterInput;
+  /** tone curve — scene-referred: exposure, contrast, highlight shoulder */
+  tone?: ToneInput;
+  /** circular polarizer. Darkens the sky 90° from the sun and leaves the clouds alone */
+  polarizer?: PolarizerInput;
+  /** what is behind the air: light pollution, the Milky Way, meteors */
+  celestial?: CelestialInput;
   /** camera (partial is fine) */
   camera?: Partial<Camera>;
 }
@@ -63,6 +72,9 @@ export interface AtmosphereState extends WeatherState {
   /** solar azimuth in radians. north=0, east=π/2 */
   sunAzimuth: number;
   filter: ColorFilter;
+  tone: ToneCurve;
+  polarizer: Polarizer;
+  celestial: Celestial;
 }
 
 export const DEFAULT_CONDITIONS: Required<Pick<Conditions, 'time' | 'weather'>> = {
@@ -88,6 +100,9 @@ export function resolveConditions(c: Conditions): AtmosphereState {
     sunAzimuth: sun.azimuth,
     ...resolveWeather(c.weather ?? DEFAULT_CONDITIONS.weather),
     filter: resolveFilter(c.filter),
+    tone: resolveTone(c.tone),
+    polarizer: resolvePolarizer(c.polarizer),
+    celestial: resolveCelestial(c.celestial),
   };
 }
 

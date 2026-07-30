@@ -38,9 +38,12 @@ const TAU_2PI = Math.PI * 2;
  * array). `current` is mutated in place every frame, so sharing any of these
  * with the caller's target would make the target drift along with it.
  */
-function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'clouds' | 'features'> {
+function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone' | 'polarizer' | 'celestial' | 'clouds' | 'features'> {
   return {
     filter: { ...s.filter, tint: [s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]] },
+    tone: { ...s.tone },
+    polarizer: { ...s.polarizer },
+    celestial: { ...s.celestial, radiant: s.celestial.radiant ? [s.celestial.radiant[0], s.celestial.radiant[1]] : null },
     clouds: { ...s.clouds },
     features: { ...s.features },
   };
@@ -117,6 +120,29 @@ export class StateAnimator {
       f.tint[1] + (tf.tint[1] - f.tint[1]) * k,
       f.tint[2] + (tf.tint[2] - f.tint[2]) * k,
     ];
+
+    // the tone curve transitions too, so a scene cut can ride an exposure ramp
+    const tn = c.tone, tt = target.tone;
+    tn.exposure += (tt.exposure - tn.exposure) * k;
+    tn.contrast += (tt.contrast - tn.contrast) * k;
+    tn.knee += (tt.knee - tn.knee) * k;
+    tn.bleach += (tt.bleach - tn.bleach) * k;
+
+    const pz = c.polarizer, pt = target.polarizer;
+    pz.strength += (pt.strength - pz.strength) * k;
+    pz.saturation += (pt.saturation - pz.saturation) * k;
+    pz.stopLoss += (pt.stopLoss - pz.stopLoss) * k;
+    // a polarizer repeats every 180°, so rotate along the shorter arc over PI —
+    // otherwise turning past the axis unwinds the long way round
+    pz.angle = lerpWrapped(pz.angle, pt.angle, k, Math.PI);
+
+    const ce = c.celestial, ct = target.celestial;
+    ce.bortle += (ct.bortle - ce.bortle) * k;
+    ce.milkyWay += (ct.milkyWay - ce.milkyWay) * k;
+    ce.meteors += (ct.meteors - ce.meteors) * k;
+    // the radiant is a place, not a quantity — sliding it would drag every
+    // meteor's origin across the sky mid-shower. Cut to the new one instead
+    ce.radiant = ct.radiant ? [ct.radiant[0], ct.radiant[1]] : null;
 
     // real elapsed time, plus however much the time of day moved
     // (clouds should have drifted by however much time passed)

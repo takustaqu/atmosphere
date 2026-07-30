@@ -7,6 +7,7 @@
 // To integrate with your own loop instead, use AtmosphereRenderer + StateAnimator directly.
 
 import { StateAnimator, type AnimatorOptions } from './animator.js';
+import { type ColorSpaceOption } from './gamut.js';
 import { AtmosphereRenderer } from './renderer.js';
 import {
   resolveCamera, resolveConditions,
@@ -21,6 +22,13 @@ export interface AtmosphereOptions extends Conditions {
    * devicePixelRatio (capped at 1.5) × 0.55, rendered small and scaled up by CSS.
    */
   resolutionScale?: number;
+  /**
+   * which color space to render into. Defaults to `'auto'`: Display P3 where
+   * the browser supports it, sRGB otherwise. The two look the same on an sRGB
+   * display — what P3 buys is the sun, moon, stars, lightning and magic-hour
+   * amber reaching colors sRGB can't express.
+   */
+  colorSpace?: ColorSpaceOption;
   /** tuning for following / wind / shape evolution */
   animator?: AnimatorOptions;
   /** pass false to not start rendering on construction */
@@ -76,11 +84,14 @@ export class Atmosphere {
       location: options.location,
       weather: options.weather,
       filter: options.filter,
+      tone: options.tone,
+      polarizer: options.polarizer,
+      celestial: options.celestial,
       camera: options.camera,
     };
     this.target = resolveConditions(this.conditions);
     this.cam = resolveCamera(options.camera);
-    this.renderer = new AtmosphereRenderer(canvas);
+    this.renderer = new AtmosphereRenderer(canvas, { colorSpace: options.colorSpace });
     this.animator = new StateAnimator(this.target, options.animator);
 
     this.resize();
@@ -101,6 +112,9 @@ export class Atmosphere {
   /** false in environments where WebGL isn't available */
   get available(): boolean { return this.renderer.available; }
 
+  /** the space actually being rendered into (`'display-p3'` only where supported) */
+  get colorSpace(): PredefinedColorSpace { return this.renderer.colorSpace; }
+
   /**
    * A snapshot of the current (mid-transition) state.
    *
@@ -115,6 +129,12 @@ export class Atmosphere {
       clouds: { ...c.clouds },
       features: { ...c.features },
       filter: { ...c.filter, tint: [...c.filter.tint] },
+      tone: { ...c.tone },
+      polarizer: { ...c.polarizer },
+      celestial: {
+        ...c.celestial,
+        radiant: c.celestial.radiant ? [c.celestial.radiant[0], c.celestial.radiant[1]] : null,
+      },
     };
   }
 
@@ -207,6 +227,10 @@ export class Atmosphere {
     const dt = Math.min(0.2, (t - this.last) / 1000);
     this.last = t;
     this.animator.step(this.target, dt);
+    // A meteor only reads as a meteor because it moves. Under reduced motion the
+    // loop draws a single still frame, so one caught mid-flight would sit there
+    // as a scratch across the sky — suppress them rather than freeze them.
+    if (this.reducedMotion) this.animator.current.celestial.meteors = 0;
     this.renderer.render(
       (t - this.startedAt) / 1000,
       this.animator.current,
