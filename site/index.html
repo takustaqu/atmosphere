@@ -222,8 +222,8 @@
     margin: 0 0 22px; font-size: 13px; font-weight: 600;
     letter-spacing: 0.19em; color: var(--ink-dim);
   }
-  /* four cards: 300px keeps it to two columns, so they land 2×2 instead of
-     3 + a lone one */
+  /* six cards: 300px keeps it to two or three columns, so they land 2×3
+     or 3×2 instead of a row with a lone one */
   .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
   .card {
     padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius);
@@ -231,7 +231,7 @@
   }
   .card h3 { margin: 0 0 7px; font-size: 15px; font-weight: 600; color: var(--ink-bright); }
   .card p { margin: 0; font-size: 13.5px; color: var(--ink-dim); line-height: 1.7; }
-  /* nine tiles, 3x3 at full width */
+  /* twelve tiles, 3x4 at full width */
   .gallery { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
   .gallery figure { margin: 0; }
   .gallery canvas {
@@ -296,8 +296,8 @@
     <div id="lede">
       <h1>atmosphere</h1>
       <p id="tagline">
-        <span class="ja">天気、時間、場所、雲の種類、好きな空を作れます。</span>
-        <span class="en">Weather, time, place, cloud type — make any sky you like.</span>
+        <span class="ja">天気、時間、場所、雲、星空 — 好きな空を作れます。</span>
+        <span class="en">Weather, time, place, clouds, stars — make any sky you like.</span>
       </p>
       <div id="cta">
         <code class="pill">npm i @takustaqu/atmosphere</code>
@@ -360,6 +360,20 @@
         <p>
           <span class="ja">雨・雪・風・雷・靄。mm/h や m/s といった観測単位で渡せるので、気象 API の応答をほぼそのまま流し込めます。</span>
           <span class="en">Rain, snow, wind, lightning and haze — taken in observation units (mm/h, m/s, km), so a weather API's response passes through almost as-is.</span>
+        </p>
+      </div>
+      <div class="card">
+        <h3><span class="ja">夜空</span><span class="en">The night sky</span></h3>
+        <p>
+          <span class="ja">光害はボートルスケールで。暗い空では天の川が星の集まりとして現れ、流星群は ZHR で流せます。月は地球照と欠けまで。</span>
+          <span class="en">Light pollution on the Bortle scale. Under a dark sky the Milky Way appears as resolved stars, meteor showers run at a ZHR, and the moon carries its earthshine and phase.</span>
+        </p>
+      </div>
+      <div class="card">
+        <h3><span class="ja">露出と偏光</span><span class="en">Exposure and optics</span></h3>
+        <p>
+          <span class="ja">合成は線形光。露出・コントラスト・ショルダーのトーンカーブと、CPL フィルタのエミュレーションを備えます。</span>
+          <span class="en">Compositing is done in linear light, with a tone curve — exposure, contrast, shoulder — and a circular-polarizer emulation on top.</span>
         </p>
       </div>
       <div class="card">

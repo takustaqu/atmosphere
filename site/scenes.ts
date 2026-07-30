@@ -62,7 +62,19 @@ export const SCENES: readonly Scene[] = [
   {
     ja: '夜の空に、小さな輝きが広がる事を知った時',
     en: 'When you first saw the small lights spread across the night',
-    conditions: { time: 22.5, weather: 'clear' },
+    // The one line that is literally about the night sky, so it gets the best one
+    // there is: Bortle 1 is the bottom of the scale — no light pollution at all,
+    // which also zeroes the horizon glow — with the Milky Way at full strength.
+    //
+    // A ZHR counts the WHOLE sky and this frame is a slice of it, so 3000 is not
+    // a rate that could occur; it is what it takes for a visitor who is here for
+    // seconds rather than hours to actually see one. Chosen to be watchable, not
+    // to be real.
+    conditions: {
+      time: 22.5,
+      weather: 'clear',
+      celestial: { bortle: 1, milkyWay: 1, meteors: 3000 },
+    },
   },
 ];
 
