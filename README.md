@@ -27,7 +27,11 @@ be an easy way to get a sky that keeps changing procedurally.
 ## What it draws
 
 - **Time of day** — the sky's gradient, the sun (an outline-less blown-out glare),
-  sunset/magic-hour mauve, stars, the moon, city lights at night
+  sunset/magic-hour mauve, city lights at night
+- **The night sky** — light pollution on the Bortle scale, a Milky Way made of
+  resolved stars with its bulge and Great Rift, meteor showers at a ZHR
+- **The moon** — a crescent with earthshine and maria on the dark side;
+  the disc occludes the stars behind it
 - **The ten cloud genera** — cirrus, cirrostratus, cirrocumulus, altostratus,
   altocumulus, nimbostratus, stratus, stratocumulus, cumulus, cumulonimbus.
   A perspective projection from the intersection of the view ray and each
@@ -41,6 +45,8 @@ be an easy way to get a sky that keeps changing procedurally.
 - **Visibility** — haze/mist/fog. Thin haze only crushes the horizon; thick haze covers the whole sky
 - **Lens flare** — ghosts along the optical axis, chromatic aberration, anamorphic-style streaks
 - **Color filters** — sepia, monochrome, cyanotype, and more
+- **Photographic controls** — a tone curve over the linear-light composite,
+  and a circular-polarizer emulation
 
 ## Setting the weather
 
@@ -533,16 +539,19 @@ single, smooth white sheet over the tower's flank.
 
 ## Not implemented
 
-- Moon phases and orbit (currently a full moon fixed opposite the sun at 35° elevation)
+- Moon orbit and phase from the date (currently a crescent fixed opposite the sun at 35° elevation)
 - Other variants (lenticular, fallstreak holes, mammatus, pileus, etc.)
 - A physical atmospheric-scattering model (colors are hand-tuned, not Rayleigh/Mie)
 - A path for temperature, humidity, and pressure themselves (visibility and cloud cover stand in for now)
 
 ## Distribution
 
-This ships **TypeScript source as-is**, not a build artifact
-(`exports` points at `src/*.ts`). It assumes a bundler like Vite.
-`pnpm typecheck` checks types only.
+The npm package ships **built ESM bundles with type declarations**
+(`exports` points at `dist/`), with no dependencies — no bundler required.
+The TypeScript source rides along in `src/` for reference; in the
+repository, `pnpm typecheck` checks it and `pnpm build` produces `dist/`.
+
+Release history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
