@@ -43,6 +43,19 @@
   #toggle:hover { background: rgba(255,255,255,0.14); }
 
   h2 { margin: 16px 0 8px; font-size: 10px; letter-spacing: 0.14em; color: #6f7883; font-weight: 600; }
+  .drawer { border-bottom: 1px solid #1e252d; }
+  .drawer > summary {
+    list-style: none; cursor: pointer; user-select: none;
+    padding: 10px 2px; font-size: 10px; letter-spacing: 0.14em;
+    color: #8d97a3; font-weight: 600; text-transform: uppercase;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .drawer > summary::-webkit-details-marker { display: none; }
+  .drawer > summary::before { content: '+'; color: #5a636d; font-size: 12px; width: 8px; }
+  .drawer[open] > summary::before { content: '\2212'; }
+  .drawer > summary:hover { color: #c9d1d9; }
+  .drawer[open] > summary { color: #8fb6e8; }
+  .drawer-body { padding: 0 0 12px; }
   h2:first-child { margin-top: 4px; }
   .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
   .row label { flex: 0 0 92px; color: #99a1ab; }

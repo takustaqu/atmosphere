@@ -10,12 +10,14 @@
 
 import {
   Atmosphere, AtmosphereRenderer,
+  CELESTIAL_IDS, CELESTIAL_PRESETS,
+  POLARIZER_IDS, POLARIZER_PRESETS, TONE_IDS, TONE_PRESETS,
   CLOUD_GENERA, CLOUD_GENERA_IDS, CUBE_FACE_CAMERAS,
   FILTER_IDS, WEATHER_IDS, WEATHER_PRESETS,
   cloudGenusLabel, filterLabel, weatherLabel,
   formatTod, resolveConditions,
   type CloudMix, type Conditions,
-  type FilterId, type GeoLocation, type Weather, type WeatherId,
+  type CelestialId, type FilterId, type PolarizerId, type ToneId, type GeoLocation, type Weather, type WeatherId,
 } from '../../src';
 
 const canvas = document.getElementById('sky') as HTMLCanvasElement;
@@ -49,12 +51,25 @@ const ui = {
   featureMode: 'auto' as 'auto' | 'manual',
   features: { anvil: 0, velum: 0 },
   filter: 'none' as FilterId,
+  tone: { ...TONE_PRESETS.neutral } as { exposure: number; contrast: number; knee: number; bleach: number },
+  polarizer: { ...POLARIZER_PRESETS.none } as {
+    strength: number; angle: number; saturation: number; stopLoss: number;
+  },
+  // starts on the default suburban sky, so the controller opens on exactly the
+  // sky it has always shown
+  celestial: { ...CELESTIAL_PRESETS.suburban } as {
+    bortle: number; milkyWay: number; meteors: number;
+    radiant: readonly [number, number] | null;
+  },
 };
 
 // the camera (for looking around). Defaults to a background-friendly, south-facing framing
 const cam = { yaw: Math.PI, pitch: 0.46, fov: 0.86 };
 
 const sky = new Atmosphere(canvas, { time: ui.timeOfDay, weather: ui.weather, camera: cam });
+// expose for scripted QA, same as the playground's __skies (headless viewers
+// report visibility=hidden so rAF never fires; a script can jump() to draw)
+(globalThis as any).__sky = sky;
 
 /** build Conditions from the UI state and apply it */
 function apply(): void {
@@ -72,6 +87,9 @@ function apply(): void {
       features: ui.featureMode === 'manual' ? ui.features : undefined,
     } as Weather,
     filter: ui.filter,
+    celestial: ui.celestial,
+    tone: ui.tone,
+    polarizer: ui.polarizer,
   };
   sky.set(conditions);
   readout(conditions);
@@ -122,18 +140,30 @@ function hud(): void {
 }
 
 // ── Panel building blocks ──────────────────────────────
-function section(title: string): HTMLElement {
-  const h = document.createElement('h2');
-  h.textContent = title;
-  panel.append(h);
-  return h;
+// Controls append to whichever drawer is currently open, not to the panel — so
+// section() switches the target and every slider() / chips() / note() after it
+// lands inside. The panel had grown past a screenful of flat rows.
+let host: HTMLElement = panel;
+
+function section(title: string, open = false): HTMLElement {
+  const box = document.createElement('details');
+  box.className = 'drawer';
+  if (open) box.open = true;
+  const head = document.createElement('summary');
+  head.textContent = title;
+  const body = document.createElement('div');
+  body.className = 'drawer-body';
+  box.append(head, body);
+  panel.append(box);
+  host = body;
+  return head;
 }
 
 function note(text: string): void {
   const p = document.createElement('p');
   p.className = 'note';
   p.textContent = text;
-  panel.append(p);
+  host.append(p);
 }
 
 function slider(
@@ -151,7 +181,7 @@ function slider(
   const sync = () => { input.value = String(get()); out.textContent = fmt(get()); };
   input.addEventListener('input', () => { set(Number(input.value)); out.textContent = fmt(get()); apply(); });
   row.append(l, input, out);
-  panel.append(row);
+  host.append(row);
   sync();
   return sync;
 }
@@ -171,7 +201,7 @@ function chips(
     box.append(b);
     return { id: it.id, el: b };
   });
-  panel.append(box);
+  host.append(box);
   const sync = () => els.forEach(({ id, el }) => el.classList.toggle('on', isOn(id)));
   sync();
   return sync;
@@ -181,7 +211,7 @@ const syncers: (() => void)[] = [];
 const refreshAll = () => syncers.forEach((f) => f());
 
 // ── Assembling the panel ────────────────────────────────
-section('Presets');
+section('Presets', true);
 note('Swap a full set of observation values in at once, then dial it in with the sliders below.');
 syncers.push(chips(
   WEATHER_IDS.map((id) => ({ id, label: weatherLabel(id) })),
@@ -265,6 +295,75 @@ syncers.push(slider('Anvil', 0, 1, 0.01,
   () => ui.features.anvil, (v) => { ui.features.anvil = v; ui.featureMode = 'manual'; }, (v) => v.toFixed(2)));
 syncers.push(slider('Veil', 0, 1, 0.01,
   () => ui.features.velum, (v) => { ui.features.velum = v; ui.featureMode = 'manual'; }, (v) => v.toFixed(2)));
+
+section('Tone curve');
+note('Scene-referred: these act on linear light before it becomes display values, '
+  + 'which is the only place they mean anything. The knee is the one to watch — '
+  + 'below it the curve is exactly identity, so at 0.80 only blown highlights are '
+  + 'shaped. Bring it down and it starts being a look.');
+syncers.push(chips(
+  TONE_IDS.map((id) => ({ id, label: TONE_PRESETS[id].label })),
+  (id) => {
+    const t = TONE_PRESETS[id as ToneId];
+    return ui.tone.exposure === t.exposure && ui.tone.contrast === t.contrast
+      && ui.tone.knee === t.knee && ui.tone.bleach === t.bleach;
+  },
+  (id) => { ui.tone = { ...TONE_PRESETS[id as ToneId] }; },
+));
+syncers.push(slider('Exposure (stops)', -2, 2, 0.05,
+  () => ui.tone.exposure, (v) => { ui.tone.exposure = v; }, (v) => v.toFixed(2)));
+syncers.push(slider('Contrast @18%', 0.5, 1.8, 0.01,
+  () => ui.tone.contrast, (v) => { ui.tone.contrast = v; }, (v) => v.toFixed(2)));
+syncers.push(slider('Shoulder knee', 0.05, 0.99, 0.01,
+  () => ui.tone.knee, (v) => { ui.tone.knee = v; }, (v) => v.toFixed(2)));
+syncers.push(slider('Highlight bleach', 0, 1, 0.01,
+  () => ui.tone.bleach, (v) => { ui.tone.bleach = v; }, (v) => v.toFixed(2)));
+
+section('Circular polarizer');
+note('An optical filter, not a grade: it rejects light by polarization, so it '
+  + 'darkens the sky 90 degrees from the sun and leaves the clouds — whose light '
+  + 'is unpolarized — alone. Best seen on a clear or lightly clouded day with the '
+  + 'sun off to one side. Turn the angle to sweep the effect.');
+syncers.push(chips(
+  POLARIZER_IDS.map((id) => ({ id, label: POLARIZER_PRESETS[id].label })),
+  (id) => {
+    const p = POLARIZER_PRESETS[id as PolarizerId];
+    return ui.polarizer.strength === p.strength && ui.polarizer.angle === p.angle;
+  },
+  (id) => { ui.polarizer = { ...POLARIZER_PRESETS[id as PolarizerId] }; },
+));
+syncers.push(slider('Strength', 0, 1, 0.01,
+  () => ui.polarizer.strength, (v) => { ui.polarizer.strength = v; }, (v) => v.toFixed(2)));
+syncers.push(slider('Filter angle', 0, 180, 1,
+  () => (ui.polarizer.angle * 180) / Math.PI,
+  (v) => { ui.polarizer.angle = (v * Math.PI) / 180; }, (v) => `${v.toFixed(0)}deg`));
+syncers.push(slider('Saturation gain', 0, 1, 0.01,
+  () => ui.polarizer.saturation, (v) => { ui.polarizer.saturation = v; }, (v) => v.toFixed(2)));
+syncers.push(slider('Real stop loss', 0, 1, 0.01,
+  () => ui.polarizer.stopLoss, (v) => { ui.polarizer.stopLoss = v; }, (v) => v.toFixed(2)));
+
+section('Night sky');
+note('Only visible after dark — wind Time past sunset to see any of it.');
+syncers.push(chips(
+  CELESTIAL_IDS.map((id) => ({ id, label: CELESTIAL_PRESETS[id].label })),
+  (id) => {
+    const p = CELESTIAL_PRESETS[id as CelestialId];
+    return ui.celestial.bortle === p.bortle && ui.celestial.milkyWay === p.milkyWay
+      && ui.celestial.meteors === p.meteors;
+  },
+  (id) => { ui.celestial = { ...CELESTIAL_PRESETS[id as CelestialId] }; },
+));
+syncers.push(slider('Light pollution (Bortle)', 1, 9, 1,
+  () => ui.celestial.bortle, (v) => { ui.celestial.bortle = v; }, (v) => String(v)));
+syncers.push(slider('Milky Way', 0, 1, 0.01,
+  () => ui.celestial.milkyWay, (v) => { ui.celestial.milkyWay = v; }, (v) => v.toFixed(2)));
+syncers.push(slider('Meteors ZHR/h', 0, 3000, 25,
+  () => ui.celestial.meteors, (v) => { ui.celestial.meteors = v; }, (v) => String(v)));
+note('ZHR counts what an observer watching the WHOLE sky would see in an hour, and '
+  + 'this frame covers under a fifth of it — so an honest ZHR 150 (the Geminids at '
+  + 'their peak) puts roughly one meteor in shot every few minutes. Real, and far '
+  + 'too rare to look at. Past ~150 you have left reality; around 1500 they arrive '
+  + 'every few seconds.');
 
 section('Color filter');
 syncers.push(chips(
