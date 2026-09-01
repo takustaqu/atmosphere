@@ -414,6 +414,33 @@ function frame(now: number) {
 requestAnimationFrame(frame);
 ```
 
+## Waiting for the shader
+
+The shader is compiled off the main thread, so nothing is drawn for the first
+moment of a page's life. `render()` is a no-op until then, `ready` says whether
+it has happened, and `onReady` fires when it does — with `false` if the device
+could not compile the shader at all, which is the signal to keep your fallback
+background for good.
+
+```tsx
+const [ready, setReady] = useState(false);
+useEffect(() => {
+  const sky = new Atmosphere(canvasRef.current!, { weather: 'summer', onReady: setReady });
+  return () => sky.dispose();
+}, []);
+// <canvas style={{ opacity: ready ? 1 : 0, transition: 'opacity 600ms' }} />
+```
+
+How long that takes is a browser and driver question, not a scene one. On
+Windows, WebGL runs through ANGLE's Direct3D backend, whose compiler inlines
+and unrolls a shader this size into something very large; a first visit costs
+a few seconds there, and near nothing on macOS. Every visit after that is
+instant on any platform — browsers keep compiled shaders in an on-disk cache.
+
+Pass `compile: 'sync'` to `AtmosphereRenderer` to block until the program is
+linked instead. That is what `renderCubeFaces` does, because a bake has no
+loop to come back on; do not do it for anything on screen.
+
 ## Internationalization
 
 The core's `label`/`alias` fields (`CLOUD_GENERA`, `WEATHER_PRESETS`,
@@ -517,6 +544,18 @@ way to check for regressions after changing the look of something.
   spacing need to vary continuously with depth, or it reads as artificial.
   Skip cloud genera with amount 0 entirely, and default to a light footprint
   (30fps, ~0.55× resolution).
+- **Bake the value-noise lattice into a texture, and fetch it at an explicit
+  LOD.** Every cloud here bottoms out in `fbm`, and `fbm` used to bottom out in
+  twenty hash evaluations, inlined at every one of several dozen call sites.
+  That is cheap to run and ruinous to compile: Windows hands the shader to
+  Direct3D through ANGLE, which inlines and unrolls all of it. Reading the
+  lattice from a small tiling texture and letting the sampler's own bilinear
+  filter do the interpolation is the same arithmetic in one instruction. But
+  ask for it with a plain `texture2D` and it gets *slower*: a fragment-shader
+  fetch carries an implicit derivative, a derivative may not sit in non-uniform
+  control flow, and the compiler resolves that by flattening — every "skip this
+  genus" branch stops skipping. Naming the mip level asks for no derivative and
+  the branches come back.
 
 ## Cumulonimbus companion forms
 

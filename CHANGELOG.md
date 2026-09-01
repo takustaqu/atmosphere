@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.3.0 — 2026-09-01
+
+Windows stopped freezing.
+
+A first visit on Windows locked the page for **19 seconds** before the sky
+appeared. WebGL there runs through ANGLE's Direct3D backend, and its compiler
+inlines and unrolls everything it is given: `fbm` expanded to five `vnoise`,
+each to four `hash12`, at every one of several dozen call sites. Nothing was
+slow at run time — the whole cost was in `linkProgram`. Measured on a Radeon
+780M, worst single unresponsive stretch:
+
+| | first visit | longest freeze |
+| --- | --- | --- |
+| 0.2.0 | 19.5 s | 19.5 s |
+| this release | 3.5 s | 0.19 s |
+
+Later visits were already instant and still are — browsers cache compiled
+shaders on disk.
+
+### Changed
+
+- **The value-noise lattice is a baked texture now**, read with an explicit
+  mip level so the "skip this genus" branches keep skipping. Linking drops
+  from 19.5 s to 3.1 s, and drawing gets *faster* too: a full storm at
+  1600×900 goes 9.60 → 6.46 ms per frame, a clear sky 2.93 → 2.81 ms.
+- **The shader compiles off the main thread** where the browser offers
+  `KHR_parallel_shader_compile`, which is what turns the remaining seconds
+  from a freeze into a wait. **`render()` draws nothing until it lands** —
+  see `ready` and `onReady` below.
+- **Cloud shapes have moved.** The baked lattice repeats every 256 units where
+  the old hash never did, so the fine octaves — which run past that — draw a
+  different, statistically identical field. The coarse structure, the density,
+  the lighting and every tuned parameter are untouched: a cumulus sky is the
+  same cumulus sky with its details redealt. Measured against 0.2.0, the 8-bit
+  texels contribute a mean of under 0.6/255 and the periodicity carries all the
+  rest.
+
+### Added
+
+- **`onReady(available)`** on both `Atmosphere` and `AtmosphereRenderer`, and a
+  **`ready`** getter — for cross-fading the canvas in, and for telling a device
+  that cannot compile the shader at all from one that has not finished yet.
+- **`compile: 'sync'`** on `AtmosphereRenderer`, to block until linked.
+  `renderCubeFaces` uses it: a bake has no render loop to come back on.
+
+### Fixed
+
+- A renderer built in a hidden tab, or on a canvas nothing paints, now reports
+  itself ready — the compile is polled on a timer rather than on
+  `requestAnimationFrame`, which stops in both cases.
+
 ## 0.2.0 — 2026-07-31
 
 The compositing rework, and the night sky.
