@@ -13,6 +13,7 @@
 // AtmosphereRenderer running the old shader. Reload the page to see changes.
 
 import { SRGB_TO_DISPLAY_P3, glslMat3, type ColorSpaceOption } from './gamut.js';
+import { NOISE_SIZE, noiseLattice } from './noise.js';
 import { DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
 const VERT = `
@@ -52,9 +53,16 @@ const FRAG = `
 // degraded sky beats no sky.
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
+precision highp sampler2D;
 #else
 precision mediump float;
+precision mediump sampler2D;
 #endif
+
+// The sampler's precision is what carries vnoise's interpolation, not the
+// texel's: at the default lowp a filtered fetch comes back in ~1/128 steps and
+// every cloud edge terraces. The texels themselves are only 8-bit endpoints.
+uniform sampler2D u_noise;   // the baked value-noise lattice — see noise.ts
 
 uniform vec2  u_res;
 uniform float u_time;      // seconds
@@ -226,14 +234,28 @@ float hash12(vec2 p) {
   p3 += dot(p3, p3.yzx + 33.33);
   return fract((p3.x + p3.y) * p3.z);
 }
+/**
+ * Value noise — the four lattice corners and their bilinear blend, read out of
+ * a baked texture rather than hashed here.
+ *
+ * This is not an approximation of the arithmetic it replaces. Smoothstepping
+ * the *coordinate* and then letting the sampler filter linearly computes
+ * mix(mix(a, b, f.x), mix(c, d, f.x), f.y) over exactly the same four texels —
+ * which is the expression that used to be spelled out below. The differences
+ * are that the lattice now repeats every NOISE_SIZE units (see noise.ts) and
+ * that its values are quantized to 8 bits.
+ *
+ * The half-texel offset lands the sample on texel centers, so floor(p) picks
+ * the same corner the hash used to.
+ *
+ * hash12 stays: the stars, snowflakes, raindrops, lens droplets, blob lattice
+ * and dither all want an unfiltered point hash at unbounded coordinates, and
+ * measurement showed moving those to a texture bought nothing.
+ */
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
-  float a = hash12(i);
-  float b = hash12(i + vec2(1.0, 0.0));
-  float c = hash12(i + vec2(0.0, 1.0));
-  float d = hash12(i + vec2(1.0, 1.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  return NOISE_FETCH((i + f + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)}).r;
 }
 float fbm(vec2 p) {
   float v = 0.0, a = 0.5;
@@ -1789,6 +1811,31 @@ void main() {
 `;
 
 /**
+ * How `vnoise` reads the lattice, decided per context.
+ *
+ * `texture2D` in a fragment shader carries an implicit derivative — it has to
+ * pick a mip level, even for a texture that has none — and a derivative is
+ * undefined inside non-uniform control flow. So D3D will not let one sit in a
+ * branch, and ANGLE resolves that by flattening: every `if (u_high.x > 0.001)`
+ * in this shader stops being a skip, and a clear sky starts paying for all ten
+ * cloud genera. Measured on a Radeon 780M at 880x495: 1.14 ms for a clear sky
+ * became 4.57 ms, exactly the cost of an overcast one.
+ *
+ * Naming the level instead asks for no derivative, and the branches go back to
+ * branching. Where the extension is missing the plain fetch still draws the
+ * right picture — it just pays the flattened cost, the way it would have with
+ * the arithmetic hash this replaced.
+ */
+function fragSource(explicitLod: boolean): string {
+  // an #extension directive has to precede every non-preprocessor token
+  return (explicitLod
+    ? '#extension GL_EXT_shader_texture_lod : enable\n'
+      + '#define NOISE_FETCH(uv) texture2DLodEXT(u_noise, (uv), 0.0)\n'
+    : '#define NOISE_FETCH(uv) texture2D(u_noise, (uv))\n'
+  ) + FRAG;
+}
+
+/**
  * u_time's wrap period, in seconds (~68 min).
  *
  * The shader's float32 has a 24-bit mantissa, so an ever-growing u_time gets
@@ -1801,9 +1848,19 @@ void main() {
  */
 const TIME_WRAP_SEC = 4096;
 
+/**
+ * How often to ask the driver whether the program has finished linking.
+ *
+ * Each ask is a cheap flag read, so this is only about how promptly the sky
+ * appears once the compile lands — a frame's worth of latency, against a
+ * compile that runs for seconds.
+ */
+const POLL_MS = 16;
+
 type Uniforms = Record<string, WebGLUniformLocation | null>;
 
 const UNIFORM_NAMES = [
+  'u_noise',
   'u_res', 'u_time', 'u_cam', 'u_sun',
   'u_cover', 'u_high', 'u_mid', 'u_low',
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
@@ -1831,6 +1888,38 @@ export interface RendererOptions {
    * float16 WebGPU/WebGL2 target).
    */
   headroom?: number;
+  /**
+   * When to find out whether the program linked.
+   *
+   * `'auto'` (the default) asks the driver via `KHR_parallel_shader_compile`
+   * and keeps the main thread free while it works. The trade is that the
+   * renderer is not usable the moment the constructor returns: {@link ready}
+   * starts false, {@link render} draws nothing until it flips, and
+   * {@link RendererOptions.onReady} fires when it does.
+   *
+   * `'sync'` blocks in the constructor until the program is linked, so one
+   * `render()` right after it produces a frame. That is the right choice for a
+   * one-shot bake (it is what {@link renderCubeFaces} uses) and the wrong one
+   * for anything on screen: on Windows the link runs through ANGLE's D3D
+   * backend, and this shader has been measured at around three seconds of
+   * frozen page there — nineteen, before the noise lattice moved into a
+   * texture. (Only on a first visit; browsers cache compiled shaders.)
+   *
+   * Where the extension is missing, `'auto'` degrades to `'sync'`.
+   */
+  compile?: 'auto' | 'sync';
+  /**
+   * Called once the program has linked, or failed to.
+   *
+   * `false` means this renderer will never draw and the caller should keep its
+   * fallback background up for good.
+   *
+   * It can fire before the constructor returns — always under
+   * `compile: 'sync'`, and in either mode when the shader fails to *compile*
+   * (only the link is deferred). So a listener attached afterwards may miss
+   * it; read {@link ready} and {@link available} instead.
+   */
+  onReady?: (available: boolean) => void;
 }
 
 /**
@@ -1844,9 +1933,20 @@ export class AtmosphereRenderer {
   private gl: WebGLRenderingContext | null = null;
   private program: WebGLProgram | null = null;
   private buffer: WebGLBuffer | null = null;
+  private noise: WebGLTexture | null = null;
   private u: Uniforms = {};
   private lost = false;
   private p3 = false;
+  private linked = false;
+  // Timer for the parallel-compile poll. The renderer polls itself rather than
+  // leaning on render() being called: under reduced motion the caller draws
+  // exactly one frame, and nothing would ever ask again.
+  //
+  // A timer and not requestAnimationFrame: rAF stops in a hidden tab and in an
+  // offscreen canvas that nothing paints, and a renderer built there would
+  // never report itself ready. A background tab throttles this to about once a
+  // second, which is nothing against a compile measured in seconds.
+  private poll: ReturnType<typeof setTimeout> | 0 = 0;
   // kept so dispose() can detach them. A disposed renderer that still listens
   // would re-init on a context restore and steal the live renderer's program
   private readonly onLost = (e: Event) => { e.preventDefault(); this.lost = true; };
@@ -1860,8 +1960,22 @@ export class AtmosphereRenderer {
     this.init();
   }
 
-  /** false in environments where WebGL isn't available (the caller should keep its fallback background) */
+  /**
+   * false in environments where WebGL isn't available, or once the shader has
+   * failed to compile (the caller should keep its fallback background).
+   *
+   * Under the default `compile: 'auto'` a shader failure is only discovered
+   * later, so this can start true and go false. {@link RendererOptions.onReady}
+   * is the callback for that moment.
+   */
   get available(): boolean { return this.gl !== null; }
+
+  /**
+   * true once the program is linked and `render()` will actually draw.
+   *
+   * Always true by the time the constructor returns under `compile: 'sync'`.
+   */
+  get ready(): boolean { return this.linked; }
 
   /**
    * The space actually being rendered into — `'display-p3'` only where the
@@ -1873,6 +1987,8 @@ export class AtmosphereRenderer {
   get colorSpace(): PredefinedColorSpace { return this.p3 ? 'display-p3' : 'srgb'; }
 
   private init(): void {
+    this.linked = false;
+    this.stopPolling();
     const gl = this.canvas.getContext('webgl', {
       alpha: false, antialias: false, depth: false, stencil: false,
       powerPreference: 'low-power',
@@ -1903,22 +2019,78 @@ export class AtmosphereRenderer {
     };
 
     const vs = compile(gl.VERTEX_SHADER, VERT);
-    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
-    if (!vs || !fs) { this.gl = null; return; }
+    const fs = compile(gl.FRAGMENT_SHADER,
+      fragSource(gl.getExtension('EXT_shader_texture_lod') !== null));
+    if (!vs || !fs) { this.gl = null; this.notifyReady(false); return; }
 
     const prog = gl.createProgram();
-    if (!prog) { this.gl = null; return; }
+    if (!prog) { this.gl = null; this.notifyReady(false); return; }
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     gl.deleteShader(vs);
     gl.deleteShader(fs);
+    this.program = prog;
+
+    this.noise = this.createNoise(gl);
+
+    // On Windows, linkProgram is where ANGLE hands the whole shader to the
+    // D3D compiler, and reading LINK_STATUS is what waits for it. Asking the
+    // driver whether it's finished instead keeps the page alive through it.
+    const parallel = this.opts.compile === 'sync'
+      ? null
+      : gl.getExtension('KHR_parallel_shader_compile');
+    if (!parallel) { this.finishLink(); return; }
+
+    const step = (): void => {
+      this.poll = 0;
+      const g = this.gl;
+      if (!g || !this.program) return;
+      if (!g.getProgramParameter(this.program, parallel.COMPLETION_STATUS_KHR)) {
+        this.poll = setTimeout(step, POLL_MS);
+        return;
+      }
+      this.finishLink();
+    };
+    // a turn of the event loop before the first ask, so the caller gets to
+    // finish constructing and paint its fallback first
+    this.poll = setTimeout(step, POLL_MS);
+  }
+
+  /** the baked value-noise lattice, tiling and bilinear-filtered — see noise.ts */
+  private createNoise(gl: WebGLRenderingContext): WebGLTexture | null {
+    const tex = gl.createTexture();
+    if (!tex) return null;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, NOISE_SIZE, NOISE_SIZE, 0,
+      gl.LUMINANCE, gl.UNSIGNED_BYTE, noiseLattice());
+    // REPEAT is what lets the lattice tile, LINEAR is what does vnoise's
+    // interpolation, and no mipmaps: a minified fetch must stay the same noise
+    // the neighbouring pixel read, or the fbm chains lose their high octaves
+    // in a smear wherever the projection compresses
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    return tex;
+  }
+
+  /** collect the link result and finish the one-time GL setup that depends on it */
+  private finishLink(): void {
+    const gl = this.gl;
+    const prog = this.program;
+    if (!gl || !prog) return;
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
       console.error('atmosphere shader link error:', gl.getProgramInfoLog(prog));
+      gl.deleteProgram(prog);
+      if (this.noise) gl.deleteTexture(this.noise);
+      this.noise = null;
+      this.program = null;
       this.gl = null;
+      this.notifyReady(false);
       return;
     }
-    this.program = prog;
     gl.useProgram(prog);
 
     // a fullscreen triangle
@@ -1931,6 +2103,22 @@ export class AtmosphereRenderer {
 
     this.u = {};
     for (const name of UNIFORM_NAMES) this.u[name] = gl.getUniformLocation(prog, name);
+    // the sampler binding lives in the program, so once is enough; which
+    // texture unit 0 holds is context state, and render() re-establishes that
+    gl.uniform1i(this.u.u_noise, 0);
+
+    this.linked = true;
+    this.notifyReady(true);
+  }
+
+  private notifyReady(available: boolean): void {
+    this.opts.onReady?.(available);
+  }
+
+  private stopPolling(): void {
+    if (!this.poll) return;
+    clearTimeout(this.poll);
+    this.poll = 0;
   }
 
   resize(width: number, height: number): void {
@@ -1960,10 +2148,12 @@ export class AtmosphereRenderer {
     evo = 0,
   ): void {
     const gl = this.gl;
-    if (!gl || this.lost || !this.program) return;
+    if (!gl || this.lost || !this.program || !this.linked) return;
     // bind every frame rather than only at init: another renderer sharing this
     // canvas (or anything else touching the context) may have swapped programs
     gl.useProgram(this.program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.noise);
     const u = this.u;
     gl.uniform2f(u.u_res, this.canvas.width, this.canvas.height);
     gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
@@ -2012,11 +2202,13 @@ export class AtmosphereRenderer {
    */
   dispose(options: { loseContext?: boolean } = {}): void {
     const gl = this.gl;
+    this.stopPolling();
     this.canvas.removeEventListener('webglcontextlost', this.onLost);
     this.canvas.removeEventListener('webglcontextrestored', this.onRestored);
     if (gl) {
       if (this.program) gl.deleteProgram(this.program);
       if (this.buffer) gl.deleteBuffer(this.buffer);
+      if (this.noise) gl.deleteTexture(this.noise);
       if (options.loseContext) {
         gl.getExtension('WEBGL_lose_context')?.loseContext();
       }
@@ -2024,5 +2216,7 @@ export class AtmosphereRenderer {
     this.gl = null;
     this.program = null;
     this.buffer = null;
+    this.noise = null;
+    this.linked = false;
   }
 }

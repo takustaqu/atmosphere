@@ -34,6 +34,17 @@ export interface AtmosphereOptions extends Conditions {
   /** pass false to not start rendering on construction */
   autoStart?: boolean;
   /**
+   * Called once the shader has compiled, or failed to.
+   *
+   * The sky draws nothing until this fires — the shader is compiled off the
+   * main thread so the page stays responsive, which takes a couple of seconds
+   * the first time a browser sees it and is near-instant afterwards (browsers
+   * cache compiled shaders on disk). Use it to cross-fade the canvas in over
+   * whatever background was there, and to keep that background for good on
+   * `false`, which means this device could not compile the shader at all.
+   */
+  onReady?: (available: boolean) => void;
+  /**
    * pass false to keep animating even under `prefers-reduced-motion: reduce`.
    *
    * On by default: a full-screen sky in constant motion is hard on users with
@@ -66,6 +77,14 @@ export class Atmosphere {
   // reduced-motion can pause the loop without forgetting the caller's intent
   private wantRunning = false;
   private motionQuery: MediaQueryList | null = null;
+  // The shader compiles asynchronously, so the frames the caller asked for
+  // before it was ready drew nothing. A running loop picks itself up on its
+  // next tick; a still frame — reduced motion, or a jump() before start() —
+  // has no next tick and has to be drawn here or never.
+  private readonly onRendererReady = (available: boolean) => {
+    if (available && this.wantRunning && !this.raf) this.draw(performance.now());
+    this.opts.onReady?.(available);
+  };
   private readonly onMotionChange = () => {
     if (!this.wantRunning) return;
     if (this.reducedMotion) {
@@ -91,7 +110,10 @@ export class Atmosphere {
     };
     this.target = resolveConditions(this.conditions);
     this.cam = resolveCamera(options.camera);
-    this.renderer = new AtmosphereRenderer(canvas, { colorSpace: options.colorSpace });
+    this.renderer = new AtmosphereRenderer(canvas, {
+      colorSpace: options.colorSpace,
+      onReady: this.onRendererReady,
+    });
     this.animator = new StateAnimator(this.target, options.animator);
 
     this.resize();
@@ -109,8 +131,14 @@ export class Atmosphere {
   /** true when the environment asks for reduced motion (and the option honors it) */
   get reducedMotion(): boolean { return this.motionQuery?.matches ?? false; }
 
-  /** false in environments where WebGL isn't available */
+  /** false in environments where WebGL isn't available, or once the shader has failed to compile */
   get available(): boolean { return this.renderer.available; }
+
+  /**
+   * true once the shader has compiled and frames are actually reaching the
+   * canvas. Starts false; {@link AtmosphereOptions.onReady} fires when it flips.
+   */
+  get ready(): boolean { return this.renderer.ready; }
 
   /** the space actually being rendered into (`'display-p3'` only where supported) */
   get colorSpace(): PredefinedColorSpace { return this.renderer.colorSpace; }

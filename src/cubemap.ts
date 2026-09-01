@@ -29,6 +29,11 @@ export interface CubeFacesOptions {
  * Creates and disposes its own throwaway WebGL context per call — fine for
  * baking a skybox on a scene change, not meant to be called every frame.
  *
+ * Blocks while the shader compiles, which on Windows is seconds the first time
+ * a browser sees it (afterwards its shader cache makes it instant). Bake off
+ * the critical path, or drive {@link AtmosphereRenderer} yourself and let its
+ * default asynchronous compile hand you the faces when they are ready.
+ *
  * @throws when WebGL isn't available
  */
 export function renderCubeFaces(
@@ -37,7 +42,13 @@ export function renderCubeFaces(
 ): HTMLCanvasElement[] {
   const size = options.size ?? 512;
   const source = document.createElement('canvas');
-  const renderer = new AtmosphereRenderer(source, { colorSpace: options.colorSpace });
+  // a bake is a single synchronous burst by definition — the six faces are
+  // drawn and copied out before this function returns, so there is no loop to
+  // come back on and the shader has to be linked before the first one
+  const renderer = new AtmosphereRenderer(source, {
+    colorSpace: options.colorSpace,
+    compile: 'sync',
+  });
   if (!renderer.available) {
     renderer.dispose({ loseContext: true });
     throw new Error('atmosphere: WebGL is not available');

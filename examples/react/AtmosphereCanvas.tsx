@@ -5,7 +5,7 @@
 // it layers the canvas), so if you don't like this one, copying the whole
 // file and rewriting it is the fastest path.
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Atmosphere, type AtmosphereOptions, type Conditions } from '../../src/index.js';
 
 // value equality for condition props (plain data: primitives, Date, arrays,
@@ -35,7 +35,13 @@ function useStableValue<T>(value: T): T {
 }
 
 export interface AtmosphereCanvasProps extends Conditions {
-  /** pass false to fade to black (drawing also stops once the fade completes, to let the GPU rest) */
+  /**
+   * pass false to fade to black (drawing also stops once the fade completes,
+   * to let the GPU rest).
+   *
+   * The canvas also stays faded out until the shader has compiled, so `true`
+   * means "as soon as there is a sky", not "now".
+   */
   enabled?: boolean;
   /**
    * Frame rate cap.
@@ -83,14 +89,23 @@ export function AtmosphereCanvas({
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const skyRef = useRef<Atmosphere | null>(null);
+  // The shader compiles off the main thread, so the canvas is blank for the
+  // first moment — seconds of it, on a Windows machine's first ever visit.
+  // Hold it behind the same fade `enabled` uses, and let whatever is behind it
+  // show through until there is a sky to cross over to. Stays false for good
+  // if the device could not compile the shader at all.
+  const [ready, setReady] = useState(false);
   // read the initial values via a ref so they aren't re-read on remount
   const initRef = useRef({ time, location, weather, filter, camera, fps, resolutionScale, animator });
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const sky = new Atmosphere(canvas, initRef.current);
+    const sky = new Atmosphere(canvas, { ...initRef.current, onReady: setReady });
     skyRef.current = sky;
+    // not resetting `ready` here on purpose: the canvas keeps its context
+    // across a remount, so the program is still linked and the sky is still
+    // there. Clearing it would fade the sky out and back in under StrictMode.
     return () => { skyRef.current = null; sky.dispose(); };
   }, []);
 
@@ -109,7 +124,7 @@ export function AtmosphereCanvas({
 
   return (
     <canvas
-      className={['atmo-canvas', enabled ? null : 'atmo-off', className]
+      className={['atmo-canvas', enabled && ready ? null : 'atmo-off', className]
         .filter(Boolean).join(' ')}
       ref={canvasRef}
       aria-hidden="true"
