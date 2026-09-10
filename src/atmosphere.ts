@@ -41,7 +41,8 @@ export interface AtmosphereOptions extends Conditions {
    * the first time a browser sees it and is near-instant afterwards (browsers
    * cache compiled shaders on disk). Use it to cross-fade the canvas in over
    * whatever background was there, and to keep that background for good on
-   * `false`, which means this device could not compile the shader at all.
+   * `false`, which means this device has no WebGL or could not compile the
+   * shader at all.
    */
   onReady?: (available: boolean) => void;
   /**

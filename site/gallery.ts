@@ -60,49 +60,64 @@ export function relabelGallery(lang: Locale): void {
 }
 
 /**
- * Fill `#gallery`. Returns without touching the DOM if WebGL is unavailable,
- * so the section simply stays empty rather than showing nine black rectangles.
+ * Fill `#gallery`. The section removes itself if WebGL is unavailable or the
+ * shader never compiles, so it stays absent rather than showing twelve black
+ * rectangles.
+ *
+ * The shader compiles off the main thread, so this can't draw the moment the
+ * renderer exists — the figures go into the DOM up front (holding the layout)
+ * and the tiles fill in when the compile lands, usually behind a warm shader
+ * cache and imperceptible.
  */
 export function buildGallery(lang: Locale): void {
   const host = document.querySelector<HTMLElement>('#gallery');
   if (!host) return;
 
-  const source = document.createElement('canvas');
-  const renderer = new AtmosphereRenderer(source);
-  if (!renderer.available) {
-    renderer.dispose({ loseContext: true });
-    host.closest('section')?.remove();
-    return;
-  }
-
   // tiles are ~270px wide; draw at 2x for retina and let CSS scale down
   const w = 540, h = 338;
-  renderer.resize(w, h);
 
-  try {
-    TILES.forEach((tile, i) => {
-      // vary the evolution offset per tile so the skies aren't twelve
-      // shots of one cloud field — the same weather, different afternoons
-      renderer.render(0, resolveConditions(tile.conditions),
-        undefined, 41.7 + i * 5.7, 7.3 + i * 3.1);
+  const outputs = TILES.map((tile) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
 
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      // copy synchronously: the drawing buffer is cleared once we yield.
-      // Match the renderer's space or the wide-gamut pixels clip here
-      canvas.getContext('2d', { colorSpace: renderer.colorSpace })?.drawImage(source, 0, 0);
+    const caption = document.createElement('figcaption');
+    caption.textContent = captionText(tile.label, lang);
+    captions.push({ el: caption, label: tile.label });
 
-      const caption = document.createElement('figcaption');
-      caption.textContent = captionText(tile.label, lang);
-      captions.push({ el: caption, label: tile.label });
+    const figure = document.createElement('figure');
+    figure.append(canvas, caption);
+    host.append(figure);
+    return canvas;
+  });
 
-      const figure = document.createElement('figure');
-      figure.append(canvas, caption);
-      host.append(figure);
-    });
-  } finally {
-    // hand the context straight back — see the note at the top
-    renderer.dispose({ loseContext: true });
-  }
+  const source = document.createElement('canvas');
+  // null rather than declared-later: a compile failure calls back
+  // synchronously, before the assignment below has happened
+  let renderer: AtmosphereRenderer | null = null;
+  renderer = new AtmosphereRenderer(source, {
+    onReady: (ok) => {
+      if (!ok || !renderer) {
+        renderer?.dispose({ loseContext: true });
+        host.closest('section')?.remove();
+        return;
+      }
+      renderer.resize(w, h);
+      try {
+        TILES.forEach((tile, i) => {
+          // vary the evolution offset per tile so the skies aren't twelve
+          // shots of one cloud field — the same weather, different afternoons
+          renderer!.render(0, resolveConditions(tile.conditions),
+            undefined, 41.7 + i * 5.7, 7.3 + i * 3.1);
+          // copy synchronously: the drawing buffer is cleared once we yield.
+          // Match the renderer's space or the wide-gamut pixels clip here
+          outputs[i].getContext('2d', { colorSpace: renderer!.colorSpace })
+            ?.drawImage(source, 0, 0);
+        });
+      } finally {
+        // hand the context straight back — see the note at the top
+        renderer.dispose({ loseContext: true });
+      }
+    },
+  });
 }

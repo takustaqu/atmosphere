@@ -1909,15 +1909,16 @@ export interface RendererOptions {
    */
   compile?: 'auto' | 'sync';
   /**
-   * Called once the program has linked, or failed to.
+   * Called once it is known whether this renderer will ever draw: the program
+   * linked (`true`), it failed to compile or link, or WebGL itself is
+   * unavailable (`false`).
    *
-   * `false` means this renderer will never draw and the caller should keep its
-   * fallback background up for good.
+   * `false` means the caller should keep its fallback background up for good.
    *
    * It can fire before the constructor returns — always under
-   * `compile: 'sync'`, and in either mode when the shader fails to *compile*
-   * (only the link is deferred). So a listener attached afterwards may miss
-   * it; read {@link ready} and {@link available} instead.
+   * `compile: 'sync'`, and in either mode when WebGL is missing or the shader
+   * fails to *compile* (only the link is deferred). So a listener attached
+   * afterwards may miss it; read {@link ready} and {@link available} instead.
    */
   onReady?: (available: boolean) => void;
 }
@@ -1993,7 +1994,7 @@ export class AtmosphereRenderer {
       alpha: false, antialias: false, depth: false, stencil: false,
       powerPreference: 'low-power',
     });
-    if (!gl) { this.gl = null; return; }
+    if (!gl) { this.gl = null; this.notifyReady(false); return; }
     this.gl = gl;
 
     // Assigning an unsupported value is specified to leave the property alone,

@@ -426,7 +426,11 @@ const FACE_NAMES = ['+X E', '-X W', '+Y up', '-Y down', '+Z N', '-Z S'];
 
 function bakeCubemap(): void {
   const tmp = document.createElement('canvas');
-  const renderer = new AtmosphereRenderer(tmp);
+  // sync: the six faces are drawn and read back within this call, so there is
+  // no later frame for an asynchronous compile to land on. By the time the
+  // button exists the live sky has compiled the same shader, so this hits the
+  // browser's shader cache and links in milliseconds
+  const renderer = new AtmosphereRenderer(tmp, { compile: 'sync' });
   if (!renderer.available) { renderer.dispose({ loseContext: true }); return; }
   renderer.resize(220, 220);
   const state = sky.state;
