@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 — 2026-09-01
+## 0.3.0 — 2026-09-10
 
 Windows stopped freezing.
 
