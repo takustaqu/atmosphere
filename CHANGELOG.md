@@ -24,6 +24,23 @@ Faster everywhere, the lens droplets can be switched off, and the sky hands its 
   | dark-sky night | 2.41 ms | 1.78 ms | 1.4× |
   | overcast, looking below the horizon | 5.12 ms | 1.72 ms | 3.0× |
 
+  The same scenes on Windows (Radeon 780M, ANGLE / Direct3D 11), against
+  0.3.0 built from `main` in the same page, where the readback diff is
+  within 1/255. Linking is unchanged there: 2.6 s uncached, off the main
+  thread.
+
+  | scene | 0.3.0 | now | |
+  | --- | --- | --- | --- |
+  | clear noon | 1.03 ms | 0.60 ms | 1.7× |
+  | fair | 2.34 ms | 1.62 ms | 1.4× |
+  | summer (cumulus + a thunderhead) | 4.65 ms | 2.77 ms | 1.7× |
+  | overcast | 3.73 ms | 2.72 ms | 1.4× |
+  | rain | 2.41 ms | 1.57 ms | 1.5× |
+  | thunderstorm | 3.96 ms | 2.07 ms | 1.9× |
+  | snow | 2.90 ms | 1.93 ms | 1.5× |
+  | dark-sky night | 1.48 ms | 1.24 ms | 1.2× |
+  | overcast, looking below the horizon | 3.77 ms | 1.09 ms | 3.5× |
+
   Where it came from:
   - consecutive display-space washes (`overlay()`) share one encode/decode
     instead of paying six `pow()`s each — a clear sky went from sixteen
@@ -59,7 +76,9 @@ Faster everywhere, the lens droplets can be switched off, and the sky hands its 
     a coarse grid for light wrap) and `environment` (sky, ground, zenith,
     horizon, and six directions as an ambient cube), measured by drawing the
     real shader into a tiny offscreen buffer and reading it back — about 1 ms
-    of GPU wait per measurement, taken 10 times a second and smoothed.
+    of GPU wait per measurement on an M2 Max, 3–5 ms on a Radeon 780M through
+    Direct3D (the round trip to a GPU that went idle after the last frame;
+    the draws are under 0.5 ms), taken 10 times a second and smoothed.
   - **`onLight`** fires with each measurement; **`measureLight()`** takes one
     on demand.
   - `AtmosphereRenderer.probe()` for custom loops, and the pieces behind it —

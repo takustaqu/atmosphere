@@ -437,10 +437,16 @@ rim — a working reference for a 2D compositor.
 
 **Cost.** A measurement is a few thousand pixels of drawing, which is nothing,
 plus a GPU readback, which is not: `readPixels` waits for the GPU. About 1 ms
-of main-thread wait on an M2 Max. So it runs at `rate` (default 10/s), before
-the frame's own draw so it waits only on itself, and eases each result in over
-`smoothing` seconds (default 0.3) — a few dozen point samples of a moving sky
-shimmer otherwise. `smoothing: 0` passes lightning through at full strength.
+of main-thread wait on an M2 Max; 3–5 ms on a Radeon 780M through ANGLE's
+Direct3D backend, nearly all of it the round trip to a GPU that went idle
+after the last frame (back to back, the same measurement takes 0.5 ms). So it
+runs at `rate` (default 10/s), before the frame's own draw so it waits only on
+itself, and eases each result in over `smoothing` seconds (default 0.3) — a few
+dozen point samples of a moving sky shimmer otherwise. Lower `rate` where a
+stall of that size matters, and on a canvas that is not being presented (hidden,
+or drawn but never composited): the readback then also waits for every frame
+queued since the last one. `smoothing: 0` passes lightning through at full
+strength.
 `sky.measureLight()` takes one right now, unsmoothed, probe option or not;
 `AtmosphereRenderer.probe()` is the same thing for a custom loop.
 
