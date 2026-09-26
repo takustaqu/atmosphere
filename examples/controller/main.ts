@@ -75,6 +75,10 @@ const figure = new Figure(figureEl);
 const sky = new Atmosphere(canvas, {
   time: ui.timeOfDay, weather: ui.weather, camera: cam,
   lightProbe: true,
+  // the sky is the content here, not interface motion, so it keeps moving
+  // under prefers-reduced-motion (Windows sets that whenever "Animation
+  // effects" is off)
+  respectReducedMotion: false,
   onLight: (light) => {
     // cam, not sky.camera: this can fire from inside the constructor (a still
     // frame on a synchronous compile), before sky is assigned

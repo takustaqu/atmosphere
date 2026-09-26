@@ -46,6 +46,10 @@ const sky = new Atmosphere(canvas, {
   // little smaller than the default and let CSS scale it up. The sky is soft
   // enough that the resample doesn't show
   resolutionScale: Math.min(devicePixelRatio || 1, 1.5) * 0.46,
+  // the sky is the content here, not interface motion, so it keeps moving
+  // under prefers-reduced-motion (Windows sets that whenever "Animation
+  // effects" is off). The page's own UI transitions still honor it in CSS
+  respectReducedMotion: false,
 });
 
 if (!sky.available) {
@@ -114,25 +118,17 @@ function stopRotation(): void {
   timer = 0;
 }
 
-const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-
+// The scenes rotate whatever prefers-reduced-motion says, for the same reason
+// the sky keeps moving: the rotation is the sky's content. How each line
+// arrives is UI, and the CSS calms that down under reduced motion
 function begin(): void {
   stopRotation();
-  if (reduced.matches) {
-    // a still sky and a single line. Atmosphere itself already draws one
-    // frame and stops under reduced motion; don't rotate copy on top of it
-    const scene = nextScene();
-    sky.jump(scene.conditions);
-    show(scene);
-    return;
-  }
   const scene = nextScene();
   sky.jump(scene.conditions);
   show(scene);
   timer = window.setTimeout(step, HOLD_MS);
 }
 
-reduced.addEventListener('change', begin);
 begin();
 
 // ── looking around ────────────────────────────────────────
@@ -179,7 +175,7 @@ for (const type of ['pointerup', 'pointercancel'] as const) {
     drag = null;
     canvas.classList.remove('dragging');
     // pick the rotation back up, but give the view a moment to be looked at
-    if (!reduced.matches && !timer && visible) timer = window.setTimeout(step, HOLD_MS);
+    if (!timer && visible) timer = window.setTimeout(step, HOLD_MS);
   });
 }
 
@@ -197,7 +193,7 @@ new IntersectionObserver((entries) => {
     visible = e.isIntersecting;
     if (visible) {
       sky.start();
-      if (!reduced.matches && !timer) timer = window.setTimeout(step, HOLD_MS);
+      if (!timer) timer = window.setTimeout(step, HOLD_MS);
     } else {
       sky.stop();
       stopRotation();
@@ -207,7 +203,7 @@ new IntersectionObserver((entries) => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { sky.stop(); stopRotation(); }
-  else if (visible) { sky.start(); if (!reduced.matches && !timer) timer = window.setTimeout(step, HOLD_MS); }
+  else if (visible) { sky.start(); if (!timer) timer = window.setTimeout(step, HOLD_MS); }
 });
 
 // ── things that depend on how far down the page is ────────

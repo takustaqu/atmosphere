@@ -231,6 +231,9 @@ for (const tile of tiles) {
   const sky = new Atmosphere(canvas, {
     ...tile.conditions, fps: tile.animate ? 30 : 24,
     resolutionScale: 0.7, animator: tile.animator,
+    // a QA sheet has to show the motion it is checking, reduced motion or not
+    // (Windows sets prefers-reduced-motion whenever "Animation effects" is off)
+    respectReducedMotion: false,
   });
   if (!sky.available) { cap.textContent += ' (no WebGL)'; continue; }
   skies.push(sky);
