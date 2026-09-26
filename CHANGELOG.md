@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+Faster everywhere, and the lens droplets can be switched off.
+
+### Changed
+
+- **Every frame is cheaper — 1.4× to 3× — with the picture unchanged.** No
+  shape, color or tuned value moved: each saving skips work whose result
+  provably could not reach the pixel, and a readback diff against 0.3.0 stays
+  within 2/255 (encode round-off and the dither) in every scene measured.
+  GPU time per frame at 1600×900 on an Apple M2 Max (ANGLE / Metal):
+
+  | scene | 0.3.0 | now | |
+  | --- | --- | --- | --- |
+  | clear noon | 1.68 ms | 0.89 ms | 1.9× |
+  | fair | 3.59 ms | 2.23 ms | 1.6× |
+  | summer (cumulus + a thunderhead) | 6.12 ms | 3.22 ms | 1.9× |
+  | overcast | 5.25 ms | 3.10 ms | 1.7× |
+  | rain | 3.52 ms | 2.12 ms | 1.7× |
+  | thunderstorm | 5.27 ms | 2.63 ms | 2.0× |
+  | snow | 4.08 ms | 2.51 ms | 1.6× |
+  | dark-sky night | 2.41 ms | 1.78 ms | 1.4× |
+  | overcast, looking below the horizon | 5.12 ms | 1.72 ms | 3.0× |
+
+  Where it came from:
+  - consecutive display-space washes (`overlay()`) share one encode/decode
+    instead of paying six `pow()`s each — a clear sky went from sixteen
+    encode-or-decode steps per pixel to six
+  - the stars, the Milky Way, the moon, meteors and the sun are skipped
+    outright when their visibility is zero — all day for the night sky, all
+    night for the sun — rather than drawn and multiplied by zero
+  - cumulus, its ragged fragments and the pannus skip their detail octaves
+    and their lighting resample wherever even the most the detail could add
+    would not lift the density to the edge; the granular genera skip theirs
+    between the grains
+  - the cumulonimbus skips its whole lobe stack on azimuths that carry no
+    tower, and its erosion rings on azimuths already below the thrust line
+  - the plane cloud layers are skipped below the horizon, where their fade is
+    exactly zero — half of every skybox bake
+
+### Added
+
+- **`lens`** — what happens on the glass rather than in the sky. For now:
+  **`lens: { droplets }`**, a ceiling on the raindrops that collect on the lens
+  while it rains. `false` (or `0`) turns them off, a number fades them, and
+  the default keeps them on exactly as before. Transitions like every other
+  axis, so switching them off lets the drops dry away. At zero the droplet pass
+  is skipped, not drawn invisibly. `resolveLens`, `DEFAULT_LENS`, and the
+  `Lens` / `LensInput` types are exported.
+- Controller example: a Lens panel. React sample: `AtmosphereCanvas` passes
+  `lens` through.
+
 ## 0.3.0 — 2026-09-10
 
 Windows stopped freezing.

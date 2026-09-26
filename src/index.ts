@@ -99,6 +99,13 @@ export {
 } from './polarizer.js';
 
 export {
+  resolveLens,
+  DEFAULT_LENS,
+  type Lens,
+  type LensInput,
+} from './lens.js';
+
+export {
   srgbToDisplayP3,
   displayP3ToSrgb,
   SRGB_TO_DISPLAY_P3,

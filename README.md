@@ -41,6 +41,7 @@ be an easy way to get a sky that keeps changing procedurally.
   blue-grey shadow from continuous thickness, flattening to diffuse light under overcast
 - **Cloud shape evolution** — the domain-warp field itself moves, so clouds billow and collapse in place
 - **Precipitation** — rain (leaning with the wind), snow (tumbling on the wind), droplets on the lens
+  (switchable — see [Lens](#lens))
 - **Severe weather** — lightning, cloud turbulence from high wind
 - **Visibility** — haze/mist/fog. Thin haze only crushes the horizon; thick haze covers the whole sky
 - **Lens flare** — ghosts along the optical axis, chromatic aberration, anamorphic-style streaks
@@ -330,6 +331,27 @@ an uneven band of darkening — a real artifact of the real filter, reproduced.
 
 Presets: `none` `light` `strong` `crossed`.
 
+## Lens
+
+What happens on the glass rather than in the sky. For now that is the raindrops
+that collect on the lens while it rains — they bead up, bend the sky behind
+them, and dry off again. They are on by default; a sky behind a UI often wants
+the rain without the water on an imaginary camera.
+
+```ts
+sky.set({ lens: { droplets: false } });   // rain through clean glass
+sky.set({ lens: { droplets: 0.4 } });     // fainter droplets
+sky.set({ lens: { droplets: true } });    // back to the default
+```
+
+| field | what it does |
+|:---|:---|
+| `droplets` | 0..1 (or a boolean) ceiling on the lens droplets. They still follow the rain, so a dry sky shows none at any value. Defaults to 1 |
+
+Changing it eases over the same few seconds as everything else, so switching
+them off lets the drops on the glass dry away instead of vanishing. At 0 the
+droplet pass is skipped outright, not just drawn invisibly.
+
 ## Display P3
 
 Rendered in Display P3 where the browser supports it, sRGB otherwise. No setup
@@ -394,6 +416,7 @@ sky.reducedMotion;   // true while the sky is being held still
 | `renderCubeFaces(c, opts)` | bake the 6 skybox faces in one call, as 2D canvases |
 | `resolveCelestial(c)` | resolving a night-sky specification |
 | `resolveTone(t)` / `resolvePolarizer(p)` | resolving a tone curve / polarizer specification |
+| `resolveLens(l)` | resolving a lens specification |
 | `srgbToDisplayP3(c)` / `displayP3ToSrgb(c)` | convert an encoded color between the two spaces |
 | `formatTod(tod)` | `14.5` → `"14:30"` |
 | `weatherLabel(id, locale)` / `filterLabel(id, locale)` / `cloudGenusLabel(id, locale)` | localized labels (`'en'` / `'ja'`) |

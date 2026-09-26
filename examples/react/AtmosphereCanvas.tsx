@@ -71,7 +71,7 @@ export interface AtmosphereCanvasProps extends Conditions {
 
 export function AtmosphereCanvas({
   time: timeProp, location: locationProp, weather: weatherProp,
-  filter: filterProp, camera: cameraProp,
+  filter: filterProp, lens: lensProp, camera: cameraProp,
   enabled = true,
   fps = 30,
   resolutionScale,
@@ -85,6 +85,7 @@ export function AtmosphereCanvas({
   const location = useStableValue(locationProp);
   const weather = useStableValue(weatherProp);
   const filter = useStableValue(filterProp);
+  const lens = useStableValue(lensProp);
   const camera = useStableValue(cameraProp);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -96,7 +97,7 @@ export function AtmosphereCanvas({
   // if the device could not compile the shader at all.
   const [ready, setReady] = useState(false);
   // read the initial values via a ref so they aren't re-read on remount
-  const initRef = useRef({ time, location, weather, filter, camera, fps, resolutionScale, animator });
+  const initRef = useRef({ time, location, weather, filter, lens, camera, fps, resolutionScale, animator });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -110,8 +111,8 @@ export function AtmosphereCanvas({
   }, []);
 
   useEffect(() => {
-    skyRef.current?.set({ time, location, weather, filter, camera });
-  }, [time, location, weather, filter, camera]);
+    skyRef.current?.set({ time, location, weather, filter, lens, camera });
+  }, [time, location, weather, filter, lens, camera]);
 
   // leave the fade to CSS, and stop drawing once it's no longer visible
   useEffect(() => {

@@ -38,12 +38,13 @@ const TAU_2PI = Math.PI * 2;
  * array). `current` is mutated in place every frame, so sharing any of these
  * with the caller's target would make the target drift along with it.
  */
-function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone' | 'polarizer' | 'celestial' | 'clouds' | 'features'> {
+function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone' | 'polarizer' | 'celestial' | 'lens' | 'clouds' | 'features'> {
   return {
     filter: { ...s.filter, tint: [s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]] },
     tone: { ...s.tone },
     polarizer: { ...s.polarizer },
     celestial: { ...s.celestial, radiant: s.celestial.radiant ? [s.celestial.radiant[0], s.celestial.radiant[1]] : null },
+    lens: { ...s.lens },
     clouds: { ...s.clouds },
     features: { ...s.features },
   };
@@ -143,6 +144,10 @@ export class StateAnimator {
     // the radiant is a place, not a quantity — sliding it would drag every
     // meteor's origin across the sky mid-shower. Cut to the new one instead
     ce.radiant = ct.radiant ? [ct.radiant[0], ct.radiant[1]] : null;
+
+    // switching the droplets off lets the ones already on the glass dry away
+    // rather than vanish between two frames
+    c.lens.droplets += (target.lens.droplets - c.lens.droplets) * k;
 
     // real elapsed time, plus however much the time of day moved
     // (clouds should have drifted by however much time passed)

@@ -107,6 +107,7 @@ export class Atmosphere {
       tone: options.tone,
       polarizer: options.polarizer,
       celestial: options.celestial,
+      lens: options.lens,
       camera: options.camera,
     };
     this.target = resolveConditions(this.conditions);
@@ -164,6 +165,7 @@ export class Atmosphere {
         ...c.celestial,
         radiant: c.celestial.radiant ? [c.celestial.radiant[0], c.celestial.radiant[1]] : null,
       },
+      lens: { ...c.lens },
     };
   }
 

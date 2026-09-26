@@ -61,6 +61,7 @@ const ui = {
     bortle: number; milkyWay: number; meteors: number;
     radiant: readonly [number, number] | null;
   },
+  lens: { droplets: 1 },
 };
 
 // the camera (for looking around). Defaults to a background-friendly, south-facing framing
@@ -90,6 +91,7 @@ function apply(): void {
     celestial: ui.celestial,
     tone: ui.tone,
     polarizer: ui.polarizer,
+    lens: ui.lens,
   };
   sky.set(conditions);
   readout(conditions);
@@ -364,6 +366,17 @@ note('ZHR counts what an observer watching the WHOLE sky would see in an hour, a
   + 'their peak) puts roughly one meteor in shot every few minutes. Real, and far '
   + 'too rare to look at. Past ~150 you have left reality; around 1500 they arrive '
   + 'every few seconds.');
+
+section('Lens');
+note('Raindrops sitting on the lens — they collect only while it rains, and '
+  + 'bend the sky behind them. Switch them off for rain seen through clean glass.');
+syncers.push(chips(
+  [{ id: 'on', label: 'Droplets on' }, { id: 'off', label: 'Off' }],
+  (id) => (id === 'on') === (ui.lens.droplets > 0),
+  (id) => { ui.lens.droplets = id === 'on' ? 1 : 0; },
+));
+syncers.push(slider('Droplets', 0, 1, 0.01,
+  () => ui.lens.droplets, (v) => { ui.lens.droplets = v; }, (v) => v.toFixed(2)));
 
 section('Color filter');
 syncers.push(chips(

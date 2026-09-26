@@ -90,6 +90,7 @@ uniform vec4  u_tone;      // tone curve: exposure (stops), contrast, knee, blea
 uniform vec4  u_pol;       // polarizer: strength, angle, saturation, stopLoss
 uniform vec4  u_sky;       // celestial: bortle, milkyWay, meteors/hr, hasRadiant
 uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
+uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the lens
 
 const float PI = 3.14159265;
 
@@ -535,7 +536,15 @@ vec3 meteorStreak(vec3 rd, float t, float zhr, float hasRadiant, vec2 radiant) {
 // ── Clouds ──────────────────────────────────────────────
 // cloud field density and lit-ness (x=density 0..1, y=lit-ness -1..1, z=raw density value)
 // the difference against a resample shifted slightly toward the sun becomes lit/shadowed
-vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp) {
+//
+// clear is the raw density at or below which the caller draws nothing at all —
+// the lower edge of whichever smoothstep its alpha is cut with. Below it the
+// lit-ness is never looked at, so the resample is skipped; and where even the
+// most the detail octaves could add would not lift the density past it, the
+// detail is skipped too. Both are exact: fbm is a sum of texels in 0..1 under
+// weights that total FBM_MAX, so that is a hard ceiling, not an estimate.
+const float FBM_MAX = 0.96875;
+vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp, float clear) {
   // shape evolution: the warp field itself drifts slowly, so the silhouette
   // crumbles and reassembles over time
   // (u_evo is integrated on the CPU side, so the offset doesn't jump even when the wind picks up)
@@ -550,13 +559,18 @@ vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp) {
   // at light wind)
   vec2 drift = vec2(u_evo * 0.33, -u_evo * 0.21);
   float base = fbm(q);
+  float dmax = (base * 0.72 + FBM_MAX * 0.28 - 0.5) * 2.2 + 0.5;
+  if (dmax <= clear) return vec3(0.0, 0.0, dmax);
   float detail = fbm(q * 3.3 + 17.0 + drift);
   float dcomb = (base * 0.72 + detail * 0.28 - 0.5) * 2.2 + 0.5;
   float den = smoothstep(edge - 0.01, edge + ramp, dcomb);
-  vec2 ql = q + ldir * 0.16;
-  float dl = fbm(ql) * 0.72 + fbm(ql * 3.3 + 17.0 + drift) * 0.28;
-  // ×4 saturates immediately into flat blocks of light and dark, so keep it gentle
-  float lit = clamp((dcomb - dl) * 2.5, -1.0, 1.0);
+  float lit = 0.0;
+  if (dcomb > clear) {
+    vec2 ql = q + ldir * 0.16;
+    float dl = fbm(ql) * 0.72 + fbm(ql * 3.3 + 17.0 + drift) * 0.28;
+    // ×4 saturates immediately into flat blocks of light and dark, so keep it gentle
+    lit = clamp((dcomb - dl) * 2.5, -1.0, 1.0);
+  }
   return vec3(den, lit, dcomb);
 }
 
@@ -622,11 +636,15 @@ vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir) {
   // into a formless smudge
   float e0 = 0.62 - pack * 0.24;
   float cell = smoothstep(e0, e0 + 0.11, n);
+  // between the grains there is nothing to shade: every caller draws with
+  // g.x as its alpha, so the lit-ness there is never seen
+  if (cell <= 0.0) return vec2(0.0);
   // grains gather sparsely into "flocks". Filling uniformly gives the whole
   // sky the same face everywhere. Raising patch merges the flocks into one
   // mottled sheet covering the sky (stratocumulus)
   float f = fbm4(uv * 0.16 + 21.0);
   cell *= smoothstep(mix(0.34, 0.02, patch), mix(0.68, 0.38, patch), f);
+  if (cell <= 0.0) return vec2(0.0);
 
   // lit-ness: the difference against density resampled shifted toward the sun (per-grain shading)
   vec2 ql = q + ldir * 0.35;
@@ -715,7 +733,8 @@ void main() {
   float aspect = u_res.x / u_res.y;
 
   // ── Lens droplets (rain only. Refract the UV before deciding the view direction, distorting the image itself) ──
-  float dropAmt = smoothstep(0.05, 0.5, u_rain);
+  // u_lensDrops at 0 skips the whole block — and the rim darkening at the end, which keys off dropMask
+  float dropAmt = smoothstep(0.05, 0.5, u_rain) * u_lensDrops;
   float dropMask = 0.0;
   if (dropAmt > 0.001) {
     vec2 dg = p * vec2(aspect, 1.0) * 4.0;
@@ -766,7 +785,10 @@ void main() {
   // exponentially against elevation
   // (the top of the screen isn't the zenith, so holding this in screen
   // coordinates would make the blue shallower depending on framing)
-  vec3 sky = L(mix(hor, zen, 1.0 - exp(-max(el, 0.0) * 2.6)));
+  //
+  // Held display-encoded as disp rather than decoded straight away: every
+  // overlay() below would only re-encode it. See the note on disp at the clouds.
+  vec3 disp = mix(hor, zen, 1.0 - exp(-max(el, 0.0) * 2.6));
 
   // How much this pixel should reach past sRGB, accumulated by the sections
   // below (magic hour, stars, moon, sun, lightning) and spent at the very end.
@@ -788,8 +810,8 @@ void main() {
   float sunSide = 0.35 + 0.65 * smoothstep(-0.4, 1.0, towardSun);
   vec3 warm = vec3(1.0, 0.47, 0.22);
   vec3 mauve = vec3(0.45, 0.28, 0.45);
-  sky = overlay(sky, warm, sunsetF * smoothstep(0.55, 0.0, h) * 0.55 * sunSide);
-  sky = overlay(sky, mauve, sunsetF * smoothstep(0.10, 0.50, h) * 0.35);
+  disp = mix(disp, warm, sunsetF * smoothstep(0.55, 0.0, h) * 0.55 * sunSide);
+  disp = mix(disp, mauve, sunsetF * smoothstep(0.10, 0.50, h) * 0.35);
   wide = max(wide, sunsetF * smoothstep(0.55, 0.0, h) * sunSide * 0.5);
 
   // ── Circular polarizer ──
@@ -800,6 +822,7 @@ void main() {
   // what makes the clouds "pop": the sky behind them drops and they do not.
   float dop = skyPolarization(rd, sunDir);
   if (u_pol.x > 0.001) {
+    vec3 sky = L(disp);
     // The e-vector is perpendicular to the scattering plane, so it already lies
     // across the view ray; measure its angle in the frame's own basis, or the
     // filter would not track the camera as it swings.
@@ -819,17 +842,25 @@ void main() {
       float lum = dot(sky, vec3(0.2126, 0.7152, 0.0722));
       sky = max(mix(vec3(lum), sky, 1.0 + u_pol.z * dop * u_pol.x), 0.0);
     }
+    disp = encodeSrgb(sky);
   }
 
   // overcast: the sky's blue drains toward a bright grey (including the sky peeking through gaps)
   float overcastSky = smoothstep(0.5, 0.95, u_cover);
-  sky = overlay(sky, mix(vec3(0.050, 0.055, 0.070), vec3(0.70, 0.73, 0.76), dayF), overcastSky * 0.85);
+  disp = mix(disp, mix(vec3(0.050, 0.055, 0.070), vec3(0.70, 0.73, 0.76), dayF), overcastSky * 0.85);
 
   // severe weather: darken the whole sky to a leaden grey
-  sky = overlay(sky, vec3(0.16, 0.18, 0.21) * (0.25 + 0.75 * dayF), gloom * 0.75);
+  disp = mix(disp, vec3(0.16, 0.18, 0.21) * (0.25 + 0.75 * dayF), gloom * 0.75);
+
+  // into linear light for the part of the sky that is added light
+  vec3 sky = L(disp);
 
   // ── Stars (night, low cloud. Determined by direction, so they stay pinned to the celestial sphere as the view swings) ──
-  {
+  // Every term in here is scaled by this product — the star field, all three
+  // grids and the Milky Way — so where it is zero (all day, and under heavy
+  // cloud or gloom at night) the block adds exactly nothing and is skipped.
+  // It is uniform across the frame, so the branch never diverges.
+  if (nightF * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom) > 0.0) {
     // fold the view direction onto a cubemap-like 2D grid.
     // pulling from a 3D grid leaves most lattice points off the sphere the
     // view ray actually passes through, so almost no stars show up
@@ -1015,7 +1046,9 @@ void main() {
   }
 
   // ── Moon (night. Placed opposite the sun — the full-moon relationship) ──
-  {
+  // every contribution below carries vis, so a zero vis is an exact no-op
+  float moonVis = nightF * clamp(1.0 - u_cover * 0.9 - gloom, 0.0, 1.0);
+  if (moonVis > 0.0) {
     vec3 moonDir = dirFromAngles(0.62, u_sun.y + PI);
     float ang = acos(clamp(dot(rd, moonDir), -1.0, 1.0));
     float moon = smoothstep(0.048, 0.043, ang);
@@ -1024,14 +1057,16 @@ void main() {
     vec3 up = cross(moonDir, right);
     vec3 biteDir = normalize(moonDir - right * 0.013 + up * 0.013);
     float bite = smoothstep(0.054, 0.048, acos(clamp(dot(rd, biteDir), -1.0, 1.0)));
-    float vis = nightF * clamp(1.0 - u_cover * 0.9 - gloom, 0.0, 1.0);
+    float vis = moonVis;
     float cres = clamp(moon - bite, 0.0, 1.0);
 
     // Moon-fixed frame: the ray projected onto the disc plane, in units of the
     // disc radius. The mare pattern samples this, so it stays glued to the
     // surface however the camera swings.
     vec2 muv = vec2(dot(rd, right), dot(rd, up)) / 0.048;
-    float mare = smoothstep(0.42, 0.72, fbm(muv * 2.3 + vec2(4.7, 9.2)));
+    // only ever read through the disc's own coverage, so off the disc it is skipped
+    float mare = 0.0;
+    if (moon > 0.0) mare = smoothstep(0.42, 0.72, fbm(muv * 2.3 + vec2(4.7, 9.2)));
 
     // Earthshine. The shadowed disc is rock, not glass: it occludes the stars
     // behind it (a replace, not an add) and holds a faint blue-grey glow of
@@ -1063,11 +1098,12 @@ void main() {
   }
 
   // ── Meteors ──
-  {
+  float meteorVis = nightF * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
+  if (meteorVis > 0.0) {
     vec3 m = meteorStreak(rd, u_time, u_sky.z, u_sky.w, u_radiant);
     float mi = max(max(m.r, m.g), m.b);
     if (mi > 0.0001) {
-      float vis = nightF * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
+      float vis = meteorVis;
       // burns hot enough to claim gamut like the other light sources
       sky += L(m) * vis * STAR_LUM * 0.85;
       wide = max(wide, mi * vis * 0.85);
@@ -1078,7 +1114,7 @@ void main() {
   float sunVis = smoothstep(-0.06, 0.06, sunEl)
                * clamp(1.0 - u_cover * 0.75 - gloom * 0.95, 0.0, 1.0);
   float sunAng = acos(clamp(dot(rd, sunDir), -1.0, 1.0));
-  {
+  if (sunVis > 0.0) {
     vec3 sunCol = L(mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF));
     // gain the core and clamp → produces a flat, saturated white patch at the center
     float core = clamp(exp(-sunAng * sunAng * 900.0) * 2.2, 0.0, 1.0);
@@ -1102,7 +1138,7 @@ void main() {
   // scale height reads as haze and swallows the lowest stars. Shares the second
   // star layer's gate, so it is exactly absent at Bortle 6 and up.
   float agDeep = clamp((6.0 - u_sky.x) / 5.0, 0.0, 1.0);
-  if (agDeep > 0.0) {
+  if (agDeep * nightF > 0.0) {
     // rippled around the compass — real airglow hangs in uneven waves, and a
     // uniform rim reads as a printed strip. Seeded off the horizontal ray
     // components, so it is seamless in azimuth and pinned as the view swings
@@ -1125,6 +1161,17 @@ void main() {
     }
   }
 
+  // ── Clouds, precipitation: back to display space ──
+  // From here to the snow, every step is an overlay() — a wash authored as a
+  // display-space blend — save the one halo marked below. overlay() pays an
+  // encode and a decode (six pow()s) per call, per pixel, and back to back the
+  // decode of one only feeds the encode of the next. So this whole stretch
+  // stays encoded as disp and pays the pair once. That is exact, not an
+  // approximation: encodeSrgb(L(x)) is x for any x >= 0, and a mix() of
+  // non-negative colors with a weight in 0..1 cannot leave that range — every
+  // alpha below is within 0..1 and every color non-negative.
+  disp = encodeSrgb(sky);
+
   // ── Shared setup for the cloud layers (intersection of view ray × cloud plane) ──
   float rdY = max(rd.y, 0.03);
   float horizonFade = smoothstep(0.0, 0.24, rd.y);
@@ -1138,34 +1185,42 @@ void main() {
   const float ALT_HIGH = 3.2;
   const float ALT_MID = 1.8;
   const float ALT_LOW = 0.95;
-  // a cloud genus with amount 0 is skipped entirely — a clear sky costs almost nothing
+  // a cloud genus with amount 0 is skipped entirely — a clear sky costs almost nothing.
+  // So is every plane layer below the horizon: each one's alpha carries
+  // horizonFade, which is exactly zero there (half of every skybox bake)
+  bool above = horizonFade > 0.0;
   float ramp = 0.08 + 0.14 * (1.0 - rdY);   // widen near the horizon to suppress aliasing
 
   // ── High layer, 5000–13000m ─────────────────────────
   // Cirrus Ci (mare's tail) — the first to blush pink at magic hour
-  if (u_high.x > 0.001) {
+  if (u_high.x > 0.001 && above) {
     // the extra x-crawl rides u_windOff too (see cloudField): 0.14 matches
     // the old u_time × 0.004 at light wind, and speeds up when it blows
     float f = filament(planeUV(rd, rdY, ALT_HIGH, u_windOff * 0.3) + vec2(u_windOff * 0.14, 0.0));
     vec3 col = mix(vec3(1.0), vec3(1.05, 0.62, 0.55), sunsetF);
     col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
-    sky = overlay(sky, col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
+    disp = mix(disp, col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
   }
   // Cirrostratus Cs (veil cloud) — a thin veil across the whole sky. Haloes the sun
   if (u_high.y > 0.001) {
-    vec2 s = stratiform(planeUV(rd, rdY, ALT_HIGH * 0.5, u_windOff * 0.3), 0.35, 0.0);
-    vec3 col = mix(vec3(0.86, 0.89, 0.95), vec3(1.02, 0.80, 0.72), sunsetF);
-    col = mix(vec3(0.22, 0.26, 0.38), col, max(dayF, sunsetF * 0.8));
-    sky = overlay(sky, col, s.x * u_high.y * 0.45 * horizonFade);
-    // the 22° halo (refraction through ice crystals)
-    sky += L(vec3(1.0, 0.95, 0.85)) * smoothstep(0.028, 0.0, abs(sunAng - 0.384))
-         * u_high.y * sunVis * 0.30;
+    // the halo below is sky-side and still shows under the horizon; the veil does not
+    if (above) {
+      vec2 s = stratiform(planeUV(rd, rdY, ALT_HIGH * 0.5, u_windOff * 0.3), 0.35, 0.0);
+      vec3 col = mix(vec3(0.86, 0.89, 0.95), vec3(1.02, 0.80, 0.72), sunsetF);
+      col = mix(vec3(0.22, 0.26, 0.38), col, max(dayF, sunsetF * 0.8));
+      disp = mix(disp, col, s.x * u_high.y * 0.45 * horizonFade);
+    }
+    // the 22° halo (refraction through ice crystals). Added light, so it is the
+    // one term in this stretch that has to leave display space — and only on
+    // the ring itself, where there is something to add
+    float ring = smoothstep(0.028, 0.0, abs(sunAng - 0.384)) * u_high.y * sunVis;
+    if (ring > 0.0) disp = encodeSrgb(L(disp) + L(vec3(1.0, 0.95, 0.85)) * ring * 0.30);
   }
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
-  if (u_high.z > 0.001) {
+  if (u_high.z > 0.001 && above) {
     vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir);
     vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightF, sunsetF, flash, gloom, 0.5, cloudSun);
-    sky = overlay(sky, col, g.x * u_high.z * 0.85 * horizonFade);
+    disp = mix(disp, col, g.x * u_high.z * 0.85 * horizonFade);
   }
 
   // ── Mid layer, 2000–7000m ───────────────────────────
@@ -1173,7 +1228,7 @@ void main() {
   // Not one uniform film but "torn membranes overlapping in patches", with
   // the sun showing through broadly, outline-less, as if through frosted
   // glass. These two things are altostratus's face.
-  if (u_mid.x > 0.001) {
+  if (u_mid.x > 0.001 && above) {
     vec2 uv = planeUV(rd, rdY, ALT_MID * 0.55, u_windOff * 0.6);
     vec2 s = stratiform(uv, 0.50, 0.35);
     // mottling from overlapping membranes. Stretched along the flow, it lines up into bands converging on the horizon
@@ -1193,16 +1248,16 @@ void main() {
          * through * (1.0 - thick * 0.75) * 0.85;
     col += flash * vec3(0.75, 0.80, 1.0) * 0.5;
 
-    sky = overlay(sky, col, s.x * u_mid.x * 0.95 * horizonFade);
+    disp = mix(disp, col, s.x * u_mid.x * 0.95 * horizonFade);
   }
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
-  if (u_mid.y > 0.001) {
+  if (u_mid.y > 0.001 && above) {
     vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightF, sunsetF, flash, gloom, 0.9, cloudSun);
-    sky = overlay(sky, col, g.x * u_mid.y * 0.95 * horizonFade);
+    disp = mix(disp, col, g.x * u_mid.y * 0.95 * horizonFade);
   }
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
-  if (u_mid.z > 0.001) {
+  if (u_mid.z > 0.001 && above) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_MID * 0.30, u_windOff * 0.6), 0.10, 1.0);
     // no direct sunlight reaches it at all, so color can be one-dimensional: "thickness → shade".
     // cloudColor's shadow blending caps at 0.85 and never sinks to the photo's charcoal
@@ -1212,7 +1267,7 @@ void main() {
     // the thicker the cloud, the lower the dark end sinks
     vec3 col = lit * mix(0.74, mix(0.40, 0.20, u_mid.z), s.y);
     col += flash * vec3(0.75, 0.80, 1.0) * 0.6;
-    sky = overlay(sky, col, s.x * u_mid.z * 0.99 * horizonFade);
+    disp = mix(disp, col, s.x * u_mid.z * 0.99 * horizonFade);
   }
 
   // ── Cumulonimbus Cb (thunderhead) ──
@@ -1260,15 +1315,25 @@ void main() {
     // most common failure shape. Erode narrow peaks morphologically: clamp
     // to the taller of the two neighbors, which shaves any peak thinner
     // than ~2×0.08 rad and leaves broad mountains untouched
-    float massL = fbm4(vec2(sin(azw - 0.08), cos(azw - 0.08)) * 0.85 + vec2(0.0, u_evo * 0.12));
-    float massR = fbm4(vec2(sin(azw + 0.08), cos(azw + 0.08)) * 0.85 + vec2(0.0, u_evo * 0.12));
-    float massE = min(mass, max(massL, massR));
+    //
+    // Erosion only ever lowers massE, and nothing downstream can tell apart two
+    // values at or under 0.42 — the thrust is zero for both, and the veil's
+    // spread only starts at 0.50 — so a ring is only sampled while the mass is
+    // still standing above that line.
+    float massE = mass;
+    if (massE > 0.42) {
+      float massL = fbm4(vec2(sin(azw - 0.08), cos(azw - 0.08)) * 0.85 + vec2(0.0, u_evo * 0.12));
+      float massR = fbm4(vec2(sin(azw + 0.08), cos(azw + 0.08)) * 0.85 + vec2(0.0, u_evo * 0.12));
+      massE = min(massE, max(massL, massR));
+    }
     // a second, wider erosion ring: a knife-ridge longer than the first
     // ring slips through it and still stands as a needle. The small
     // allowance lets a broad dome rise a little above its shoulders
-    float massL2 = fbm4(vec2(sin(azw - 0.13), cos(azw - 0.13)) * 0.85 + vec2(0.0, u_evo * 0.12));
-    float massR2 = fbm4(vec2(sin(azw + 0.13), cos(azw + 0.13)) * 0.85 + vec2(0.0, u_evo * 0.12));
-    massE = min(massE, max(massL2, massR2) + 0.06);
+    if (massE > 0.42) {
+      float massL2 = fbm4(vec2(sin(azw - 0.13), cos(azw - 0.13)) * 0.85 + vec2(0.0, u_evo * 0.12));
+      float massR2 = fbm4(vec2(sin(azw + 0.13), cos(azw + 0.13)) * 0.85 + vec2(0.0, u_evo * 0.12));
+      massE = min(massE, max(massL2, massR2) + 0.06);
+    }
     // the tower's thrust. Whether this is peaked or not decides how boxy it looks.
     // left as a gentle hill, a wide range of azimuths reach the same height
     // and the top becomes a flat slab.
@@ -1282,40 +1347,6 @@ void main() {
     // place the tropopause at the height "only the tallest tower's tip reaches"
     float anvilTop = 0.62 + 0.16 * cbAmt + (fbm4(acir * 1.6 + 11.0) - 0.5) * 0.10;
 
-    // the mass itself. A domain-warped 2D field does double duty as both
-    // silhouette bumpiness and internal grain.
-    // warping is meant to break up the overall shape. Applying the same
-    // amount at every scale stretches even fine lumps in the same direction,
-    // reading as a diagonal smear.
-    // weaken the distortion the finer the scale, to keep it round
-    vec2 warp = vec2(fbm4(cyl * 1.5 + u_evo * 0.30),
-                     fbm4(cyl * 1.5 + 31.0 - u_evo * 0.25));
-    vec2 w  = cyl + 0.42 * warp;   // coarse scale
-    vec2 wf = cyl + 0.14 * warp;   // fine scale
-    // the silhouette is cut from a sum of spheres (round lobes). But spheres
-    // have zero high-frequency content, so alone the silhouette becomes an
-    // endlessly smooth blob and detail disappears.
-    // layer high-frequency noise at small amplitude to fray the edge while keeping the lobes round.
-    // the two just handle different sizes — neither can be dropped.
-    // lobes need at least 3 scales. With only 2, zooming in reveals no new
-    // structure, just a stretched-out smear.
-    // cauliflower looking "still cauliflower no matter how close you get" is
-    // because the same shape repeats in a nested way.
-    // kept separate per scale since shading shifts each one differently
-    float bCoarse = blobs(w * 0.62, 0.82);
-    float bMid    = blobs(w * 1.55 + 13.0, 0.78);
-    float bFine   = blobs(wf * 3.60 + 41.0, 0.74);
-    // a fourth octave: real cauliflower is bumps-on-bumps down past what the
-    // eye can separate — stopping at three reads as sculpted foam. Each
-    // octave roughly halves the size and the weight
-    float bMicro  = blobs(wf * 7.60 + 97.0, 0.72);
-    // match each scale's contribution between silhouette and shading. If
-    // shading alone is strong, it reads as surface blotches/spots rather than lobes.
-    // the micro octave joins mean-neutrally: folding it in raw deepens the
-    // noise floor, and the deeper valleys punch holes through the mass
-    float shape = bCoarse + 0.42 * bMid + 0.34 * bFine + 0.20 * (bMicro - 0.50);
-    float fine = fbm(wf * 5.5);
-
     // The silhouette is decided by one formula: "thrust − height".
     //
     // Multiplying a cut by azimuth (a vertical flank) with a cut by height
@@ -1325,202 +1356,246 @@ void main() {
     // round head. Making the height term quadratic accelerates the tapering
     // higher up, giving a cumulonimbus with a wide base and a round top.
     float rise = env * (1.05 + 1.35 * cbAmt);
-    // the linear term is height, the quadratic term is the "narrowing
-    // upward" roundness. The -1.0 bias decides how wide the base is.
-    // to stretch height alone, lower the linear term (raising the gain fattens the base too).
-    // only let the sphere term act where there's thrust. Otherwise a single
-    // sphere clears the threshold even in open sky away from any tower, and
-    // a white bubble floats there on its own.
-    // but the factor applied must be "smooth" — a sharp mask turns the edge into a straight line
-    float near = smoothstep(0.0, 1.2, rise);
     // how far this azimuth's tower reaches (solving rise − (y + 0.8y²) − 1 = 0
     // for y, with hgt = y + 0.6y^2). Used for shading and the companion forms' attachment height
     float towerTop = (sqrt(1.0 + 2.4 * max(rise - 1.0, 0.0)) - 1.0) / 1.2;
-    // a very fine fray at the edge. Riding this inside the blurred alpha
-    // band gives a "blurry, yet detailed" edge. Cheap: just two vnoise calls
-    float wisp = vnoise(wf * 13.0) * 0.62 + vnoise(wf * 27.0 + 7.0) * 0.38;
-    // quadratic-in-height taper: the linear term is height, the quadratic
-    // term rounds the top. Too strong a quadratic pinches the upper half
-    // into a needle — a real tower's head is still ~half the base's width
-    float hgt = rd.y + rd.y * rd.y * 0.6;
-    float noiseSum = (shape - 0.86) * 1.5 + (fine - 0.47) * 0.72
-                   + (wisp - 0.50) * 0.22;
-    // negative noise may carve the silhouette at full strength, but keep
-    // positive noise weaker: a blob spike reaching far above the envelope
-    // becomes a turret floating in open sky, detached from the tower that
-    // spawned it. (gating the positive side by height instead smooths the
-    // flanks into a bald cone — the bumps live above the local envelope too)
-    float field = rise - hgt - 1.0
-                + (min(noiseSum, 0.0) + max(noiseSum, 0.0) * 0.60) * near;
-    // and cap how far above the envelope's top any bump may reach: a blob
-    // cluster hanging higher than that has open sky under it — it reads as
-    // a chunk torn off the tower, not a turret growing out of it
-    field -= smoothstep(towerTop + 0.10, towerTop + 0.35, rd.y) * 3.0;
-    // well below this azimuth's own top, the mass must stay solid: a lobe
-    // valley deep enough to cut the tower in two leaves its head floating in
-    // open sky, and sky showing through the middle reads as moth-eaten holes
-    // (the real thing is kilometers thick; only its rim is translucent).
-    // fades out toward the top so the head keeps its ragged noise silhouette
-    field += smoothstep(1.0, 0.60, rd.y / max(towerTop, 1e-3)) * 1.15 * near;
-    // ── Anvil cloud (incus) ──
-    // A tower with nowhere left to go at the tropopause flares sideways into
-    // a mushroom cap. Drawing this as a separate elevation band breaks down —
-    // away from the tower the band floats alone in open sky, and near the
-    // zenith the cylindrical projection smears it into diagonal streaks.
-    // Widening the tower's own silhouette just under the cap inherits the
-    // mass's texture, shading and edge treatment, so nothing can detach.
-    if (u_cbFeat.x > 0.001) {
-      // resample the tower's thrust slightly upwind and fold it in, so the
-      // cap spreads asymmetrically, downwind of the tower
-      vec2 dircU = vec2(sin(azw + 0.55), cos(azw + 0.55));
-      float massU = fbm4(dircU * 0.85 + vec2(0.0, u_evo * 0.12));
-      float riseU = pow(max(massU - 0.42, 0.0) * 4.6, 1.5) * (1.05 + 1.35 * cbAmt);
-      float reach = max(towerTop, max(riseU - 1.0, 0.0) * 0.47 * 0.85);
-      // only azimuths whose tower (or upwind neighbor) got near the
-      // tropopause flare out; the elevation window hugs the cap's underside.
-      // the upwind term alone must never create mass: over an azimuth whose
-      // own tower is stubby it would hang a cap in open sky with nothing
-      // beneath it — demand the local tower carries at least half the height
-      float flare = smoothstep(anvilTop * 0.50, anvilTop * 0.95, reach)
-                  * smoothstep(anvilTop * 0.30, anvilTop * 0.60, towerTop)
-                  * smoothstep(anvilTop - 0.26, anvilTop - 0.06, rd.y)
-                  * smoothstep(anvilTop + 0.10, anvilTop - 0.02, rd.y)
-                  * u_cbFeat.x;
-      field += flare * 0.85;
-    }
-    // carve away only what's above the tropopause. Using min() to cap it
-    // gives a perfectly flat ceiling
-    field -= smoothstep(anvilTop - 0.06, anvilTop + 0.14, rd.y) * 2.2;
-    // the edge should fade thin, not cut sharp — a sharp cut reads as a
-    // pasted-on cutout. But too wide a band wraps the whole mass in fog and
-    // the cloud never reads as a solid object: photos show a sunlit head
-    // whose boundary is crisp with only a thin frayed fringe. Keep the band
-    // narrow, and let wisp/fine (already folded into field) supply the fraying
-    float m = smoothstep(-0.11, 0.24, field);
 
-    if (m > 0.001) {
-      // use the difference against a resample shifted toward the sun as surface orientation.
-      // in cylindrical coordinates, dirc is "up"; its perpendicular is "sideways along azimuth"
-      vec2 tangent = vec2(dirc.y, -dirc.x) * sin(u_sun.y - azw);
-      vec2 lightOff = normalize(tangent + dirc * 0.9 + vec2(1e-4));
+    // An azimuth with no thrust at all carries no tower, and the mass below is
+    // provably empty there: with rise, near and towerTop all zero the field
+    // tops out at 1/2.4 - 1 (the lowest hgt can go, minus one) — nowhere near
+    // the -0.11 the edge starts at — and the anvil's flare is gated on
+    // towerTop. So the whole lobe stack, the costliest thing in the shader, is
+    // skipped for those columns. It is a function of azimuth alone, so the
+    // branch splits the frame into clean vertical bands rather than diverging.
+    if (env > 0.0) {
+      // the mass itself. A domain-warped 2D field does double duty as both
+      // silhouette bumpiness and internal grain.
+      // warping is meant to break up the overall shape. Applying the same
+      // amount at every scale stretches even fine lumps in the same direction,
+      // reading as a diagonal smear.
+      // weaken the distortion the finer the scale, to keep it round
+      vec2 warp = vec2(fbm4(cyl * 1.5 + u_evo * 0.30),
+                       fbm4(cyl * 1.5 + 31.0 - u_evo * 0.25));
+      vec2 w  = cyl + 0.42 * warp;   // coarse scale
+      vec2 wf = cyl + 0.14 * warp;   // fine scale
+      // the silhouette is cut from a sum of spheres (round lobes). But spheres
+      // have zero high-frequency content, so alone the silhouette becomes an
+      // endlessly smooth blob and detail disappears.
+      // layer high-frequency noise at small amplitude to fray the edge while keeping the lobes round.
+      // the two just handle different sizes — neither can be dropped.
+      // lobes need at least 3 scales. With only 2, zooming in reveals no new
+      // structure, just a stretched-out smear.
+      // cauliflower looking "still cauliflower no matter how close you get" is
+      // because the same shape repeats in a nested way.
+      // kept separate per scale since shading shifts each one differently
+      float bCoarse = blobs(w * 0.62, 0.82);
+      float bMid    = blobs(w * 1.55 + 13.0, 0.78);
+      float bFine   = blobs(wf * 3.60 + 41.0, 0.74);
+      // a fourth octave: real cauliflower is bumps-on-bumps down past what the
+      // eye can separate — stopping at three reads as sculpted foam. Each
+      // octave roughly halves the size and the weight
+      float bMicro  = blobs(wf * 7.60 + 97.0, 0.72);
+      // match each scale's contribution between silhouette and shading. If
+      // shading alone is strong, it reads as surface blotches/spots rather than lobes.
+      // the micro octave joins mean-neutrally: folding it in raw deepens the
+      // noise floor, and the deeper valleys punch holes through the mass
+      float shape = bCoarse + 0.42 * bMid + 0.34 * bFine + 0.20 * (bMicro - 0.50);
+      float fine = fbm(wf * 5.5);
 
-      // ── the shift distance must match "that mass's own size" ──
-      // shifting less than a lobe's radius leaves both sample points near
-      // the same hilltop inside the lobe, and the difference goes to zero.
-      // that means a large face's interior has no shading at all — only the
-      // rim around it shades, leaving a solid-white interior.
-      // shift a coarse lobe by about one lobe's worth, a fine lump by its own size.
-      float formBig   = (bCoarse - blobs((w + lightOff * 1.30) * 0.62, 0.82)) * 0.80;
-      float formSmall = (bMid    - blobs((w + lightOff * 0.42) * 1.55 + 13.0, 0.78)) * 0.75;
-      // shade the finest scale from spheres too. Substituting noise here
-      // makes the skin read as swirling fibers instead of a cluster of round lumps
-      float formFine = (bFine - blobs((wf + lightOff * 0.164) * 3.60 + 41.0, 0.74)) * 0.70;
-      float formMicro = (bMicro - blobs((wf + lightOff * 0.078) * 7.60 + 97.0, 0.72)) * 0.65;
-      // let noise handle only the very finest fraying
-      float micro = (fine - fbm((wf + lightOff * 0.035) * 5.5)) * 1.6;
+      // the linear term is height, the quadratic term is the "narrowing
+      // upward" roundness. The -1.0 bias decides how wide the base is.
+      // to stretch height alone, lower the linear term (raising the gain fattens the base too).
+      // only let the sphere term act where there's thrust. Otherwise a single
+      // sphere clears the threshold even in open sky away from any tower, and
+      // a white bubble floats there on its own.
+      // but the factor applied must be "smooth" — a sharp mask turns the edge into a straight line
+      float near = smoothstep(0.0, 1.2, rise);
+      // a very fine fray at the edge. Riding this inside the blurred alpha
+      // band gives a "blurry, yet detailed" edge. Cheap: just two vnoise calls
+      float wisp = vnoise(wf * 13.0) * 0.62 + vnoise(wf * 27.0 + 7.0) * 0.38;
+      // quadratic-in-height taper: the linear term is height, the quadratic
+      // term rounds the top. Too strong a quadratic pinches the upper half
+      // into a needle — a real tower's head is still ~half the base's width
+      float hgt = rd.y + rd.y * rd.y * 0.6;
+      float noiseSum = (shape - 0.86) * 1.5 + (fine - 0.47) * 0.72
+                     + (wisp - 0.50) * 0.22;
+      // negative noise may carve the silhouette at full strength, but keep
+      // positive noise weaker: a blob spike reaching far above the envelope
+      // becomes a turret floating in open sky, detached from the tower that
+      // spawned it. (gating the positive side by height instead smooths the
+      // flanks into a bald cone — the bumps live above the local envelope too)
+      float field = rise - hgt - 1.0
+                  + (min(noiseSum, 0.0) + max(noiseSum, 0.0) * 0.60) * near;
+      // and cap how far above the envelope's top any bump may reach: a blob
+      // cluster hanging higher than that has open sky under it — it reads as
+      // a chunk torn off the tower, not a turret growing out of it
+      field -= smoothstep(towerTop + 0.10, towerTop + 0.35, rd.y) * 3.0;
+      // well below this azimuth's own top, the mass must stay solid: a lobe
+      // valley deep enough to cut the tower in two leaves its head floating in
+      // open sky, and sky showing through the middle reads as moth-eaten holes
+      // (the real thing is kilometers thick; only its rim is translucent).
+      // fades out toward the top so the head keeps its ragged noise silhouette
+      field += smoothstep(1.0, 0.60, rd.y / max(towerTop, 1e-3)) * 1.15 * near;
+      // ── Anvil cloud (incus) ──
+      // A tower with nowhere left to go at the tropopause flares sideways into
+      // a mushroom cap. Drawing this as a separate elevation band breaks down —
+      // away from the tower the band floats alone in open sky, and near the
+      // zenith the cylindrical projection smears it into diagonal streaks.
+      // Widening the tower's own silhouette just under the cap inherits the
+      // mass's texture, shading and edge treatment, so nothing can detach.
+      if (u_cbFeat.x > 0.001) {
+        // resample the tower's thrust slightly upwind and fold it in, so the
+        // cap spreads asymmetrically, downwind of the tower
+        vec2 dircU = vec2(sin(azw + 0.55), cos(azw + 0.55));
+        float massU = fbm4(dircU * 0.85 + vec2(0.0, u_evo * 0.12));
+        float riseU = pow(max(massU - 0.42, 0.0) * 4.6, 1.5) * (1.05 + 1.35 * cbAmt);
+        float reach = max(towerTop, max(riseU - 1.0, 0.0) * 0.47 * 0.85);
+        // only azimuths whose tower (or upwind neighbor) got near the
+        // tropopause flare out; the elevation window hugs the cap's underside.
+        // the upwind term alone must never create mass: over an azimuth whose
+        // own tower is stubby it would hang a cap in open sky with nothing
+        // beneath it — demand the local tower carries at least half the height
+        float flare = smoothstep(anvilTop * 0.50, anvilTop * 0.95, reach)
+                    * smoothstep(anvilTop * 0.30, anvilTop * 0.60, towerTop)
+                    * smoothstep(anvilTop - 0.26, anvilTop - 0.06, rd.y)
+                    * smoothstep(anvilTop + 0.10, anvilTop - 0.02, rd.y)
+                    * u_cbFeat.x;
+        field += flare * 0.85;
+      }
+      // carve away only what's above the tropopause. Using min() to cap it
+      // gives a perfectly flat ceiling
+      field -= smoothstep(anvilTop - 0.06, anvilTop + 0.14, rd.y) * 2.2;
+      // the edge should fade thin, not cut sharp — a sharp cut reads as a
+      // pasted-on cutout. But too wide a band wraps the whole mass in fog and
+      // the cloud never reads as a solid object: photos show a sunlit head
+      // whose boundary is crisp with only a thin frayed fringe. Keep the band
+      // narrow, and let wisp/fine (already folded into field) supply the fraying
+      float m = smoothstep(-0.11, 0.24, field);
 
-      // ── two octaves above the lobes ──
-      // per-lobe shading alone caps the light/shadow structure at one lobe's
-      // size: any face wider than that averages out to an even speckle and
-      // reads as flat. Clusters of lobes must shade together...
-      float bHuge = blobs(w * 0.30 + 71.0, 0.85);
-      float formHuge = (bHuge - blobs((w + lightOff * 2.60) * 0.30 + 71.0, 0.85)) * 0.85;
-      // ...and the mountain as a whole needs a sun side and a shade side:
-      // resample the thrust with the azimuth nudged toward the sun — if the
-      // mass grows in that direction this flank faces away from the sun
-      float shiftA = 0.35 * sin(u_sun.y - azw);
-      float massS = fbm4(vec2(sin(azw + shiftA), cos(azw + shiftA)) * 0.85
-                         + vec2(0.0, u_evo * 0.12));
-      // on a narrow tower the azimuth gradient is steep and this term slams
-      // to its clamp, painting the whole spire near-black — fade it out as
-      // the local mass thins
-      float flank = clamp((mass - massS) * 3.0, -0.55, 0.55)
-                  * smoothstep(0.25, 0.85, env);
+      if (m > 0.001) {
+        // use the difference against a resample shifted toward the sun as surface orientation.
+        // in cylindrical coordinates, dirc is "up"; its perpendicular is "sideways along azimuth"
+        vec2 tangent = vec2(dirc.y, -dirc.x) * sin(u_sun.y - azw);
+        vec2 lightOff = normalize(tangent + dirc * 0.9 + vec2(1e-4));
 
-      // less light reaches lower down the tower. Reference the slowly-varying
-      // cap height, not this azimuth's towerTop — that changes abruptly at a
-      // spire's flank and paints vertical light/dark seams down the mass
-      float depth = 1.0 - smoothstep(0.0, max(anvilTop * 0.8, 0.3), rd.y);
+        // ── the shift distance must match "that mass's own size" ──
+        // shifting less than a lobe's radius leaves both sample points near
+        // the same hilltop inside the lobe, and the difference goes to zero.
+        // that means a large face's interior has no shading at all — only the
+        // rim around it shades, leaving a solid-white interior.
+        // shift a coarse lobe by about one lobe's worth, a fine lump by its own size.
+        float formBig   = (bCoarse - blobs((w + lightOff * 1.30) * 0.62, 0.82)) * 0.80;
+        float formSmall = (bMid    - blobs((w + lightOff * 0.42) * 1.55 + 13.0, 0.78)) * 0.75;
+        // shade the finest scale from spheres too. Substituting noise here
+        // makes the skin read as swirling fibers instead of a cluster of round lumps
+        float formFine = (bFine - blobs((wf + lightOff * 0.164) * 3.60 + 41.0, 0.74)) * 0.70;
+        float formMicro = (bMicro - blobs((wf + lightOff * 0.078) * 7.60 + 97.0, 0.72)) * 0.65;
+        // let noise handle only the very finest fraying
+        float micro = (fine - fbm((wf + lightOff * 0.035) * 5.5)) * 1.6;
 
-      // walk across three points — white, mid, shadow — keeping the value continuous.
-      // measured against real photos, a sunlit cumulus sits near 0.93, and
-      // even its shadow only sinks to about 0.55.
-      // placing hi at 1.0 leaves no room to lay grain on top and produces a solid-white patch
-      // the shadow points sit clearly on the blue side: a cloud's shade is
-      // lit by the sky, so letting it fall to a neutral grey reads as dirt
-      // (measured on photos: shadow ≈ (0.55, 0.63, 0.75), never colorless)
-      // the shade is lit almost entirely by the blue sky dome, so under a
-      // clear sky it takes on a clear blue cast — deeper than a photo's
-      // "neutral" reading suggests. The overcast pull below neutralizes it
-      // again when there's no blue sky to reflect
-      // daytime hi was authored warm of white (R > B) while every other
-      // layer's lit face leans blue (cloudColor: cool ambient + cloudSun),
-      // so the tower read as a cream mass in a neutral sky. Match the other
-      // clouds' color temperature; sunset warmth is layered on below and
-      // keeps its own tint
-      vec3 hi  = mix(vec3(0.13, 0.14, 0.18), vec3(0.918, 0.948, 0.985), dayF);
-      vec3 mid = mix(vec3(0.09, 0.10, 0.13), vec3(0.765, 0.825, 0.920), dayF);
-      vec3 lo  = mix(vec3(0.05, 0.06, 0.08), vec3(0.415, 0.545, 0.775), dayF);
-      hi  = mix(hi,  hi  * vec3(1.10, 0.84, 0.62), sunsetF * 0.85);
-      mid = mix(mid, mid * vec3(1.06, 0.82, 0.66), sunsetF * 0.85);
-      lo  = mix(lo,  lo  * vec3(0.96, 0.86, 0.86), sunsetF * 0.6);
-      // under overcast the other layers drop to diffuse sky light (see
-      // cloudColor); if the tower keeps its sunny warm-white palette it
-      // floats above them as a cream-yellow mass. Pull it to the same
-      // blue-grey ambient as the deck it's embedded in
-      float diffuse = smoothstep(0.55, 0.95, u_cover);
-      hi  = mix(hi,  mix(vec3(0.115, 0.125, 0.16), vec3(0.800, 0.835, 0.900), dayF), diffuse * 0.85);
-      mid = mix(mid, mix(vec3(0.085, 0.095, 0.12), vec3(0.680, 0.720, 0.805), dayF), diffuse * 0.85);
-      lo  = mix(lo,  mix(vec3(0.050, 0.058, 0.08), vec3(0.520, 0.570, 0.680), dayF), diffuse * 0.85);
+        // ── two octaves above the lobes ──
+        // per-lobe shading alone caps the light/shadow structure at one lobe's
+        // size: any face wider than that averages out to an even speckle and
+        // reads as flat. Clusters of lobes must shade together...
+        float bHuge = blobs(w * 0.30 + 71.0, 0.85);
+        float formHuge = (bHuge - blobs((w + lightOff * 2.60) * 0.30 + 71.0, 0.85)) * 0.85;
+        // ...and the mountain as a whole needs a sun side and a shade side:
+        // resample the thrust with the azimuth nudged toward the sun — if the
+        // mass grows in that direction this flank faces away from the sun
+        float shiftA = 0.35 * sin(u_sun.y - azw);
+        float massS = fbm4(vec2(sin(azw + shiftA), cos(azw + shiftA)) * 0.85
+                           + vec2(0.0, u_evo * 0.12));
+        // on a narrow tower the azimuth gradient is steep and this term slams
+        // to its clamp, painting the whole spire near-black — fade it out as
+        // the local mass thins
+        float flank = clamp((mass - massS) * 3.0, -0.55, 0.55)
+                    * smoothstep(0.25, 0.85, env);
 
-      // weight the scales so the coarse lobes carry the shading — letting
-      // the fine scales compete washes the big forms out into an even
-      // speckle, and the mass reads as porridge instead of cauliflower
-      float ndl = flank * 0.75 + formHuge * 0.85 + formBig * 1.10
-                + formSmall * 0.48 + formFine * 0.28 + formMicro * 0.18;
-      // clouds are brighter where thicker, from multiple scattering — that's
-      // why the edge drops slightly toward grey.
-      // this splits a lobe's core into white and its valley into grey, so
-      // shading stays tied to lobe shape
-      float core = clamp((shape - 0.60) * 0.50, -0.34, 0.36);
+        // less light reaches lower down the tower. Reference the slowly-varying
+        // cap height, not this azimuth's towerTop — that changes abruptly at a
+        // spire's flank and paints vertical light/dark seams down the mass
+        float depth = 1.0 - smoothstep(0.0, max(anvilTop * 0.8, 0.3), rd.y);
 
-      // ── don't make the tone mapping asymmetric ──
-      // stacking smoothstep compresses only the bright end toward its
-      // ceiling, leaving only the shadows with any gradation. Shadows then
-      // read as "holes punched in a white mass" rather than "the shaded side
-      // of a lobe". A lobe always has both a lit and a shaded face, so leave
-      // equal headroom on both sides
-      // diffuse light also flattens the lit/shadow modelling, same as cloudColor.
-      // the gain here is the lobes' light/shadow swing: measured on photos a
-      // lobe's lit face vs its valley spans ~0.35 in luma — at half that the
-      // mass reads as flat fog no matter how good the silhouette is
-      float t = clamp((ndl * 0.80 + core) * (1.0 - diffuse * 0.55) + 0.58, 0.0, 1.0);
-      vec3 tcol = t < 0.5 ? mix(lo, mid, t * 2.0) : mix(mid, hi, (t - 0.5) * 2.0);
-      // apply grain by **multiplication**, last. Adding it into the tonal
-      // values instead saturates and disappears in the bright areas;
-      // multiplying leaves skin even on a face right at the edge of blowout.
-      // multiplicative grain acts at the same ratio whether bright or dark,
-      // so it adds "skin" without raising overall contrast
-      tcol *= 1.0 + micro * 0.13 + (wisp - 0.5) * 0.09;
-      // sink continuously toward the cloud base (never in discrete steps).
-      // the base is in the tower's own shadow but lit by the sky, so it
-      // sinks toward blue-grey, not plain grey
-      tcol *= mix(vec3(1.0), vec3(0.55, 0.645, 0.845), depth * depth);
-      // the edge is thin, so light passes through it (silver lining — only with direct sun)
-      tcol += cloudSun * m * (1.0 - m) * 4.0 * 0.22
-            * max(t - 0.45, 0.0) * max(dayF, sunsetF * 0.6) * (1.0 - diffuse);
-      // in severe weather the cumulonimbus itself sits inside the storm.
-      // leaving it bright here makes a pure-white cloud float in a leaden
-      // sky. Pull it toward the same leaden grey as the other layers.
-      tcol = mix(tcol, vec3(0.19, 0.20, 0.23) * (0.25 + 0.75 * dayF), gloom * 0.85);
-      tcol += flash * vec3(0.75, 0.80, 1.0) * 0.55;
+        // walk across three points — white, mid, shadow — keeping the value continuous.
+        // measured against real photos, a sunlit cumulus sits near 0.93, and
+        // even its shadow only sinks to about 0.55.
+        // placing hi at 1.0 leaves no room to lay grain on top and produces a solid-white patch
+        // the shadow points sit clearly on the blue side: a cloud's shade is
+        // lit by the sky, so letting it fall to a neutral grey reads as dirt
+        // (measured on photos: shadow ≈ (0.55, 0.63, 0.75), never colorless)
+        // the shade is lit almost entirely by the blue sky dome, so under a
+        // clear sky it takes on a clear blue cast — deeper than a photo's
+        // "neutral" reading suggests. The overcast pull below neutralizes it
+        // again when there's no blue sky to reflect
+        // daytime hi was authored warm of white (R > B) while every other
+        // layer's lit face leans blue (cloudColor: cool ambient + cloudSun),
+        // so the tower read as a cream mass in a neutral sky. Match the other
+        // clouds' color temperature; sunset warmth is layered on below and
+        // keeps its own tint
+        vec3 hi  = mix(vec3(0.13, 0.14, 0.18), vec3(0.918, 0.948, 0.985), dayF);
+        vec3 mid = mix(vec3(0.09, 0.10, 0.13), vec3(0.765, 0.825, 0.920), dayF);
+        vec3 lo  = mix(vec3(0.05, 0.06, 0.08), vec3(0.415, 0.545, 0.775), dayF);
+        hi  = mix(hi,  hi  * vec3(1.10, 0.84, 0.62), sunsetF * 0.85);
+        mid = mix(mid, mid * vec3(1.06, 0.82, 0.66), sunsetF * 0.85);
+        lo  = mix(lo,  lo  * vec3(0.96, 0.86, 0.86), sunsetF * 0.6);
+        // under overcast the other layers drop to diffuse sky light (see
+        // cloudColor); if the tower keeps its sunny warm-white palette it
+        // floats above them as a cream-yellow mass. Pull it to the same
+        // blue-grey ambient as the deck it's embedded in
+        float diffuse = smoothstep(0.55, 0.95, u_cover);
+        hi  = mix(hi,  mix(vec3(0.115, 0.125, 0.16), vec3(0.800, 0.835, 0.900), dayF), diffuse * 0.85);
+        mid = mix(mid, mix(vec3(0.085, 0.095, 0.12), vec3(0.680, 0.720, 0.805), dayF), diffuse * 0.85);
+        lo  = mix(lo,  mix(vec3(0.050, 0.058, 0.08), vec3(0.520, 0.570, 0.680), dayF), diffuse * 0.85);
 
-      // cumulonimbus isn't a cloud-plane projection, so high frequency
-      // doesn't blow up near the horizon. Applying the same strong fade as
-      // the other layers would dissolve the cloud base into haze and make it vanish.
-      float cbFade = smoothstep(-0.02, 0.06, rd.y);
-      cbMask = clamp(m, 0.0, 1.0) * 0.97 * cbFade;
-      sky = overlay(sky, tcol, cbMask);
+        // weight the scales so the coarse lobes carry the shading — letting
+        // the fine scales compete washes the big forms out into an even
+        // speckle, and the mass reads as porridge instead of cauliflower
+        float ndl = flank * 0.75 + formHuge * 0.85 + formBig * 1.10
+                  + formSmall * 0.48 + formFine * 0.28 + formMicro * 0.18;
+        // clouds are brighter where thicker, from multiple scattering — that's
+        // why the edge drops slightly toward grey.
+        // this splits a lobe's core into white and its valley into grey, so
+        // shading stays tied to lobe shape
+        float core = clamp((shape - 0.60) * 0.50, -0.34, 0.36);
+
+        // ── don't make the tone mapping asymmetric ──
+        // stacking smoothstep compresses only the bright end toward its
+        // ceiling, leaving only the shadows with any gradation. Shadows then
+        // read as "holes punched in a white mass" rather than "the shaded side
+        // of a lobe". A lobe always has both a lit and a shaded face, so leave
+        // equal headroom on both sides
+        // diffuse light also flattens the lit/shadow modelling, same as cloudColor.
+        // the gain here is the lobes' light/shadow swing: measured on photos a
+        // lobe's lit face vs its valley spans ~0.35 in luma — at half that the
+        // mass reads as flat fog no matter how good the silhouette is
+        float t = clamp((ndl * 0.80 + core) * (1.0 - diffuse * 0.55) + 0.58, 0.0, 1.0);
+        vec3 tcol = t < 0.5 ? mix(lo, mid, t * 2.0) : mix(mid, hi, (t - 0.5) * 2.0);
+        // apply grain by **multiplication**, last. Adding it into the tonal
+        // values instead saturates and disappears in the bright areas;
+        // multiplying leaves skin even on a face right at the edge of blowout.
+        // multiplicative grain acts at the same ratio whether bright or dark,
+        // so it adds "skin" without raising overall contrast
+        tcol *= 1.0 + micro * 0.13 + (wisp - 0.5) * 0.09;
+        // sink continuously toward the cloud base (never in discrete steps).
+        // the base is in the tower's own shadow but lit by the sky, so it
+        // sinks toward blue-grey, not plain grey
+        tcol *= mix(vec3(1.0), vec3(0.55, 0.645, 0.845), depth * depth);
+        // the edge is thin, so light passes through it (silver lining — only with direct sun)
+        tcol += cloudSun * m * (1.0 - m) * 4.0 * 0.22
+              * max(t - 0.45, 0.0) * max(dayF, sunsetF * 0.6) * (1.0 - diffuse);
+        // in severe weather the cumulonimbus itself sits inside the storm.
+        // leaving it bright here makes a pure-white cloud float in a leaden
+        // sky. Pull it toward the same leaden grey as the other layers.
+        tcol = mix(tcol, vec3(0.19, 0.20, 0.23) * (0.25 + 0.75 * dayF), gloom * 0.85);
+        tcol += flash * vec3(0.75, 0.80, 1.0) * 0.55;
+
+        // cumulonimbus isn't a cloud-plane projection, so high frequency
+        // doesn't blow up near the horizon. Applying the same strong fade as
+        // the other layers would dissolve the cloud base into haze and make it vanish.
+        float cbFade = smoothstep(-0.02, 0.06, rd.y);
+        cbMask = clamp(m, 0.0, 1.0) * 0.97 * cbFade;
+        disp = mix(disp, tcol, cbMask);
+      }
     }
 
     // ── Veil cloud (velum) ──
@@ -1563,7 +1638,7 @@ void main() {
           // skin. Multiplicative so it adds texture without changing overall brightness
           float vFray = vnoise(vcyl * 4.2 + 3.0) * 0.6 + vnoise(vcyl * 9.5 + 11.0) * 0.4 - 0.5;
           vcol *= 1.0 + vFray * 0.22;
-          sky = overlay(sky, vcol, v * 0.70 * horizonFade);
+          disp = mix(disp, vcol, v * 0.70 * horizonFade);
         }
       }
     }
@@ -1571,13 +1646,13 @@ void main() {
 
   // ── Low layer, under 2000m ──────────────────────────
   // Stratocumulus Sc (roll cloud) — large mottled masses, arranged as rolls
-  if (u_low.y > 0.001) {
+  if (u_low.y > 0.001 && above) {
     vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightF, sunsetF, flash, gloom, 1.05, cloudSun);
-    sky = overlay(sky, col, g.x * u_low.y * 0.95 * horizonFade);
+    disp = mix(disp, col, g.x * u_low.y * 0.95 * horizonFade);
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
-  if (u_low.z > 0.02) {
+  if (u_low.z > 0.02 && above) {
     vec2 cuv = planeUV(rd, rdY, ALT_LOW * 2.5, u_windOff);
     // during high wind the whole sky wobbles slightly.
     // driven by u_windOff (which only advances in wind) so the phase is
@@ -1589,7 +1664,8 @@ void main() {
     );
     // the smaller the amount, the higher the threshold — sparse clouds only sprout here and there
     float edge = 0.88 - u_low.z * 0.52;
-    vec3 dl = cloudField(cuv, churn, ldir, edge, ramp);
+    // the veil's skirt reaches lower than the density's, so it sets the floor
+    vec3 dl = cloudField(cuv, churn, ldir, edge, ramp, edge - 0.26);
     // a thin, translucent veil cloud: give the density threshold a wide skirt below it
     // (it drifts as a bright haze around the lumps, and in places that never formed one)
     // must scale with the amount, or a residual haze is all that's left in an otherwise cloudless sky
@@ -1602,24 +1678,24 @@ void main() {
     // shade from continuous thickness across the wide ramp, not from the saturated density (den)
     float thick = smoothstep(edge, edge + 0.35, dl.z);
     vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightF, sunsetF, flash, gloom, 1.0, cloudSun);
-    sky = overlay(sky, c, alpha * 0.97);
+    disp = mix(disp, c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 1.2, u_windOff * 1.9) + 51.7;
     float fedge = 0.94 - u_low.z * 0.42;
-    vec3 fl = cloudField(fuv, churn * 1.2, ldir, fedge, ramp);
+    vec3 fl = cloudField(fuv, churn * 1.2, ldir, fedge, ramp, fedge - 0.01);
     float falpha = fl.x * u_low.z * horizonFade * (1.0 - cbMask * 0.6);
     float fthick = smoothstep(fedge, fedge + 0.35, fl.z);
     vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightF, sunsetF, flash, gloom, 1.25, cloudSun);
-    sky = overlay(sky, fc, falpha * 0.95);
+    disp = mix(disp, fc, falpha * 0.95);
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
-  if (u_low.x > 0.001) {
+  if (u_low.x > 0.001 && above) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_LOW * 0.5, u_windOff * 1.2), 0.45, 0.45);
     vec3 col = cloudColor(0.95, -0.25, 0.60,
                           dayF, nightF, sunsetF, flash, gloom, 1.2, cloudSun) * 0.86;
     float lowBias = mix(1.0, 0.40, smoothstep(0.05, 0.55, rd.y));
-    sky = overlay(sky, col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
+    disp = mix(disp, col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
   }
 
   // ── Light leaking in under the cloud base ──
@@ -1631,7 +1707,7 @@ void main() {
     vec3 leak = mix(vec3(0.055, 0.058, 0.066), vec3(0.70, 0.70, 0.63), dayF);
     leak = mix(leak, vec3(0.86, 0.60, 0.40), sunsetF * 0.7);
     float band = smoothstep(0.22, 0.005, rd.y) * smoothstep(-0.02, 0.02, rd.y);
-    sky = overlay(sky, leak, band * deck * 0.88);
+    disp = mix(disp, leak, band * deck * 0.88);
   }
 
   // ── Pannus (ragged scud beneath rain clouds) ──
@@ -1644,9 +1720,10 @@ void main() {
   float fband = smoothstep(0.015, 0.075, rd.y) * smoothstep(0.42, 0.10, rd.y);
   if (u_mid.z > 0.02 && fband > 0.001) {
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 0.42, u_windOff * 2.4) + 77.0;
-    vec3 fr = cloudField(fuv, churn + 0.45, ldir, 0.90 - u_mid.z * 0.22, ramp * 2.2);
+    float pedge = 0.90 - u_mid.z * 0.22;
+    vec3 fr = cloudField(fuv, churn + 0.45, ldir, pedge, ramp * 2.2, pedge - 0.01);
     vec3 fcol = mix(vec3(0.030, 0.033, 0.040), vec3(0.26, 0.27, 0.29), dayF);
-    sky = overlay(sky, fcol, fr.x * u_mid.z * fband * 0.80);
+    disp = mix(disp, fcol, fr.x * u_mid.z * fband * 0.80);
   }
 
   // ── Below the horizon (out of frame with the default framing; used when looking down and for the skybox's lower hemisphere) ──
@@ -1654,7 +1731,7 @@ void main() {
     vec3 ground = mix(vec3(0.020, 0.022, 0.028), vec3(0.17, 0.165, 0.150), dayF);
     ground = mix(ground, ground * 0.6, gloom * 0.5);
     ground += vec3(0.06, 0.03, 0.015) * sunsetF * 0.5;
-    sky = overlay(sky, ground, smoothstep(0.0, -0.05, rd.y));
+    disp = mix(disp, ground, smoothstep(0.0, -0.05, rd.y));
   }
 
   // ── Rain (thin threads slanting with the wind. A lens-face phenomenon, so screen space) ──
@@ -1673,7 +1750,7 @@ void main() {
       float line = smoothstep(0.16, 0.05, abs(fract(g.x) - 0.5));
       rain += active * line * smoothstep(0.24, 0.03, drop) * smoothstep(0.0, 0.015, drop);
     }
-    sky = overlay(sky, encodeSrgb(sky) * 0.92 + vec3(0.5, 0.55, 0.63) * 0.35, clamp(rain, 0.0, 1.0) * u_rain * 0.32);
+    disp = mix(disp, disp * 0.92 + vec3(0.5, 0.55, 0.63) * 0.35, clamp(rain, 0.0, 1.0) * u_rain * 0.32);
   }
 
   // ── Snow ──
@@ -1714,13 +1791,16 @@ void main() {
       float edge = mix(0.10, 0.72, k);
       flakes += active * smoothstep(rad, rad * edge, d) * mix(0.55, 1.0, k);
     }
-    sky = overlay(sky, vec3(0.95, 0.96, 1.0), clamp(flakes, 0.0, 1.0) * u_snow * 0.85);
+    disp = mix(disp, vec3(0.95, 0.96, 1.0), clamp(flakes, 0.0, 1.0) * u_snow * 0.85);
 
     // the snowfall itself whites out visibility — flakes alone don't sell the impression of heavy snow.
     // a snowy sky is bright grey, unlike a rain cloud, so lift it here
     vec3 whiteout = mix(vec3(0.28, 0.30, 0.34), vec3(0.92, 0.93, 0.95), dayF);
-    sky = overlay(sky, whiteout, u_snow * 0.55);
+    disp = mix(disp, whiteout, u_snow * 0.55);
   }
+
+  // back to linear light for the flash, which adds
+  sky = L(disp);
 
   // lightning's glow reflected across the whole sky
   sky += flash * L(vec3(0.85, 0.9, 1.1)) * (0.18 + 0.3 * (1.0 - h)) * FLASH_LUM;
@@ -1767,15 +1847,20 @@ void main() {
     }
   }
 
+  // the droplet rim and the vignette are both display-space, so they share one encode
+  disp = encodeSrgb(sky);
+
   // the rim of a lens droplet: bleeds slightly dark
-  sky = overlay(sky, encodeSrgb(sky) * 0.88 + vec3(0.03), clamp(dropMask, 0.0, 1.0) * 0.55);
+  if (dropMask > 0.0) {
+    disp = mix(disp, disp * 0.88 + vec3(0.03), clamp(dropMask, 0.0, 1.0) * 0.55);
+  }
 
   // ── Vignette ──
   // Display-referred, unlike the polarizer above. A polarizer is a real
   // transmission and belongs in linear light; a vignette is a chosen falloff that
   // was dialled in on encoded values, and multiplying linear light by the same
   // factor lands visibly weaker (0.5 goes to 0.48 instead of 0.45).
-  sky = L(encodeSrgb(sky) * (1.0 - 0.22 * length(p - vec2(0.5, 0.45))));
+  sky = L(disp * (1.0 - 0.22 * length(p - vec2(0.5, 0.45))));
 
   // ── Linear light → display ──
   // Everything above this line is linear scene light and may run far past 1.0
@@ -1866,7 +1951,7 @@ const UNIFORM_NAMES = [
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
-  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant',
+  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops',
 ] as const;
 
 export interface RendererOptions {
@@ -2186,6 +2271,7 @@ export class AtmosphereRenderer {
     const ce = s.celestial;
     gl.uniform4f(u.u_sky, ce.bortle, ce.milkyWay, ce.meteors, ce.radiant ? 1 : 0);
     gl.uniform2f(u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
+    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

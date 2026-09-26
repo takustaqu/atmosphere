@@ -5,6 +5,7 @@
 
 import { resolveCelestial, type Celestial, type CelestialInput } from './celestial.js';
 import { resolveFilter, type ColorFilter, type FilterInput } from './filter.js';
+import { resolveLens, type Lens, type LensInput } from './lens.js';
 import { resolvePolarizer, type Polarizer, type PolarizerInput } from './polarizer.js';
 import { nominalSolarPosition, solarPosition, type GeoLocation } from './sun.js';
 import { toDate, toTimeOfDay, type TimeInput } from './time.js';
@@ -59,6 +60,8 @@ export interface Conditions {
   polarizer?: PolarizerInput;
   /** what is behind the air: light pollution, the Milky Way, meteors */
   celestial?: CelestialInput;
+  /** what happens on the glass: raindrops on the lens */
+  lens?: LensInput;
   /** camera (partial is fine) */
   camera?: Partial<Camera>;
 }
@@ -75,6 +78,7 @@ export interface AtmosphereState extends WeatherState {
   tone: ToneCurve;
   polarizer: Polarizer;
   celestial: Celestial;
+  lens: Lens;
 }
 
 export const DEFAULT_CONDITIONS: Required<Pick<Conditions, 'time' | 'weather'>> = {
@@ -103,6 +107,7 @@ export function resolveConditions(c: Conditions): AtmosphereState {
     tone: resolveTone(c.tone),
     polarizer: resolvePolarizer(c.polarizer),
     celestial: resolveCelestial(c.celestial),
+    lens: resolveLens(c.lens),
   };
 }
 
