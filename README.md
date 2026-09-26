@@ -352,6 +352,98 @@ Changing it eases over the same few seconds as everything else, so switching
 them off lets the drops on the glass dry away instead of vanishing. At 0 the
 droplet pass is skipped outright, not just drawn invisibly.
 
+## Light for the foreground
+
+Something usually stands in front of the sky — an avatar, a product shot, a
+card — and it only belongs there if the same light falls on it: a rim from
+behind when the sun is ahead of the camera, the background's colors wrapping
+over its edges, fill from the dome above and the ground below. `sky.light`
+hands those over as plain numbers for another renderer to light with.
+
+```ts
+const sky = new Atmosphere(canvas, {
+  lightProbe: true,                       // measure the sky ~10×/s
+  onLight: (light) => { /* push into your renderer */ },
+});
+
+const light = sky.light;                  // or read it whenever you draw
+```
+
+It comes in two halves, because they come from different places:
+
+**The lights** — `light.sun`, `light.moon`, and `light.key` (whichever is
+lighting the scene more, or `null`). Computed from the state with the shader's
+own formulas: exact, free, and tracking the camera every frame, probe or no
+probe.
+
+| field | what it is |
+|:---|:---|
+| `direction` | unit vector toward it, world axes (x east, y up, z north) |
+| `view` | the same in the camera's frame (x right, y up, z into the screen). **`view[2] > 0` is backlight** — it is behind the subject — and `(view[0], view[1])` is which way on screen the rim faces |
+| `screen` | `{ x, y, inFront }`, 0..1 from the top-left; outside 0..1 when out of frame |
+| `color` | linear RGB, brightest channel 1 — white at noon, orange at sunset |
+| `visibility` | 0..1 how much gets through: horizon and cloud cover |
+| `intensity` | `visibility` on one scale for both, a clear sun = 1 (the moon tops out at `MOON_RELATIVE`) |
+
+**The measurement** — `light.frame` and `light.environment`, from drawing the
+real shader into a tiny offscreen buffer and reading it back, so clouds, haze,
+the filter and the tone curve are all in it. `null` until the first
+measurement, and always with `lightProbe` off.
+
+| field | what it is | use it for |
+|:---|:---|:---|
+| `frame.average` | the whole frame | overall exposure / tint of the foreground |
+| `frame.grid` | the frame as `cols × rows` cells (default 8×6), top-left first | **light wrap**: `sampleLightGrid(grid, x, y)` at the subject's edges |
+| `environment.sky` / `.ground` | the dome above / below the horizon | a hemisphere light's two colors |
+| `environment.zenith` / `.horizon` | above 60° / 0–15° up | top light / grazing light |
+| `environment.directions` | `east west up down north south` | an ambient cube: `sampleEnvironment(env, normal)` |
+
+Every color is a `LightSample`: `srgb` (0..1, for CSS or a 2D canvas),
+`linear` (for a lighting equation), and `luminance`. Averages are taken in
+linear light and weighted by solid angle. The frame is measured as displayed,
+lens effects included — light wrap wants what is actually behind the subject —
+while the environment leaves the flare and vignette out.
+
+Hooking it to three.js, for example:
+
+```ts
+const hemi = new THREE.HemisphereLight();
+const rim = new THREE.DirectionalLight();
+
+const sky = new Atmosphere(canvas, {
+  lightProbe: true,
+  onLight: (light) => {
+    if (light.environment) {
+      hemi.color.setRGB(...light.environment.sky.linear);
+      hemi.groundColor.setRGB(...light.environment.ground.linear);
+    }
+    const key = light.key ? light[light.key] : null;
+    rim.intensity = key ? key.intensity * 3 : 0;
+    if (key) {
+      rim.color.setRGB(...key.color);
+      rim.position.set(...key.direction);   // same right-handed, y-up axes
+    }
+  },
+});
+
+// keep the two cameras pointing the same way: yaw 0 faces +z
+const d = threeCamera.getWorldDirection(new THREE.Vector3());
+sky.set({ camera: { yaw: Math.atan2(d.x, d.z), pitch: Math.asin(d.y), fov: THREE.MathUtils.degToRad(threeCamera.fov) } });
+```
+
+The weather controller's **Foreground light** panel draws a figure lit from
+nothing but these numbers (`examples/controller/figure.ts`), fill, wrap and
+rim — a working reference for a 2D compositor.
+
+**Cost.** A measurement is a few thousand pixels of drawing, which is nothing,
+plus a GPU readback, which is not: `readPixels` waits for the GPU. About 1 ms
+of main-thread wait on an M2 Max. So it runs at `rate` (default 10/s), before
+the frame's own draw so it waits only on itself, and eases each result in over
+`smoothing` seconds (default 0.3) — a few dozen point samples of a moving sky
+shimmer otherwise. `smoothing: 0` passes lightning through at full strength.
+`sky.measureLight()` takes one right now, unsmoothed, probe option or not;
+`AtmosphereRenderer.probe()` is the same thing for a custom loop.
+
 ## Display P3
 
 Rendered in Display P3 where the browser supports it, sRGB otherwise. No setup
@@ -417,6 +509,8 @@ sky.reducedMotion;   // true while the sky is being held still
 | `resolveCelestial(c)` | resolving a night-sky specification |
 | `resolveTone(t)` / `resolvePolarizer(p)` | resolving a tone curve / polarizer specification |
 | `resolveLens(l)` | resolving a lens specification |
+| `celestialLights(s, cam, aspect)` | the sun and moon as directional lights, without a probe |
+| `sampleLightGrid(g, x, y)` / `sampleEnvironment(env, n)` | reading a light measurement at a screen point / for a surface normal |
 | `srgbToDisplayP3(c)` / `displayP3ToSrgb(c)` | convert an encoded color between the two spaces |
 | `formatTod(tod)` | `14.5` → `"14:30"` |
 | `weatherLabel(id, locale)` / `filterLabel(id, locale)` / `cloudGenusLabel(id, locale)` | localized labels (`'en'` / `'ja'`) |

@@ -65,6 +65,17 @@ export interface AtmosphereCanvasProps extends Conditions {
    * identity nowhere at all, so an inline object literal is harmless here.
    */
   animator?: AtmosphereOptions['animator'];
+  /**
+   * Measure the sky's light for whatever is drawn in front of it.
+   *
+   * Init-only, like {@link AtmosphereCanvasProps.fps}.
+   */
+  lightProbe?: AtmosphereOptions['lightProbe'];
+  /**
+   * Receives each light measurement — see `Atmosphere.light`. The latest
+   * function is always the one called, so an inline arrow is fine.
+   */
+  onLight?: AtmosphereOptions['onLight'];
   /** class name appended to the default "atmo-canvas" */
   className?: string;
 }
@@ -77,6 +88,8 @@ export function AtmosphereCanvas({
   resolutionScale,
   fadeMs = 1600,
   animator,
+  lightProbe,
+  onLight,
   className,
 }: AtmosphereCanvasProps) {
   // compare conditions by value, so inline literals (`camera={{ ... }}`)
@@ -97,12 +110,19 @@ export function AtmosphereCanvas({
   // if the device could not compile the shader at all.
   const [ready, setReady] = useState(false);
   // read the initial values via a ref so they aren't re-read on remount
-  const initRef = useRef({ time, location, weather, filter, lens, camera, fps, resolutionScale, animator });
+  const initRef = useRef({ time, location, weather, filter, lens, camera, fps, resolutionScale, animator, lightProbe });
+  // read through a ref, so a new callback each render never rebuilds the sky
+  const onLightRef = useRef(onLight);
+  onLightRef.current = onLight;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const sky = new Atmosphere(canvas, { ...initRef.current, onReady: setReady });
+    const sky = new Atmosphere(canvas, {
+      ...initRef.current,
+      onReady: setReady,
+      onLight: (light) => onLightRef.current?.(light),
+    });
     skyRef.current = sky;
     // not resetting `ready` here on purpose: the canvas keeps its context
     // across a remount, so the program is still linked and the sky is still

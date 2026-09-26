@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Faster everywhere, and the lens droplets can be switched off.
+Faster everywhere, the lens droplets can be switched off, and the sky hands its light to whatever stands in front of it.
 
 ### Changed
 
@@ -49,8 +49,26 @@ Faster everywhere, and the lens droplets can be switched off.
   axis, so switching them off lets the drops dry away. At zero the droplet pass
   is skipped, not drawn invisibly. `resolveLens`, `DEFAULT_LENS`, and the
   `Lens` / `LensInput` types are exported.
-- Controller example: a Lens panel. React sample: `AtmosphereCanvas` passes
-  `lens` through.
+- **`sky.light`** — the sky's light, handed to whatever is drawn in front of it
+  (an avatar backlit by the sun, the background wrapping over its edges):
+  - `sun` / `moon` / `key` as directional lights — world direction, direction
+    in the camera's frame (`view[2] > 0` is backlight), screen position,
+    linear color, visibility and intensity. Computed from the state with the
+    shader's own formulas, so they are exact, free, and always present.
+  - with the new **`lightProbe`** option, `frame` (the frame averaged, and as
+    a coarse grid for light wrap) and `environment` (sky, ground, zenith,
+    horizon, and six directions as an ambient cube), measured by drawing the
+    real shader into a tiny offscreen buffer and reading it back — about 1 ms
+    of GPU wait per measurement, taken 10 times a second and smoothed.
+  - **`onLight`** fires with each measurement; **`measureLight()`** takes one
+    on demand.
+  - `AtmosphereRenderer.probe()` for custom loops, and the pieces behind it —
+    `celestialLights`, `summarizeProbe`, `mixMeasurement`, `sampleLightGrid`,
+    `sampleEnvironment`, `cameraForward` — exported with their types.
+- Controller example: a Lens panel, and a **Foreground light** panel that
+  lights a figure from `sky.light` alone (`examples/controller/figure.ts`).
+  React sample: `AtmosphereCanvas` passes `lens` through and takes
+  `lightProbe` / `onLight`.
 
 ## 0.3.0 — 2026-09-10
 

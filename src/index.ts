@@ -4,8 +4,8 @@
 //
 // No DOM/framework dependency. React bindings are the sample in examples/.
 
-export { Atmosphere, type AtmosphereOptions } from './atmosphere.js';
-export { AtmosphereRenderer, type RendererOptions } from './renderer.js';
+export { Atmosphere, type AtmosphereOptions, type LightProbeOptions } from './atmosphere.js';
+export { AtmosphereRenderer, type RendererOptions, type ProbeOptions } from './renderer.js';
 export { StateAnimator, lerpWrapped, type AnimatorOptions } from './animator.js';
 export { renderCubeFaces, type CubeFacesOptions } from './cubemap.js';
 
@@ -97,6 +97,27 @@ export {
   type PolarizerInput,
   type PolarizerPreset,
 } from './polarizer.js';
+
+export {
+  celestialLights,
+  summarizeProbe,
+  mixMeasurement,
+  sampleLightGrid,
+  sampleEnvironment,
+  sampleFromLinear,
+  cameraForward,
+  probeLayout,
+  MOON_RELATIVE,
+  type AtmosphereLight,
+  type CelestialLight,
+  type EnvironmentLight,
+  type FrameLight,
+  type LightGrid,
+  type LightMeasurement,
+  type LightSample,
+  type ProbeLayout,
+  type Vec3,
+} from './light.js';
 
 export {
   resolveLens,

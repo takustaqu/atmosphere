@@ -18,7 +18,9 @@ import {
   formatTod, resolveConditions,
   type CloudMix, type Conditions,
   type CelestialId, type FilterId, type PolarizerId, type ToneId, type GeoLocation, type Weather, type WeatherId,
+  type AtmosphereLight, type LightSample,
 } from '../../src';
+import { Figure } from './figure';
 
 const canvas = document.getElementById('sky') as HTMLCanvasElement;
 const panel = document.getElementById('panel')!;
@@ -67,7 +69,19 @@ const ui = {
 // the camera (for looking around). Defaults to a background-friendly, south-facing framing
 const cam = { yaw: Math.PI, pitch: 0.46, fov: 0.86 };
 
-const sky = new Atmosphere(canvas, { time: ui.timeOfDay, weather: ui.weather, camera: cam });
+const figureEl = document.getElementById('figure') as HTMLCanvasElement;
+const figure = new Figure(figureEl);
+// lightProbe measures the sky ten times a second; onLight hands each result over
+const sky = new Atmosphere(canvas, {
+  time: ui.timeOfDay, weather: ui.weather, camera: cam,
+  lightProbe: true,
+  onLight: (light) => {
+    // cam, not sky.camera: this can fire from inside the constructor (a still
+    // frame on a synchronous compile), before sky is assigned
+    if (figureEl.classList.contains('on')) figure.draw(light, cam, canvas);
+    showLight(light);
+  },
+});
 // expose for scripted QA, same as the playground's __skies (headless viewers
 // report visibility=hidden so rAF never fires; a script can jump() to draw)
 (globalThis as any).__sky = sky;
@@ -378,6 +392,20 @@ syncers.push(chips(
 syncers.push(slider('Droplets', 0, 1, 0.01,
   () => ui.lens.droplets, (v) => { ui.lens.droplets = v; }, (v) => v.toFixed(2)));
 
+section('Foreground light');
+note('What sky.light hands to a renderer drawing in front of the sky. The figure '
+  + 'is lit from these numbers alone: fill from the dome behind the camera, the '
+  + 'frame grid bled over its edges, and a rim from the sun or moon when it is '
+  + 'ahead of the camera. Turn toward the sun at a low angle to see the rim.');
+syncers.push(chips(
+  [{ id: 'on', label: 'Show figure' }, { id: 'off', label: 'Hide' }],
+  (id) => (id === 'on') === figureEl.classList.contains('on'),
+  (id) => { figureEl.classList.toggle('on', id === 'on'); },
+));
+const swatches = document.createElement('div');
+swatches.className = 'swatches';
+host.append(swatches);
+
 section('Color filter');
 syncers.push(chips(
   FILTER_IDS.map((id) => ({ id, label: filterLabel(id) })),
@@ -416,6 +444,32 @@ note('How the observation values resolved into the renderer’s 0..1 parameters.
 const stateEl = document.createElement('div');
 stateEl.id = 'state';
 panel.append(stateEl);
+
+function showLight(l: AtmosphereLight): void {
+  const hex = (s: LightSample) => `rgb(${s.srgb.map((v) => Math.round(v * 255)).join(',')})`;
+  const rows: [string, string, string][] = [];
+  const add = (name: string, s: LightSample | undefined) => {
+    if (s) rows.push([hex(s), name, `Y ${s.luminance.toFixed(3)}`]);
+  };
+  add('frame average', l.frame?.average);
+  add('sky dome', l.environment?.sky);
+  add('horizon', l.environment?.horizon);
+  add('ground', l.environment?.ground);
+  const key = l.key ? l[l.key] : null;
+  if (key) {
+    const lin = key.color.map((c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055));
+    rows.push([`rgb(${lin.map((v) => Math.round(v * 255)).join(',')})`,
+      `key: ${l.key}`,
+      `× ${key.intensity.toFixed(2)}  ${key.view[2] > 0 ? 'ahead (backlight)' : 'behind (front light)'}`]);
+  }
+  swatches.replaceChildren(...rows.flatMap(([bg, name, v]) => {
+    const i = document.createElement('i');
+    i.style.background = bg;
+    const t = document.createElement('span');
+    t.textContent = `${name} — ${v}`;
+    return [i, t];
+  }));
+}
 
 function readout(c: Conditions): void {
   const s = resolveConditions(c);

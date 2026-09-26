@@ -332,6 +332,96 @@ sky.set({ lens: { droplets: true } });    // 既定に戻す
 一瞬で消えずに乾いていきます。0 のときは水滴の処理そのものを飛ばします（見えない
 ように描いているのではありません）。
 
+## 前景のためのライティング情報
+
+空の手前には、たいてい何かが立ちます — アバター、商品、カード。それが空に
+なじむのは、同じ光が当たっているときだけです。太陽がカメラの前方にあれば
+背後から縁が光り（逆光のリムライト）、背景の色が輪郭に回り込み（ライトラップ）、
+上からは空、下からは地面の光が回る。`sky.light` はそれを、別のレンダラが
+ライティングに使える素の数値として渡します。
+
+```ts
+const sky = new Atmosphere(canvas, {
+  lightProbe: true,                       // 空を毎秒10回ほど計測
+  onLight: (light) => { /* 自分のレンダラへ流し込む */ },
+});
+
+const light = sky.light;                  // 描画のたびに読んでもよい
+```
+
+中身は出どころの違う二つに分かれます。
+
+**光源** — `light.sun`、`light.moon`、`light.key`（場面をより照らしている方。
+どちらも無ければ `null`）。シェーダーと同じ式で状態から計算するので、正確で、
+コストはゼロで、毎フレームカメラに追従します。計測（probe）を切っていても使えます。
+
+| フィールド | 内容 |
+|:---|:---|
+| `direction` | 光源への単位ベクトル。ワールド軸（x 東、y 上、z 北） |
+| `view` | 同じ向きをカメラ座標で（x 右、y 上、z 画面の奥）。**`view[2] > 0` なら逆光** — 被写体の背後にある — で、`(view[0], view[1])` が画面上でリムが向く方向 |
+| `screen` | `{ x, y, inFront }`。左上原点の 0..1、画面外なら範囲外の値 |
+| `color` | リニア RGB、最大チャンネルを 1 に正規化 — 昼は白、夕方は橙 |
+| `visibility` | 0..1 光がどれだけ届くか（地平線と雲量） |
+| `intensity` | 太陽と月を同じ尺度にした `visibility`。快晴の太陽が 1（月は `MOON_RELATIVE` 止まり） |
+
+**計測値** — `light.frame` と `light.environment`。実際のシェーダーを小さな
+オフスクリーンに描いて読み戻すので、雲・霞・フィルター・トーンカーブが全部
+反映されます。最初の計測まで、また `lightProbe` がオフの間は `null` です。
+
+| フィールド | 内容 | 用途 |
+|:---|:---|:---|
+| `frame.average` | 画面全体 | 前景全体の露出・色かぶり |
+| `frame.grid` | 画面を `cols × rows`（既定 8×6）に分けたセル、左上から | **ライトラップ**：被写体の輪郭付近で `sampleLightGrid(grid, x, y)` |
+| `environment.sky` / `.ground` | 地平線より上 / 下の天球 | 半球ライトの2色 |
+| `environment.zenith` / `.horizon` | 60°より上 / 0〜15° | トップライト / 低い横からの光 |
+| `environment.directions` | `east west up down north south` | アンビエントキューブ：`sampleEnvironment(env, normal)` |
+
+色はすべて `LightSample` で、`srgb`（0..1、CSS や 2D canvas 用）、`linear`
+（ライティング計算用）、`luminance` を持ちます。平均はリニア光で、立体角で重み付け
+して取ります。画面（frame）は表示どおりに — レンズ効果も含めて — 計測します。
+ライトラップに要るのは被写体の背後に実際に見えているものだからです。一方
+environment からはフレアとビネットを除きます。
+
+たとえば three.js なら：
+
+```ts
+const hemi = new THREE.HemisphereLight();
+const rim = new THREE.DirectionalLight();
+
+const sky = new Atmosphere(canvas, {
+  lightProbe: true,
+  onLight: (light) => {
+    if (light.environment) {
+      hemi.color.setRGB(...light.environment.sky.linear);
+      hemi.groundColor.setRGB(...light.environment.ground.linear);
+    }
+    const key = light.key ? light[light.key] : null;
+    rim.intensity = key ? key.intensity * 3 : 0;
+    if (key) {
+      rim.color.setRGB(...key.color);
+      rim.position.set(...key.direction);   // 同じ右手系・y 上の軸
+    }
+  },
+});
+
+// 二つのカメラの向きを揃える：yaw 0 が +z を向く
+const d = threeCamera.getWorldDirection(new THREE.Vector3());
+sky.set({ camera: { yaw: Math.atan2(d.x, d.z), pitch: Math.asin(d.y), fov: THREE.MathUtils.degToRad(threeCamera.fov) } });
+```
+
+気象コントローラーの **Foreground light** パネルは、この数値だけでライティング
+した人物シルエット（フィル・ラップ・リム）を描きます（`examples/controller/figure.ts`）。
+2D 合成の実装例としてそのまま参照できます。
+
+**コスト。** 計測の描画は数千ピクセルなので無視できますが、GPU からの読み戻しは
+そうではありません。`readPixels` は GPU を待つので、M2 Max でメインスレッドが
+約 1ms 止まります。そのため `rate`（既定 毎秒10回）に間引き、フレーム本体の描画の
+前に行って自分の分だけを待つようにし、結果は `smoothing` 秒（既定 0.3）かけて
+なじませます — 動く空を数十点でサンプルするので、そのままだとちらつくためです。
+`smoothing: 0` にすれば雷光もそのまま届きます。`sky.measureLight()` はその場で
+1回、平滑化なしで計測します（probe オプションの有無に関係なく）。
+`AtmosphereRenderer.probe()` は独自ループ向けの同じ機能です。
+
 ## Display P3
 
 対応しているブラウザでは Display P3 で、そうでなければ sRGB で描きます。
@@ -395,6 +485,8 @@ sky.reducedMotion;   // 静止させている間は true
 | `resolveCelestial(c)` | 夜空指定の解決 |
 | `resolveTone(t)` / `resolvePolarizer(p)` | トーンカーブ・偏光フィルター指定の解決 |
 | `resolveLens(l)` | レンズ指定の解決 |
+| `celestialLights(s, cam, aspect)` | 太陽と月を平行光源として（計測なしで） |
+| `sampleLightGrid(g, x, y)` / `sampleEnvironment(env, n)` | 計測値を画面上の点で / 面の法線方向で読む |
 | `srgbToDisplayP3(c)` / `displayP3ToSrgb(c)` | エンコード済みの色を2つの空間の間で変換 |
 | `formatTod(tod)` | `14.5` → `"14:30"` |
 | `weatherLabel(id, locale)` / `filterLabel(id, locale)` / `cloudGenusLabel(id, locale)` | ラベルの多言語化（`'en'` / `'ja'`） |

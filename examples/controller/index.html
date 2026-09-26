@@ -74,6 +74,15 @@
     background: rgba(0,0,0,0.28); color: #8a929c;
     font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 10.5px; white-space: pre-wrap;
   }
+  /* -- foreground figure lit by sky.light (see figure.ts) -- */
+  #figure {
+    position: fixed; left: 7%; bottom: 0; width: 250px; height: 320px;
+    pointer-events: none; display: none;
+  }
+  #figure.on { display: block; }
+  .swatches { display: grid; grid-template-columns: 18px 1fr; gap: 4px 8px; align-items: center; margin: 4px 0 8px; }
+  .swatches i { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.18); }
+  .swatches span { color: #8a929c; font-variant-numeric: tabular-nums; font-size: 10.5px; }
   #faces { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 6px; }
   #faces figure { margin: 0; }
   #faces img { width: 100%; display: block; border-radius: 4px; background: #000; }
@@ -82,6 +91,7 @@
 </head>
 <body>
   <canvas id="sky"></canvas>
+  <canvas id="figure"></canvas>
   <div id="hud"><b id="bearing">S</b><span id="angles"></span></div>
   <button id="toggle">Settings</button>
   <div id="panel"></div>

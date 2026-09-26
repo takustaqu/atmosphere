@@ -13,8 +13,12 @@
 // AtmosphereRenderer running the old shader. Reload the page to see changes.
 
 import { SRGB_TO_DISPLAY_P3, glslMat3, type ColorSpaceOption } from './gamut.js';
+import {
+  PROBE_FACE, PROBE_SUB, probeLayout, summarizeProbe,
+  type LightMeasurement, type ProbeLayout,
+} from './light.js';
 import { NOISE_SIZE, noiseLattice } from './noise.js';
-import { DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
+import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
 const VERT = `
 attribute vec2 a_pos;
@@ -64,7 +68,8 @@ precision mediump sampler2D;
 // every cloud edge terraces. The texels themselves are only 8-bit endpoints.
 uniform sampler2D u_noise;   // the baked value-noise lattice — see noise.ts
 
-uniform vec2  u_res;
+uniform vec4  u_frame;     // the viewport being drawn: origin xy, size zw (pixels)
+uniform float u_aspect;    // width / height of the picture this viewport stands for
 uniform float u_time;      // seconds
 uniform vec3  u_cam;       // yaw, pitch, fov (radians)
 uniform vec2  u_sun;       // sun's elevation, azimuth (radians)
@@ -91,6 +96,7 @@ uniform vec4  u_pol;       // polarizer: strength, angle, saturation, stopLoss
 uniform vec4  u_sky;       // celestial: bortle, milkyWay, meteors/hr, hasRadiant
 uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
 uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the lens
+uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky (environment probes)
 
 const float PI = 3.14159265;
 
@@ -729,8 +735,12 @@ vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, flo
 }
 
 void main() {
-  vec2 p = gl_FragCoord.xy / u_res;          // 0..1 (y is up)
-  float aspect = u_res.x / u_res.y;
+  // Normally the viewport is the whole canvas and these reduce to the obvious.
+  // The light probe draws the same frame into a far smaller viewport — and
+  // cube faces beside it — so the picture's shape has to come from u_aspect,
+  // not from how many pixels happen to be drawing it.
+  vec2 p = (gl_FragCoord.xy - u_frame.xy) / u_frame.zw;   // 0..1 (y is up)
+  float aspect = u_aspect;
 
   // ── Lens droplets (rain only. Refract the UV before deciding the view direction, distorting the image itself) ──
   // u_lensDrops at 0 skips the whole block — and the rim darkening at the end, which keys off dropMask
@@ -1823,7 +1833,7 @@ void main() {
   }
 
   // ── Lens flare (only while the sun is on screen. An artifact inside the lens, so screen space) ──
-  if (sunVis > 0.001) {
+  if (sunVis * u_lensFx > 0.001) {
     vec3 proj = projectDir(sunDir, u_cam.x, u_cam.y, u_cam.z, aspect);
     if (proj.z > 0.0) {
       vec2 sunPos = proj.xy * 0.5 + 0.5;
@@ -1860,7 +1870,7 @@ void main() {
   // transmission and belongs in linear light; a vignette is a chosen falloff that
   // was dialled in on encoded values, and multiplying linear light by the same
   // factor lands visibly weaker (0.5 goes to 0.48 instead of 0.45).
-  sky = L(disp * (1.0 - 0.22 * length(p - vec2(0.5, 0.45))));
+  sky = L(disp * (1.0 - 0.22 * u_lensFx * length(p - vec2(0.5, 0.45))));
 
   // ── Linear light → display ──
   // Everything above this line is linear scene light and may run far past 1.0
@@ -1946,12 +1956,12 @@ type Uniforms = Record<string, WebGLUniformLocation | null>;
 
 const UNIFORM_NAMES = [
   'u_noise',
-  'u_res', 'u_time', 'u_cam', 'u_sun',
+  'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun',
   'u_cover', 'u_high', 'u_mid', 'u_low',
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
-  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops',
+  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx',
 ] as const;
 
 export interface RendererOptions {
@@ -2008,6 +2018,19 @@ export interface RendererOptions {
   onReady?: (available: boolean) => void;
 }
 
+export interface ProbeOptions {
+  /**
+   * The frame grid's size, `[cols, rows]`. Defaults to `[8, 6]`.
+   *
+   * Cells are cut from the picture as shown, whatever its aspect, so choose
+   * the grid for how finely the foreground needs to read its surroundings,
+   * not to match the canvas.
+   */
+  grid?: [number, number];
+  /** also measure the dome all around (six small cube faces). Defaults to true */
+  environment?: boolean;
+}
+
 /**
  * The atmosphere renderer. One `render()` call is one frame (one image seen from one camera).
  *
@@ -2020,6 +2043,11 @@ export class AtmosphereRenderer {
   private program: WebGLProgram | null = null;
   private buffer: WebGLBuffer | null = null;
   private noise: WebGLTexture | null = null;
+  // the light probe's offscreen target, made on first use and resized to the layout
+  private probeFbo: WebGLFramebuffer | null = null;
+  private probeTex: WebGLTexture | null = null;
+  private probeSize: [number, number] = [0, 0];
+  private probePixels: Uint8Array | null = null;
   private u: Uniforms = {};
   private lost = false;
   private p3 = false;
@@ -2075,6 +2103,10 @@ export class AtmosphereRenderer {
   private init(): void {
     this.linked = false;
     this.stopPolling();
+    // handles from a lost context are dead; the probe target is rebuilt on demand
+    this.probeFbo = null;
+    this.probeTex = null;
+    this.probeSize = [0, 0];
     const gl = this.canvas.getContext('webgl', {
       alpha: false, antialias: false, depth: false, stencil: false,
       powerPreference: 'low-power',
@@ -2233,17 +2265,100 @@ export class AtmosphereRenderer {
     windOff = 0,
     evo = 0,
   ): void {
+    const gl = this.bind(timeSec, s, windOff, evo);
+    if (!gl) return;
+    const u = this.u;
+    gl.uniform4f(u.u_frame, 0, 0, this.canvas.width, this.canvas.height);
+    gl.uniform1f(u.u_aspect, this.canvas.width / Math.max(1, this.canvas.height));
+    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
+    gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
+    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
+    gl.uniform1f(u.u_lensFx, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  /**
+   * Measure the sky's light: draw the same frame, tiny, into an offscreen
+   * buffer — plus six cube faces for the dome all around — and read it back.
+   *
+   * For lighting whatever stands in front of the sky; see light.ts. The frame
+   * is drawn exactly as {@link render} would draw it for this camera and the
+   * canvas's current aspect, lens effects included, since light wrap wants
+   * what is actually behind the foreground. The cube faces leave the lens out:
+   * a flare or a vignette is not light in the scene.
+   *
+   * Always sRGB, whatever the drawing buffer is. The canvas is untouched.
+   *
+   * **This synchronizes with the GPU** — readPixels waits for the draw to
+   * finish — so it is not free the way render() is. The draws themselves are
+   * a few thousand pixels against the frame's million or so; the cost is the
+   * wait. Call it at a few hertz rather than every frame (Atmosphere's
+   * `lightProbe` option does that and smooths the series), and before
+   * render() in a frame rather than after, so it waits only on its own draws.
+   *
+   * @returns null until the shader is ready (or when WebGL is unavailable)
+   */
+  probe(
+    timeSec: number,
+    s: AtmosphereState,
+    camera: Camera = DEFAULT_CAMERA,
+    windOff = 0,
+    evo = 0,
+    options: ProbeOptions = {},
+  ): LightMeasurement | null {
+    const [cols, rows] = options.grid ?? [8, 6];
+    const layout = probeLayout(cols, rows, options.environment ?? true);
+    const gl = this.bind(timeSec, s, windOff, evo);
+    if (!gl || !this.probeTarget(gl, layout)) return null;
+    const u = this.u;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
+    // sRGB regardless of the canvas: these numbers leave the GPU for someone
+    // else's pipeline, and sRGB is the one every consumer assumes
+    gl.uniform1f(u.u_p3, 0);
+
+    const fw = layout.cols * PROBE_SUB, fh = layout.frameHeight;
+    gl.viewport(0, 0, fw, fh);
+    gl.uniform4f(u.u_frame, 0, 0, fw, fh);
+    gl.uniform1f(u.u_aspect, this.canvas.width / Math.max(1, this.canvas.height));
+    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
+    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
+    gl.uniform1f(u.u_lensFx, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    if (layout.environment) {
+      gl.uniform1f(u.u_aspect, 1);
+      gl.uniform1f(u.u_lensDrops, 0);
+      gl.uniform1f(u.u_lensFx, 0);
+      CUBE_FACE_CAMERAS.forEach((face, i) => {
+        gl.viewport(i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);
+        gl.uniform4f(u.u_frame, i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);
+        gl.uniform3f(u.u_cam, face.yaw, face.pitch, face.fov);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      });
+    }
+
+    const px = this.probePixels!;
+    gl.readPixels(0, 0, layout.width, layout.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    return summarizeProbe(px, layout);
+  }
+
+  /**
+   * Make the program current and upload everything that follows the state —
+   * the part render() and probe() share. Returns null when there is nothing to
+   * draw with yet.
+   */
+  private bind(timeSec: number, s: AtmosphereState, windOff: number, evo: number): WebGLRenderingContext | null {
     const gl = this.gl;
-    if (!gl || this.lost || !this.program || !this.linked) return;
+    if (!gl || this.lost || !this.program || !this.linked) return null;
     // bind every frame rather than only at init: another renderer sharing this
     // canvas (or anything else touching the context) may have swapped programs
     gl.useProgram(this.program);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.noise);
     const u = this.u;
-    gl.uniform2f(u.u_res, this.canvas.width, this.canvas.height);
     gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
-    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
     gl.uniform2f(u.u_sun, s.sunElevation, s.sunAzimuth);
     const c = s.clouds;
     gl.uniform1f(u.u_cover, s.cloudCover);
@@ -2262,7 +2377,6 @@ export class AtmosphereRenderer {
     gl.uniform3f(u.u_filtTint, s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]);
     gl.uniform1f(u.u_filtSat, s.filter.saturation);
     gl.uniform1f(u.u_filtLift, s.filter.lift);
-    gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
     gl.uniform1f(u.u_headroom, Math.max(1, this.opts.headroom ?? 1));
     const t = s.tone;
     gl.uniform4f(u.u_tone, t.exposure, t.contrast, t.knee, t.bleach);
@@ -2271,8 +2385,46 @@ export class AtmosphereRenderer {
     const ce = s.celestial;
     gl.uniform4f(u.u_sky, ce.bortle, ce.milkyWay, ce.meteors, ce.radiant ? 1 : 0);
     gl.uniform2f(u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
-    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    return gl;
+  }
+
+  /** the probe's framebuffer, (re)made to fit the layout. false if the driver refuses it */
+  private probeTarget(gl: WebGLRenderingContext, layout: ProbeLayout): boolean {
+    if (this.probeFbo && this.probeSize[0] === layout.width && this.probeSize[1] === layout.height) {
+      return true;
+    }
+    this.freeProbe(gl);
+    const tex = gl.createTexture();
+    const fbo = gl.createFramebuffer();
+    if (!tex || !fbo) return false;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, layout.width, layout.height, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, null);
+    // NPOT in WebGL1: clamp and no mipmaps, or the texture is incomplete
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    // unit 0 is the noise lattice's, and the draw that follows expects it bound there
+    gl.bindTexture(gl.TEXTURE_2D, this.noise);
+    this.probeTex = tex;
+    this.probeFbo = fbo;
+    if (!ok) { this.freeProbe(gl); return false; }
+    this.probeSize = [layout.width, layout.height];
+    this.probePixels = new Uint8Array(layout.width * layout.height * 4);
+    return true;
+  }
+
+  private freeProbe(gl: WebGLRenderingContext): void {
+    if (this.probeFbo) gl.deleteFramebuffer(this.probeFbo);
+    if (this.probeTex) gl.deleteTexture(this.probeTex);
+    this.probeFbo = null;
+    this.probeTex = null;
+    this.probeSize = [0, 0];
   }
 
   /**
@@ -2296,6 +2448,7 @@ export class AtmosphereRenderer {
       if (this.program) gl.deleteProgram(this.program);
       if (this.buffer) gl.deleteBuffer(this.buffer);
       if (this.noise) gl.deleteTexture(this.noise);
+      this.freeProbe(gl);
       if (options.loseContext) {
         gl.getExtension('WEBGL_lose_context')?.loseContext();
       }

@@ -8,11 +8,28 @@
 
 import { StateAnimator, type AnimatorOptions } from './animator.js';
 import { type ColorSpaceOption } from './gamut.js';
-import { AtmosphereRenderer } from './renderer.js';
+import {
+  celestialLights, mixMeasurement,
+  type AtmosphereLight, type LightMeasurement,
+} from './light.js';
+import { AtmosphereRenderer, type ProbeOptions } from './renderer.js';
 import {
   resolveCamera, resolveConditions,
   type AtmosphereState, type Camera, type Conditions,
 } from './state.js';
+
+export interface LightProbeOptions extends ProbeOptions {
+  /** measurements per second. Defaults to 10 */
+  rate?: number;
+  /**
+   * Time constant of the smoothing, in seconds. Defaults to 0.3.
+   *
+   * The probe point-samples a moving sky, so a raw series shimmers as cloud
+   * edges cross the samples. 0 takes every measurement as it comes — lightning
+   * then reaches the foreground at full strength, shimmer and all.
+   */
+  smoothing?: number;
+}
 
 export interface AtmosphereOptions extends Conditions {
   /** frame rate cap. Defaults to 30fps (battery-friendly) since this is meant for backgrounds */
@@ -54,6 +71,18 @@ export interface AtmosphereOptions extends Conditions {
    * changes as cuts (no transition).
    */
   respectReducedMotion?: boolean;
+  /**
+   * Measure the sky's light for whatever is drawn in front of it — see
+   * {@link Atmosphere.light}. Off by default: each measurement is a small
+   * extra draw and a GPU readback. `true` takes the defaults.
+   */
+  lightProbe?: boolean | LightProbeOptions;
+  /**
+   * Called after each light measurement (at the probe's rate), with the same
+   * object {@link Atmosphere.light} would return. The place to push the
+   * numbers into another renderer's lights.
+   */
+  onLight?: (light: AtmosphereLight) => void;
 }
 
 const DEFAULT_RESOLUTION_SCALE = () =>
@@ -78,6 +107,8 @@ export class Atmosphere {
   // reduced-motion can pause the loop without forgetting the caller's intent
   private wantRunning = false;
   private motionQuery: MediaQueryList | null = null;
+  private measured: LightMeasurement | null = null;
+  private lastProbe = -Infinity;
   // The shader compiles asynchronously, so the frames the caller asked for
   // before it was ready drew nothing. A running loop picks itself up on its
   // next tick; a still frame — reduced motion, or a jump() before start() —
@@ -173,6 +204,56 @@ export class Atmosphere {
   get camera(): Readonly<Camera> { return this.cam; }
 
   /**
+   * The sky's light, for lighting whatever stands in front of it: the sun and
+   * moon as directional lights, and — with {@link AtmosphereOptions.lightProbe}
+   * on — the frame and the dome around it as measured colors. See light.ts.
+   *
+   * The lights are computed fresh on every read, so they track the camera and
+   * the transition exactly. The measurements update at the probe's rate and
+   * are null until the first one lands (and always, with the probe off).
+   */
+  get light(): AtmosphereLight {
+    const w = this.canvas.width, h = this.canvas.height;
+    return {
+      ...celestialLights(this.animator.current, this.cam, w / Math.max(1, h)),
+      frame: this.measured?.frame ?? null,
+      environment: this.measured?.environment ?? null,
+    };
+  }
+
+  /**
+   * Measure now, without waiting for the probe's next turn and without
+   * smoothing — for a still sky, or a one-off read. Works with the probe
+   * option off too. Returns {@link light} afterwards, or null while the shader
+   * is still compiling.
+   */
+  measureLight(options: ProbeOptions = {}): AtmosphereLight | null {
+    const m = this.probe(performance.now(), { ...this.probeOptions, ...options });
+    if (!m) return null;
+    this.measured = m;
+    this.lastProbe = performance.now();
+    const light = this.light;
+    this.opts.onLight?.(light);
+    return light;
+  }
+
+  private get probeOptions(): LightProbeOptions {
+    const o = this.opts.lightProbe;
+    return typeof o === 'object' ? o : {};
+  }
+
+  private probe(t: number, options: ProbeOptions): LightMeasurement | null {
+    return this.renderer.probe(
+      (t - (this.startedAt || t)) / 1000,
+      this.animator.current,
+      this.cam,
+      this.animator.wind,
+      this.animator.evolution,
+      options,
+    );
+  }
+
+  /**
    * update the target. Only the given fields change, transitioning over a few
    * seconds (under reduced motion the change applies as a cut instead)
    */
@@ -262,6 +343,7 @@ export class Atmosphere {
     // loop draws a single still frame, so one caught mid-flight would sit there
     // as a scratch across the sky — suppress them rather than freeze them.
     if (this.reducedMotion) this.animator.current.celestial.meteors = 0;
+    if (this.opts.lightProbe) this.maybeProbe(t);
     this.renderer.render(
       (t - this.startedAt) / 1000,
       this.animator.current,
@@ -269,6 +351,30 @@ export class Atmosphere {
       this.animator.wind,
       this.animator.evolution,
     );
+  }
+
+  /**
+   * Take a light measurement if one is due, folded into the running average.
+   *
+   * Before the frame's own draw on purpose: readPixels waits for everything
+   * queued ahead of it, and the tiny probe is far cheaper to wait on than the
+   * full frame. A still frame (reduced motion, jump()) always measures and
+   * takes the result unsmoothed — there is no series for it to belong to.
+   */
+  private maybeProbe(t: number): void {
+    const o = this.probeOptions;
+    const still = !this.raf;
+    const interval = 1000 / Math.max(0.1, o.rate ?? 10);
+    if (!still && t - this.lastProbe < interval) return;
+    const m = this.probe(t, o);
+    if (!m) return;
+    const tau = Math.max(0, o.smoothing ?? 0.3);
+    // the gap since the last measurement, not this frame's dt: they are a probe interval apart
+    const gap = Math.min(1, (t - this.lastProbe) / 1000);
+    const k = still || !this.measured || tau === 0 ? 1 : 1 - Math.exp(-gap / tau);
+    this.measured = this.measured ? mixMeasurement(this.measured, m, k) : m;
+    this.lastProbe = t;
+    this.opts.onLight?.(this.light);
   }
 
   /**
