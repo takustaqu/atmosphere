@@ -97,8 +97,13 @@ uniform vec4  u_sky;       // celestial: bortle, milkyWay, meteors/hr, hasRadian
 uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
 uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the lens
 uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky (environment probes)
+uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
 
 const float PI = 3.14159265;
+// how many radians the default framing (fov 0.86) shows top to bottom, near
+// the middle. The falling rain and snow were tuned in screen units at that
+// framing; dividing by this re-expresses those scales per radian of view
+const float FALL_REF = 0.88;
 
 // ── Linear light ──
 // Every color literal below is authored as an sRGB-encoded value (that is how
@@ -1744,23 +1749,41 @@ void main() {
     disp = mix(disp, ground, smoothstep(0.0, -0.05, rd.y));
   }
 
-  // ── Rain (thin threads slanting with the wind. A lens-face phenomenon, so screen space) ──
-  if (u_rain > 0.001) {
-    vec2 rp = vec2(p.x * aspect, p.y);
+  // ── Rain (thin threads slanting with the wind) ──
+  // Laid out along the view ray, not the screen: columns stand at fixed
+  // azimuths and the drops run down in elevation, so turning the camera
+  // carries the rain with the sky instead of leaving it pasted on the glass.
+  // A column of constant azimuth is exactly how a vertical line projects, so
+  // looking up, the streaks converge on the zenith the way real rain does.
+  //
+  // The scales are the old screen-space ones re-expressed per radian — the
+  // default framing shows about FALL_REF radians top to bottom — so the rain
+  // looks as it did at that framing, and zooming in magnifies it with the sky.
+  if (u_rain * u_fall > 0.001) {
+    float az = atan(rd.x, rd.z);               // -PI..PI, growing to the right on screen
+    float cosEl = sqrt(max(0.0, 1.0 - rd.y * rd.y));
     // ordinary rain falls nearly vertical; only high wind slants it strongly
-    rp.x -= rp.y * mix(0.06, 0.8, smoothstep(0.3, 1.0, u_wind));
+    float slant = mix(0.06, 0.8, smoothstep(0.3, 1.0, u_wind));
     float rain = 0.0;
     for (int i = 0; i < 2; i++) {
       float fi = float(i);
-      vec2 g = rp * vec2(mix(220.0, 380.0, fi), mix(2.6, 4.2, fi));
-      float colId = floor(g.x) + fi * 57.0;
-      float drop = fract(g.y + u_time * mix(5.5, 8.5, fi) * (0.6 + 0.4 * u_wind) + hash11(colId) * 13.0);
+      // a whole number of columns around the horizon, so there is no seam behind the camera
+      float cols = floor(6.2831853 / FALL_REF * mix(220.0, 380.0, fi));
+      float gx = (az - el * slant) / 6.2831853 * cols;
+      float gy = el / FALL_REF * mix(2.6, 4.2, fi);
+      float colId = mod(floor(gx), cols) + fi * 57.0;
+      float drop = fract(gy + u_time * mix(5.5, 8.5, fi) * (0.6 + 0.4 * u_wind) + hash11(colId) * 13.0);
       float active = step(mix(0.9, 0.72, u_rain), hash11(colId * 1.37 + fi * 91.0));
-      // draw only the thin thread down the column's center
-      float line = smoothstep(0.16, 0.05, abs(fract(g.x) - 0.5));
+      // columns crowd together by 1/cos(elevation) on screen as they converge
+      // upward; keep that fraction of them so the density on screen holds
+      active *= step(hash11(colId * 2.71 + fi * 7.0), cosEl);
+      // draw only the thin thread down the column's center, at a steady width
+      // on screen however narrow the column has become
+      float line = smoothstep(0.16, 0.05, abs(fract(gx) - 0.5) * max(cosEl, 0.3));
       rain += active * line * smoothstep(0.24, 0.03, drop) * smoothstep(0.0, 0.015, drop);
     }
-    disp = mix(disp, disp * 0.92 + vec3(0.5, 0.55, 0.63) * 0.35, clamp(rain, 0.0, 1.0) * u_rain * 0.32);
+    disp = mix(disp, disp * 0.92 + vec3(0.5, 0.55, 0.63) * 0.35,
+      clamp(rain, 0.0, 1.0) * u_rain * 0.32 * u_fall);
   }
 
   // ── Snow ──
@@ -1772,36 +1795,58 @@ void main() {
   // And another thing: the strongest impression in heavy snow isn't the
   // flakes themselves, but **visibility being whited out**. Drawing flakes
   // alone reads as "white dots floating in a clear sky".
+  //
+  // The flakes live in a lattice of view directions — the ray scaled out to a
+  // sphere and cut into cubic cells — rather than on the screen, so they turn
+  // with the sky and there is no pole or seam anywhere to look at. They fall
+  // in world y: across the view near the horizon, and straight at the camera
+  // looking up. The layer scales are the old screen-space ones per radian (see
+  // FALL_REF at the rain), so the default framing looks as it did.
   if (u_snow > 0.001) {
-    vec2 sp = vec2(p.x * aspect, p.y);
     float flakes = 0.0;
-    for (int i = 0; i < 5; i++) {
-      float fi = float(i);
-      float k = fi * 0.25;                    // 0=near, 1=far
-      // apply with a square so it gets rapidly finer with distance (linear reads as uniform size)
-      float sc = mix(8.0, 160.0, k * k);
-      float fall = u_time * mix(0.30, 0.035, k);
+    if (u_fall > 0.001) {
+      for (int i = 0; i < 5; i++) {
+        float fi = float(i);
+        float k = fi * 0.25;                    // 0=near, 1=far
+        // apply with a square so it gets rapidly finer with distance (linear reads as uniform size)
+        float sc = mix(8.0, 160.0, k * k);
+        float fall = u_time * mix(0.30, 0.035, k);
 
-      vec2 g = sp * vec2(sc * (0.82 + 0.36 * hash11(fi * 5.3)), sc);
-      g.y += fall * sc;
-      // drift sideways with the wind, and tumble left and right while falling
-      g.x += (u_wind * fall * 2.6 + sin(g.y * 0.22 + fi * 2.7) * 0.35) * sc * 0.06;
-      // shift sideways per row. Without this the square grid's lattice
-      // shows straight through as "flakes falling at even spacing"
-      g.x += hash11(floor(g.y) * 1.37 + fi * 13.0) * 4.0;
+        // a per-layer offset keeps the five lattices from lining up
+        vec3 g = rd * (sc / FALL_REF) + fi * vec3(0.37, 0.61, 0.23);
+        g.y += fall * sc;
+        // drift with the wind, and tumble side to side while falling
+        g.x += (u_wind * fall * 2.6 + sin(g.y * 0.22 + fi * 2.7) * 0.35) * sc * 0.06;
+        // shift each horizontal slab of cells. Without this the lattice
+        // shows straight through as "flakes falling at even spacing"
+        g.x += hash11(floor(g.y) * 1.37 + fi * 13.0) * 4.0;
+        g.z += hash11(floor(g.y) * 2.71 + fi * 7.0) * 4.0;
 
-      vec2 cell = floor(g);
-      float r = hash12(cell + fi * 37.0);
-      float active = step(mix(0.94, 0.40, u_snow), r);
-      // scatter position across the whole cell (centering it makes the grid stand out)
-      vec2 off = vec2(hash12(cell + 5.1), hash12(cell + 9.7)) * 0.9 + 0.05;
-      float d = length(fract(g) - off);
-      // bigger, blurrier-edged and fainter up close (out of focus)
-      float rad = mix(0.40, 0.10, k);
-      float edge = mix(0.10, 0.72, k);
-      flakes += active * smoothstep(rad, rad * edge, d) * mix(0.55, 1.0, k);
+        vec3 cell = floor(g);
+        vec2 ch = cell.xz + cell.y * vec2(37.1, 91.7);
+        float r = hash12(ch + fi * 37.0);
+        // only flakes near the sphere are drawn (see the gate below), so
+        // more cells are switched on to keep the old density on screen
+        float active = step(1.0 - min(1.0, (1.0 - mix(0.94, 0.40, u_snow)) * 2.4), r);
+        // scatter position across the whole cell (centering it makes the grid stand out)
+        vec3 off = vec3(hash12(ch + 5.1), hash12(ch + 9.7), hash12(ch + 13.3)) * 0.9 + 0.05;
+        vec3 dv = fract(g) - off;
+        // Size is the distance across the view alone. How far the flake sits
+        // off the sphere along the ray instead decides whether it is drawn:
+        // a flake far off it belongs to a cell the sphere only grazes, and
+        // would show as the cell's cut edge — a shard — rather than a disc.
+        // Heavy snow has every cell on already, so there the gate widens to
+        // keep the density, at the price of a few shards in the whiteout
+        float dr = dot(dv, rd);
+        float d = length(dv - rd * dr);
+        float gate = smoothstep(0.30, 0.15, abs(dr) / mix(1.0, 1.6, smoothstep(0.7, 1.0, u_snow)));
+        // bigger, blurrier-edged and fainter up close (out of focus)
+        float rad = mix(0.40, 0.10, k);
+        float edge = mix(0.10, 0.72, k);
+        flakes += active * gate * smoothstep(rad, rad * edge, d) * mix(0.55, 1.0, k);
+      }
     }
-    disp = mix(disp, vec3(0.95, 0.96, 1.0), clamp(flakes, 0.0, 1.0) * u_snow * 0.85);
+    disp = mix(disp, vec3(0.95, 0.96, 1.0), clamp(flakes, 0.0, 1.0) * u_snow * 0.85 * u_fall);
 
     // the snowfall itself whites out visibility — flakes alone don't sell the impression of heavy snow.
     // a snowy sky is bright grey, unlike a rain cloud, so lift it here
@@ -1961,7 +2006,7 @@ const UNIFORM_NAMES = [
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
-  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx',
+  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
 ] as const;
 
 export interface RendererOptions {
@@ -2367,6 +2412,7 @@ export class AtmosphereRenderer {
     gl.uniform4f(u.u_low, c.stratus, c.stratocumulus, c.cumulus, c.cumulonimbus);
     gl.uniform1f(u.u_rain, s.rain);
     gl.uniform1f(u.u_snow, s.snow);
+    gl.uniform1f(u.u_fall, s.particles.precipitation);
     gl.uniform1f(u.u_wind, s.wind);
     gl.uniform1f(u.u_thunder, s.thunder);
     gl.uniform1f(u.u_haze, s.haze);

@@ -127,6 +127,13 @@ export {
 } from './lens.js';
 
 export {
+  resolveParticles,
+  DEFAULT_PARTICLES,
+  type Particles,
+  type ParticlesInput,
+} from './particles.js';
+
+export {
   srgbToDisplayP3,
   displayP3ToSrgb,
   SRGB_TO_DISPLAY_P3,

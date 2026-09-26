@@ -64,6 +64,7 @@ const ui = {
     radiant: readonly [number, number] | null;
   },
   lens: { droplets: 1 },
+  particles: { precipitation: 1 },
 };
 
 // the camera (for looking around). Defaults to a background-friendly, south-facing framing
@@ -110,6 +111,7 @@ function apply(): void {
     tone: ui.tone,
     polarizer: ui.polarizer,
     lens: ui.lens,
+    particles: ui.particles,
   };
   sky.set(conditions);
   readout(conditions);
@@ -395,6 +397,18 @@ syncers.push(chips(
 ));
 syncers.push(slider('Droplets', 0, 1, 0.01,
   () => ui.lens.droplets, (v) => { ui.lens.droplets = v; }, (v) => v.toFixed(2)));
+
+section('Falling rain and snow');
+note('The streaks and flakes drawn falling through the air. Switching them off '
+  + 'keeps the weather itself — the gloom of rain, the whiteout of heavy snow — '
+  + 'and only stops drawing what falls through it.');
+syncers.push(chips(
+  [{ id: 'on', label: 'Falling on' }, { id: 'off', label: 'Off' }],
+  (id) => (id === 'on') === (ui.particles.precipitation > 0),
+  (id) => { ui.particles.precipitation = id === 'on' ? 1 : 0; },
+));
+syncers.push(slider('Falling', 0, 1, 0.01,
+  () => ui.particles.precipitation, (v) => { ui.particles.precipitation = v; }, (v) => v.toFixed(2)));
 
 section('Foreground light');
 note('What sky.light hands to a renderer drawing in front of the sky. The figure '

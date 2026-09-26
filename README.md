@@ -41,7 +41,7 @@ be an easy way to get a sky that keeps changing procedurally.
   blue-grey shadow from continuous thickness, flattening to diffuse light under overcast
 - **Cloud shape evolution** — the domain-warp field itself moves, so clouds billow and collapse in place
 - **Precipitation** — rain (leaning with the wind), snow (tumbling on the wind), droplets on the lens
-  (switchable — see [Lens](#lens))
+  (both switchable — see [Falling rain and snow](#falling-rain-and-snow) and [Lens](#lens))
 - **Severe weather** — lightning, cloud turbulence from high wind
 - **Visibility** — haze/mist/fog. Thin haze only crushes the horizon; thick haze covers the whole sky
 - **Lens flare** — ghosts along the optical axis, chromatic aberration, anamorphic-style streaks
@@ -352,6 +352,30 @@ Changing it eases over the same few seconds as everything else, so switching
 them off lets the drops on the glass dry away instead of vanishing. At 0 the
 droplet pass is skipped outright, not just drawn invisibly.
 
+## Falling rain and snow
+
+The rain streaks and snowflakes drawn falling through the air. Like everything
+but the lens, they are laid out along the view ray, so they turn with the sky
+when the camera moves; looking up, the rain converges on the zenith and the
+snow falls toward you. They are on by default.
+
+Switching them off takes away only what falls: the weather stays. A rain cloud
+is as dark and heavy snow whites out the view just the same — useful for a snowy
+day behind text that flakes should not cross.
+
+```ts
+sky.set({ particles: { precipitation: false } });   // the weather, without anything falling
+sky.set({ particles: { precipitation: 0.4 } });     // fainter rain and snow
+sky.set({ particles: { precipitation: true } });    // back to the default
+```
+
+| field | what it does |
+|:---|:---|
+| `precipitation` | 0..1 (or a boolean) ceiling on the falling rain and snow. They still follow the weather, so a dry sky shows none at any value. Defaults to 1 |
+
+It eases like everything else, so the rain thins out rather than stopping dead.
+At 0 the particle passes are skipped, not drawn invisibly.
+
 ## Light for the foreground
 
 Something usually stands in front of the sky — an avatar, a product shot, a
@@ -515,6 +539,7 @@ sky.reducedMotion;   // true while the sky is being held still
 | `resolveCelestial(c)` | resolving a night-sky specification |
 | `resolveTone(t)` / `resolvePolarizer(p)` | resolving a tone curve / polarizer specification |
 | `resolveLens(l)` | resolving a lens specification |
+| `resolveParticles(p)` | resolving a falling-particle specification |
 | `celestialLights(s, cam, aspect)` | the sun and moon as directional lights, without a probe |
 | `sampleLightGrid(g, x, y)` / `sampleEnvironment(env, n)` | reading a light measurement at a screen point / for a surface normal |
 | `srgbToDisplayP3(c)` / `displayP3ToSrgb(c)` | convert an encoded color between the two spaces |

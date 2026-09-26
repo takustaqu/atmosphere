@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Faster everywhere, the lens droplets can be switched off, and the sky hands its light to whatever stands in front of it.
+Faster everywhere, the rain and snow turn with the camera, the lens droplets and the falling rain and snow can be switched off, and the sky hands its light to whatever stands in front of it.
 
 ### Changed
 
@@ -57,8 +57,28 @@ Faster everywhere, the lens droplets can be switched off, and the sky hands its 
   - the plane cloud layers are skipped below the horizon, where their fade is
     exactly zero — half of every skybox bake
 
+- **Rain and snow turn with the camera.** They were drawn in screen space,
+  so dragging the view slid the sky out from under rain and snow that stayed
+  pasted on the glass. Both are laid out along the view ray now, like the
+  clouds: the rain as columns at fixed azimuths running down in elevation
+  (converging on the zenith when looking up, as real rain does), the snow in a
+  lattice of view directions that falls in world y. At the default framing the
+  density, speed and weight are unchanged — the ink the streaks and flakes put
+  down stays within 7% of before across framings and snowfall strengths —
+  and the cost is the same for rain and 0.15 ms more for snow at 1600×900 on
+  a Radeon 780M. The light probe's cube faces get the same rain and snow as
+  the frame, seam-free.
+
 ### Added
 
+- **`particles`** — what is drawn falling through the air.
+  **`particles: { precipitation }`** is a ceiling on the rain streaks and
+  snowflakes: `false` (or `0`) turns them off, a number fades them, and the
+  default keeps them on. Only the particles go; the weather stays, so a rain
+  cloud is as dark and heavy snow whites out the view just the same. Eases like
+  every other axis, and at zero the particle passes are skipped.
+  `resolveParticles`, `DEFAULT_PARTICLES`, and the `Particles` /
+  `ParticlesInput` types are exported.
 - **`lens`** — what happens on the glass rather than in the sky. For now:
   **`lens: { droplets }`**, a ceiling on the raindrops that collect on the lens
   while it rains. `false` (or `0`) turns them off, a number fades them, and
@@ -84,9 +104,9 @@ Faster everywhere, the lens droplets can be switched off, and the sky hands its 
   - `AtmosphereRenderer.probe()` for custom loops, and the pieces behind it —
     `celestialLights`, `summarizeProbe`, `mixMeasurement`, `sampleLightGrid`,
     `sampleEnvironment`, `cameraForward` — exported with their types.
-- Controller example: a Lens panel, and a **Foreground light** panel that
+- Controller example: a Lens panel, a Falling rain and snow panel, and a **Foreground light** panel that
   lights a figure from `sky.light` alone (`examples/controller/figure.ts`).
-  React sample: `AtmosphereCanvas` passes `lens` through and takes
+  React sample: `AtmosphereCanvas` passes `lens` and `particles` through and takes
   `lightProbe` / `onLight`.
 
 ## 0.3.0 — 2026-09-10

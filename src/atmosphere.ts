@@ -139,6 +139,7 @@ export class Atmosphere {
       polarizer: options.polarizer,
       celestial: options.celestial,
       lens: options.lens,
+      particles: options.particles,
       camera: options.camera,
     };
     this.target = resolveConditions(this.conditions);
@@ -197,6 +198,7 @@ export class Atmosphere {
         radiant: c.celestial.radiant ? [c.celestial.radiant[0], c.celestial.radiant[1]] : null,
       },
       lens: { ...c.lens },
+      particles: { ...c.particles },
     };
   }
 
