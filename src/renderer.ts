@@ -1760,14 +1760,17 @@ void main() {
   // default framing shows about FALL_REF radians top to bottom — so the rain
   // looks as it did at that framing, and zooming in magnifies it with the sky.
   if (u_rain * u_fall > 0.001) {
-    float az = atan(rd.x, rd.z);               // -PI..PI, growing to the right on screen
+    // az (the clouds' azimuth, above) runs -PI..PI, growing to the right on screen
     float cosEl = sqrt(max(0.0, 1.0 - rd.y * rd.y));
     // ordinary rain falls nearly vertical; only high wind slants it strongly
     float slant = mix(0.06, 0.8, smoothstep(0.3, 1.0, u_wind));
     float rain = 0.0;
     for (int i = 0; i < 2; i++) {
       float fi = float(i);
-      // a whole number of columns around the horizon, so there is no seam behind the camera
+      // a whole number of columns around the horizon, so there is no seam where
+      // az wraps. That is due south — the middle of the default framing — and
+      // with a whole number the wrap shifts gx by exactly cols, which the mod
+      // below folds back onto the same column
       float cols = floor(6.2831853 / FALL_REF * mix(220.0, 380.0, fi));
       float gx = (az - el * slant) / 6.2831853 * cols;
       float gy = el / FALL_REF * mix(2.6, 4.2, fi);
