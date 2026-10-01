@@ -5,7 +5,8 @@
 // No DOM/framework dependency. React bindings are the sample in examples/.
 
 export { Atmosphere, type AtmosphereOptions, type LightProbeOptions } from './atmosphere.js';
-export { AtmosphereRenderer, type RendererOptions, type ProbeOptions } from './renderer.js';
+export { AtmosphereRenderer, type RendererOptions, type ProbeOptions, type GpuTime } from './renderer.js';
+export { ResolutionGovernor, type GovernorOptions } from './governor.js';
 export { StateAnimator, lerpWrapped, type AnimatorOptions } from './animator.js';
 export { renderCubeFaces, type CubeFacesOptions } from './cubemap.js';
 

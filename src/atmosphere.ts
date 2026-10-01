@@ -12,6 +12,7 @@ import {
   celestialLights, mixMeasurement,
   type AtmosphereLight, type LightMeasurement,
 } from './light.js';
+import { ResolutionGovernor } from './governor.js';
 import { AtmosphereRenderer, type ProbeOptions } from './renderer.js';
 import {
   resolveCamera, resolveConditions,
@@ -83,6 +84,30 @@ export interface AtmosphereOptions extends Conditions {
    * numbers into another renderer's lights.
    */
   onLight?: (light: AtmosphereLight) => void;
+  /**
+   * Draw the clouds at this fraction of the resolution, each way, and lay
+   * them over a full-resolution sky — see {@link RendererOptions.cloudScale}.
+   * Defaults to 1. 0.5 roughly halves a cloudy frame at the price of softer
+   * cloud edges; the sky, sun, stars, rain and snow keep their resolution.
+   * Changeable at run time through {@link Atmosphere.cloudScale}.
+   */
+  cloudScale?: number;
+  /**
+   * Hold each frame inside a GPU time budget by lowering the resolution when
+   * it would run over, and raising it back when there is room — for large
+   * canvases (1080p, 2160p) and busy skies, where a frame that sometimes
+   * misses the display's deadline judders.
+   *
+   * `true` takes the defaults. `budget` is GPU milliseconds per frame,
+   * defaulting to three quarters of the frame interval (`fps`, counted as
+   * at most 60); `min` is the lowest it may go, each way, relative to
+   * `resolutionScale` (default 0.5). It never goes above `resolutionScale`.
+   *
+   * Under budget nothing changes at all. Needs `EXT_disjoint_timer_query`
+   * (Chrome and Edge on the desktop); elsewhere the resolution simply holds.
+   * {@link Atmosphere.resolution} reads the current factor.
+   */
+  adaptiveResolution?: boolean | { budget?: number; min?: number };
 }
 
 const DEFAULT_RESOLUTION_SCALE = () =>
@@ -108,6 +133,10 @@ export class Atmosphere {
   private wantRunning = false;
   private motionQuery: MediaQueryList | null = null;
   private measured: LightMeasurement | null = null;
+  private readonly governor: ResolutionGovernor | null = null;
+  // the canvas's own size when CSS gives it none, so the adaptive resolution
+  // never reads back a size it set itself and shrinks again
+  private readonly fallbackSize: [number, number];
   private lastProbe = -Infinity;
   // The shader compiles asynchronously, so the frames the caller asked for
   // before it was ready drew nothing. A running loop picks itself up on its
@@ -144,9 +173,20 @@ export class Atmosphere {
     };
     this.target = resolveConditions(this.conditions);
     this.cam = resolveCamera(options.camera);
+    this.fallbackSize = [canvas.width, canvas.height];
+    const adaptive = options.adaptiveResolution;
+    if (adaptive) {
+      const o = typeof adaptive === 'object' ? adaptive : {};
+      this.governor = new ResolutionGovernor({
+        budget: o.budget ?? 0.75 * (1000 / Math.min(options.fps ?? 30, 60)),
+        min: o.min,
+      });
+    }
     this.renderer = new AtmosphereRenderer(canvas, {
       colorSpace: options.colorSpace,
       onReady: this.onRendererReady,
+      cloudScale: options.cloudScale,
+      timing: !!adaptive,
     });
     this.animator = new StateAnimator(this.target, options.animator);
 
@@ -176,6 +216,23 @@ export class Atmosphere {
 
   /** the space actually being rendered into (`'display-p3'` only where supported) */
   get colorSpace(): PredefinedColorSpace { return this.renderer.colorSpace; }
+
+  /**
+   * The adaptive resolution's current factor, each way, on top of
+   * `resolutionScale` — 1 when it is off or has had no reason to act.
+   */
+  get resolution(): number { return this.governor?.scale ?? 1; }
+
+  /**
+   * The clouds' resolution relative to the frame, as in effect — see
+   * {@link AtmosphereOptions.cloudScale}. 1 where the device cannot split
+   * the clouds out. Setting it applies from the next frame.
+   */
+  get cloudScale(): number { return this.renderer.cloudScale; }
+  set cloudScale(v: number) {
+    this.renderer.cloudScale = v;
+    if (this.wantRunning && !this.raf) this.draw(performance.now());
+  }
 
   /**
    * A snapshot of the current (mid-transition) state.
@@ -284,13 +341,17 @@ export class Atmosphere {
 
   /** recompute internal resolution from the canvas's displayed size */
   resize(): void {
+    const [w, h] = this.fullSize();
+    const g = this.resolution;
+    this.renderer.resize(Math.max(1, Math.round(w * g)), Math.max(1, Math.round(h * g)));
+  }
+
+  /** the internal size at the configured resolutionScale, before any adaptive reduction */
+  private fullSize(): [number, number] {
     const scale = this.opts.resolutionScale ?? DEFAULT_RESOLUTION_SCALE();
-    const w = this.canvas.clientWidth || this.canvas.width;
-    const h = this.canvas.clientHeight || this.canvas.height;
-    this.renderer.resize(
-      Math.max(1, Math.round(w * scale)),
-      Math.max(1, Math.round(h * scale)),
-    );
+    const w = this.canvas.clientWidth || this.fallbackSize[0];
+    const h = this.canvas.clientHeight || this.fallbackSize[1];
+    return [Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale))];
   }
 
   start(): void {
@@ -353,6 +414,16 @@ export class Atmosphere {
       this.animator.wind,
       this.animator.evolution,
     );
+    if (this.governor) {
+      // results trail the frames that made them by a frame or two; the
+      // governor reads them per pixel, so a resize in between is no matter
+      const times = this.renderer.takeGpuTimes();
+      if (times.length) {
+        const [w, h] = this.fullSize();
+        const before = this.governor.scale;
+        if (this.governor.update(times, w * h, t) !== before) this.resize();
+      }
+    }
   }
 
   /**

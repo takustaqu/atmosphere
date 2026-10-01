@@ -474,6 +474,57 @@ strength.
 `sky.measureLight()` takes one right now, unsmoothed, probe option or not;
 `AtmosphereRenderer.probe()` is the same thing for a custom loop.
 
+## Large canvases — 1080p, 2160p
+
+The sky's cost is per pixel: the same scene at 2160p costs about 3.2× what it
+does at 1080p. Measured on an M2 Max with GPU timer queries, sweeping the time
+of day from dawn to dusk at `resolutionScale: 1`:
+
+| | 1080p | 2160p |
+|:---|---:|---:|
+| partly cloudy | 5.3 ms | 17.1 ms |
+| summer (cumulus + a thunderhead) | 5.6 ms | 18.1 ms |
+
+Over a whole day the cost moves by about ±10% and never spikes — the time of day
+is not what makes an animation unsteady. What does is a frame that sits right at
+the display's deadline: 2160p at 60 fps needs 16.7 ms, gets 17–19, and so some
+frames make it and some do not, and the motion judders between 16 and 33 ms.
+Three ways out, from no change at all to the most effective:
+
+```ts
+// 1. a steady 30 fps instead of an unsteady 60 — no other change
+new Atmosphere(canvas, { resolutionScale: 1, fps: 30 });
+
+// 2. clouds at half resolution: the frame roughly halves
+new Atmosphere(canvas, { resolutionScale: 1, fps: 60, cloudScale: 0.5 });
+
+// 3. hold every frame under a budget by lowering the resolution only when needed
+new Atmosphere(canvas, { resolutionScale: 1, fps: 60, adaptiveResolution: true });
+```
+
+**`cloudScale`** draws the cloud stack — three quarters or more of a cloudy
+frame — at that fraction of the resolution, each way, and lays it over a sky
+drawn at full resolution; the sun, moon, stars, rain, snow, lens and ground keep
+theirs. Against the one-pass renderer: 0.5 takes 0.49–0.62 of the time, 0.75
+takes 0.81–0.89 (2160p summer: 11.3 → 5.5 ms). The cost is softer cloud edges,
+and the 22° halo is laid under the whole stack rather than between the
+cirrostratus and the layers above it. Needs half-float render targets; without
+them it draws in one pass. Giving the option at all — 1 included — compiles a
+variant of the shader that can split, which is what makes `sky.cloudScale`
+settable later; that variant costs about 10% when not splitting, so leave the
+option out unless you use it.
+
+**`adaptiveResolution`** measures each frame's GPU time and lowers the
+resolution when a frame would overrun its budget — by default three quarters of
+the frame interval — and raises it again a step at a time when there is room.
+Down is immediate; up is a probe that backs off if it fails, which keeps a GPU
+that clocks down at lighter loads from making the canvas bounce. Under budget
+it never acts. On 2160p summer at 60 fps it settled at 0.78 (3000×1688,
+12.2 ms) and held; with `cloudScale: 0.5` it stayed at full size. `budget` and
+`min` tune it; `sky.resolution` reads the current factor. Needs
+`EXT_disjoint_timer_query` (Chrome and Edge on the desktop); elsewhere the
+resolution holds.
+
 ## Display P3
 
 Rendered in Display P3 where the browser supports it, sRGB otherwise. No setup
@@ -541,6 +592,7 @@ sky.reducedMotion;   // true while the sky is being held still
 | `resolveLens(l)` | resolving a lens specification |
 | `resolveParticles(p)` | resolving a falling-particle specification |
 | `celestialLights(s, cam, aspect)` | the sun and moon as directional lights, without a probe |
+| `ResolutionGovernor` | the adaptive resolution's control loop, for a custom render loop (feed it `renderer.takeGpuTimes()` with `timing: true`) |
 | `sampleLightGrid(g, x, y)` / `sampleEnvironment(env, n)` | reading a light measurement at a screen point / for a surface normal |
 | `srgbToDisplayP3(c)` / `displayP3ToSrgb(c)` | convert an encoded color between the two spaces |
 | `formatTod(tod)` | `14.5` → `"14:30"` |

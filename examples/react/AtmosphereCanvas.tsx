@@ -76,6 +76,10 @@ export interface AtmosphereCanvasProps extends Conditions {
    * function is always the one called, so an inline arrow is fine.
    */
   onLight?: AtmosphereOptions['onLight'];
+  /** clouds at a fraction of the resolution. Init-only, like {@link AtmosphereCanvasProps.fps} */
+  cloudScale?: AtmosphereOptions['cloudScale'];
+  /** hold frames inside a GPU budget by trading resolution. Init-only */
+  adaptiveResolution?: AtmosphereOptions['adaptiveResolution'];
   /** class name appended to the default "atmo-canvas" */
   className?: string;
 }
@@ -90,6 +94,8 @@ export function AtmosphereCanvas({
   animator,
   lightProbe,
   onLight,
+  cloudScale,
+  adaptiveResolution,
   className,
 }: AtmosphereCanvasProps) {
   // compare conditions by value, so inline literals (`camera={{ ... }}`)
@@ -111,7 +117,10 @@ export function AtmosphereCanvas({
   // if the device could not compile the shader at all.
   const [ready, setReady] = useState(false);
   // read the initial values via a ref so they aren't re-read on remount
-  const initRef = useRef({ time, location, weather, filter, lens, particles, camera, fps, resolutionScale, animator, lightProbe });
+  const initRef = useRef({
+    time, location, weather, filter, lens, particles, camera,
+    fps, resolutionScale, animator, lightProbe, cloudScale, adaptiveResolution,
+  });
   // read through a ref, so a new callback each render never rebuilds the sky
   const onLightRef = useRef(onLight);
   onLightRef.current = onLight;

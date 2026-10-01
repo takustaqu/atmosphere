@@ -80,6 +80,10 @@ const sky = new Atmosphere(canvas, {
   // under prefers-reduced-motion (Windows sets that whenever "Animation
   // effects" is off)
   respectReducedMotion: false,
+  // given at all, cloudScale compiles the shader that can split the clouds
+  // out — which is what lets the Performance panel switch it live
+  cloudScale: 1,
+  adaptiveResolution: true,
   onLight: (light) => {
     // cam, not sky.camera: this can fire from inside the constructor (a still
     // frame on a synchronous compile), before sky is assigned
@@ -430,6 +434,24 @@ syncers.push(chips(
   (id) => ui.filter === id,
   (id) => { ui.filter = id as FilterId; },
 ));
+
+section('Performance');
+note('Clouds are most of a cloudy frame’s cost. Drawing them at a fraction of '
+  + 'the resolution and laying them over the full-resolution sky roughly halves '
+  + 'the frame at 0.5; only their edges soften. The adaptive resolution below '
+  + 'lowers the whole frame only when a frame would overrun its GPU budget.');
+syncers.push(chips(
+  [{ id: '1', label: 'Clouds at full' }, { id: '0.75', label: '0.75' }, { id: '0.5', label: '0.5' }],
+  (id) => sky.cloudScale === Number(id),
+  (id) => { sky.cloudScale = Number(id); },
+));
+const perfEl = document.createElement('p');
+perfEl.className = 'note';
+host.append(perfEl);
+setInterval(() => {
+  perfEl.textContent = `adaptive resolution: ×${sky.resolution.toFixed(3)} — `
+    + `drawing ${canvas.width}×${canvas.height}, clouds ×${sky.cloudScale}`;
+}, 500);
 
 section('Camera');
 note('Drag the canvas to look around; scroll to change the field of view.');

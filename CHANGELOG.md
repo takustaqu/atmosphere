@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Steadier animation on large canvases.
+
+At 2160p a frame costs 17–19 ms on an M2 Max — just over a 60 fps deadline, so
+some frames make it and some do not, and the motion judders. Over a whole
+day's sweep the cost moves only ±10%; it is the margin, not the time of day.
+
+### Added
+
+- **`cloudScale`** — draw the clouds at a fraction of the resolution and lay
+  them over a full-resolution sky. The cloud stack's washes compose to one
+  affine map, so it is drawn on its own into a half-float target and applied
+  in one step. 0.5 takes 0.49–0.62 of the one-pass time, 0.75 takes
+  0.81–0.89 (2160p summer: 11.3 → 5.5 ms); cloud edges soften. Opt-in, and
+  compiled as a separate variant of the shader: carrying the split costs the
+  one pass 6–16% by its presence alone, so without the option the shader is
+  bit-identical to before, and as fast.
+- **`adaptiveResolution`** — hold each frame under a GPU time budget by
+  lowering the resolution when a frame would overrun it, and raising it again
+  in probing steps. Robust to a GPU that clocks down at light loads, which
+  fools a plain per-pixel estimate into collapsing. 2160p summer at 60 fps
+  settles at 0.78 and holds; with `cloudScale: 0.5` it stays at full size.
+  `sky.resolution` reads the factor.
+- `RendererOptions.timing` and `AtmosphereRenderer.takeGpuTimes()` —
+  asynchronous GPU timer queries, never a stall — and `ResolutionGovernor`,
+  for custom loops.
+- Controller example: a Performance panel. React sample: `cloudScale` and
+  `adaptiveResolution` props.
+
 ## 0.3.1 — 2026-09-27
 
 Faster everywhere, the rain and snow turn with the camera, the lens droplets and the falling rain and snow can be switched off, and the sky hands its light to whatever stands in front of it.

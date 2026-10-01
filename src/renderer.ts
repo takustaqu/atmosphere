@@ -98,6 +98,10 @@ uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
 uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the lens
 uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky (environment probes)
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
+#ifdef CLOUD_SPLIT
+uniform float u_cloudMode; // 0 = one pass, 1 = the cloud stack alone, 2 = composite it from u_clouds
+uniform sampler2D u_clouds; // the cloud stack drawn by mode 1: rgb = what it adds, a = what it lets through
+#endif
 
 const float PI = 3.14159265;
 // how many radians the default framing (fov 0.86) shows top to bottom, near
@@ -739,6 +743,30 @@ vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, flo
   return c;
 }
 
+// One layer of the cloud stack: a display-space wash, disp = mix(disp, col, a).
+//
+// The split variant (CLOUD_SPLIT, compiled only when cloudScale is asked for)
+// uses that a run of such washes composes to a single affine map
+// disp -> disp * cT + cC — cT what the stack lets through, cC what it adds —
+// and accumulates the map instead, which is what lets the stack be drawn on
+// its own at a lower resolution and laid over the sky afterwards
+// (u_cloudMode). Mathematically identical to washing disp layer by layer.
+//
+// Without it, every macro below reduces to the one-pass shader as it always
+// was. That matters for more than tidiness: carrying the split's unused
+// branches and sampler cost the one pass 6-16% even with no clouds at all
+// (an M2 Max, paired GPU timer queries), a whole-program effect of their mere
+// presence.
+#ifdef CLOUD_SPLIT
+#define OVER(col, a) { float a_ = (a); cC = mix(cC, (col), a_); cT *= 1.0 - a_; }
+#define CLOUD_STACK (u_cloudMode < 1.5)
+#define SKY_LIGHT (u_cloudMode < 0.5 || u_cloudMode > 1.5)
+#else
+#define OVER(col, a) disp = mix(disp, (col), (a))
+#define CLOUD_STACK true
+#define SKY_LIGHT true
+#endif
+
 void main() {
   // Normally the viewport is the whole canvas and these reduce to the obvious.
   // The light probe draws the same frame into a far smaller viewport — and
@@ -870,12 +898,16 @@ void main() {
   // into linear light for the part of the sky that is added light
   vec3 sky = L(disp);
 
+  // the cloud-stack pass (mode 1) writes only the clouds, so the night sky's
+  // light below — the dearest of it, the star grids — is not drawn there
+  bool skyLight = SKY_LIGHT;
+
   // ── Stars (night, low cloud. Determined by direction, so they stay pinned to the celestial sphere as the view swings) ──
   // Every term in here is scaled by this product — the star field, all three
   // grids and the Milky Way — so where it is zero (all day, and under heavy
   // cloud or gloom at night) the block adds exactly nothing and is skipped.
   // It is uniform across the frame, so the branch never diverges.
-  if (nightF * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom) > 0.0) {
+  if (nightF * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom) > 0.0 && skyLight) {
     // fold the view direction onto a cubemap-like 2D grid.
     // pulling from a 3D grid leaves most lattice points off the sphere the
     // view ray actually passes through, so almost no stars show up
@@ -1063,7 +1095,7 @@ void main() {
   // ── Moon (night. Placed opposite the sun — the full-moon relationship) ──
   // every contribution below carries vis, so a zero vis is an exact no-op
   float moonVis = nightF * clamp(1.0 - u_cover * 0.9 - gloom, 0.0, 1.0);
-  if (moonVis > 0.0) {
+  if (moonVis > 0.0 && skyLight) {
     vec3 moonDir = dirFromAngles(0.62, u_sun.y + PI);
     float ang = acos(clamp(dot(rd, moonDir), -1.0, 1.0));
     float moon = smoothstep(0.048, 0.043, ang);
@@ -1114,7 +1146,7 @@ void main() {
 
   // ── Meteors ──
   float meteorVis = nightF * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
-  if (meteorVis > 0.0) {
+  if (meteorVis > 0.0 && skyLight) {
     vec3 m = meteorStreak(rd, u_time, u_sky.z, u_sky.w, u_radiant);
     float mi = max(max(m.r, m.g), m.b);
     if (mi > 0.0001) {
@@ -1153,7 +1185,7 @@ void main() {
   // scale height reads as haze and swallows the lowest stars. Shares the second
   // star layer's gate, so it is exactly absent at Bortle 6 and up.
   float agDeep = clamp((6.0 - u_sky.x) / 5.0, 0.0, 1.0);
-  if (agDeep * nightF > 0.0) {
+  if (agDeep * nightF > 0.0 && skyLight) {
     // rippled around the compass — real airglow hangs in uneven waves, and a
     // uniform rim reads as a printed strip. Seeded off the horizontal ray
     // components, so it is seamless in azimuth and pinned as the view swings
@@ -1206,36 +1238,58 @@ void main() {
   bool above = horizonFade > 0.0;
   float ramp = 0.08 + 0.14 * (1.0 - rdY);   // widen near the horizon to suppress aliasing
 
+  // In the split variant the stack accumulates as one wash (see OVER). Mode 0
+  // evaluates it here and applies it below; mode 1 evaluates it and stops
+  // there, writing it out for a later composite; mode 2 skips it and reads
+  // that composite instead — which is why every layer's gate carries stack.
+#ifdef CLOUD_SPLIT
+  vec3 cC = vec3(0.0);
+  float cT = 1.0;
+#endif
+  bool stack = CLOUD_STACK;
+
   // ── High layer, 5000–13000m ─────────────────────────
   // Cirrus Ci (mare's tail) — the first to blush pink at magic hour
-  if (u_high.x > 0.001 && above) {
+  if (u_high.x > 0.001 && above && stack) {
     // the extra x-crawl rides u_windOff too (see cloudField): 0.14 matches
     // the old u_time × 0.004 at light wind, and speeds up when it blows
     float f = filament(planeUV(rd, rdY, ALT_HIGH, u_windOff * 0.3) + vec2(u_windOff * 0.14, 0.0));
     vec3 col = mix(vec3(1.0), vec3(1.05, 0.62, 0.55), sunsetF);
     col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
-    disp = mix(disp, col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
+    OVER(col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
   }
   // Cirrostratus Cs (veil cloud) — a thin veil across the whole sky. Haloes the sun
-  if (u_high.y > 0.001) {
+  if (u_high.y > 0.001 && stack) {
     // the halo below is sky-side and still shows under the horizon; the veil does not
     if (above) {
       vec2 s = stratiform(planeUV(rd, rdY, ALT_HIGH * 0.5, u_windOff * 0.3), 0.35, 0.0);
       vec3 col = mix(vec3(0.86, 0.89, 0.95), vec3(1.02, 0.80, 0.72), sunsetF);
       col = mix(vec3(0.22, 0.26, 0.38), col, max(dayF, sunsetF * 0.8));
-      disp = mix(disp, col, s.x * u_high.y * 0.45 * horizonFade);
+      OVER(col, s.x * u_high.y * 0.45 * horizonFade);
     }
     // the 22° halo (refraction through ice crystals). Added light, so it is the
     // one term in this stretch that has to leave display space — and only on
     // the ring itself, where there is something to add
     float ring = smoothstep(0.028, 0.0, abs(sunAng - 0.384)) * u_high.y * sunVis;
+#ifdef CLOUD_SPLIT
+    // Mode 0 only: it sits between layers, so the washes so far are applied
+    // first and the stack starts over above it. Mode 1 cannot draw it (it has
+    // no sky to add to); mode 2 lays it under the whole stack instead
+    if (ring > 0.0 && u_cloudMode < 0.5) {
+      disp = disp * cT + cC;
+      cC = vec3(0.0);
+      cT = 1.0;
+      disp = encodeSrgb(L(disp) + L(vec3(1.0, 0.95, 0.85)) * ring * 0.30);
+    }
+#else
     if (ring > 0.0) disp = encodeSrgb(L(disp) + L(vec3(1.0, 0.95, 0.85)) * ring * 0.30);
+#endif
   }
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
-  if (u_high.z > 0.001 && above) {
+  if (u_high.z > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir);
     vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightF, sunsetF, flash, gloom, 0.5, cloudSun);
-    disp = mix(disp, col, g.x * u_high.z * 0.85 * horizonFade);
+    OVER(col, g.x * u_high.z * 0.85 * horizonFade);
   }
 
   // ── Mid layer, 2000–7000m ───────────────────────────
@@ -1243,7 +1297,7 @@ void main() {
   // Not one uniform film but "torn membranes overlapping in patches", with
   // the sun showing through broadly, outline-less, as if through frosted
   // glass. These two things are altostratus's face.
-  if (u_mid.x > 0.001 && above) {
+  if (u_mid.x > 0.001 && above && stack) {
     vec2 uv = planeUV(rd, rdY, ALT_MID * 0.55, u_windOff * 0.6);
     vec2 s = stratiform(uv, 0.50, 0.35);
     // mottling from overlapping membranes. Stretched along the flow, it lines up into bands converging on the horizon
@@ -1263,16 +1317,16 @@ void main() {
          * through * (1.0 - thick * 0.75) * 0.85;
     col += flash * vec3(0.75, 0.80, 1.0) * 0.5;
 
-    disp = mix(disp, col, s.x * u_mid.x * 0.95 * horizonFade);
+    OVER(col, s.x * u_mid.x * 0.95 * horizonFade);
   }
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
-  if (u_mid.y > 0.001 && above) {
+  if (u_mid.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightF, sunsetF, flash, gloom, 0.9, cloudSun);
-    disp = mix(disp, col, g.x * u_mid.y * 0.95 * horizonFade);
+    OVER(col, g.x * u_mid.y * 0.95 * horizonFade);
   }
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
-  if (u_mid.z > 0.001 && above) {
+  if (u_mid.z > 0.001 && above && stack) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_MID * 0.30, u_windOff * 0.6), 0.10, 1.0);
     // no direct sunlight reaches it at all, so color can be one-dimensional: "thickness → shade".
     // cloudColor's shadow blending caps at 0.85 and never sinks to the photo's charcoal
@@ -1282,7 +1336,7 @@ void main() {
     // the thicker the cloud, the lower the dark end sinks
     vec3 col = lit * mix(0.74, mix(0.40, 0.20, u_mid.z), s.y);
     col += flash * vec3(0.75, 0.80, 1.0) * 0.6;
-    disp = mix(disp, col, s.x * u_mid.z * 0.99 * horizonFade);
+    OVER(col, s.x * u_mid.z * 0.99 * horizonFade);
   }
 
   // ── Cumulonimbus Cb (thunderhead) ──
@@ -1300,7 +1354,7 @@ void main() {
   // how much of this pixel the tower covers — later layers use it to avoid
   // dragging their translucent fringes across the bright mass
   float cbMask = 0.0;
-  if (cbAmt > 0.001) {
+  if (cbAmt > 0.001 && stack) {
     float azw = az + u_windOff * 0.15;
     vec2 dirc = vec2(sin(azw), cos(azw));
     // "2–3 towers across the whole sky" is a fine distribution. A large
@@ -1609,7 +1663,7 @@ void main() {
         // the other layers would dissolve the cloud base into haze and make it vanish.
         float cbFade = smoothstep(-0.02, 0.06, rd.y);
         cbMask = clamp(m, 0.0, 1.0) * 0.97 * cbFade;
-        disp = mix(disp, tcol, cbMask);
+        OVER(tcol, cbMask);
       }
     }
 
@@ -1653,7 +1707,7 @@ void main() {
           // skin. Multiplicative so it adds texture without changing overall brightness
           float vFray = vnoise(vcyl * 4.2 + 3.0) * 0.6 + vnoise(vcyl * 9.5 + 11.0) * 0.4 - 0.5;
           vcol *= 1.0 + vFray * 0.22;
-          disp = mix(disp, vcol, v * 0.70 * horizonFade);
+          OVER(vcol, v * 0.70 * horizonFade);
         }
       }
     }
@@ -1661,13 +1715,13 @@ void main() {
 
   // ── Low layer, under 2000m ──────────────────────────
   // Stratocumulus Sc (roll cloud) — large mottled masses, arranged as rolls
-  if (u_low.y > 0.001 && above) {
+  if (u_low.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightF, sunsetF, flash, gloom, 1.05, cloudSun);
-    disp = mix(disp, col, g.x * u_low.y * 0.95 * horizonFade);
+    OVER(col, g.x * u_low.y * 0.95 * horizonFade);
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
-  if (u_low.z > 0.02 && above) {
+  if (u_low.z > 0.02 && above && stack) {
     vec2 cuv = planeUV(rd, rdY, ALT_LOW * 2.5, u_windOff);
     // during high wind the whole sky wobbles slightly.
     // driven by u_windOff (which only advances in wind) so the phase is
@@ -1693,7 +1747,7 @@ void main() {
     // shade from continuous thickness across the wide ramp, not from the saturated density (den)
     float thick = smoothstep(edge, edge + 0.35, dl.z);
     vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightF, sunsetF, flash, gloom, 1.0, cloudSun);
-    disp = mix(disp, c, alpha * 0.97);
+    OVER(c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 1.2, u_windOff * 1.9) + 51.7;
@@ -1702,15 +1756,15 @@ void main() {
     float falpha = fl.x * u_low.z * horizonFade * (1.0 - cbMask * 0.6);
     float fthick = smoothstep(fedge, fedge + 0.35, fl.z);
     vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightF, sunsetF, flash, gloom, 1.25, cloudSun);
-    disp = mix(disp, fc, falpha * 0.95);
+    OVER(fc, falpha * 0.95);
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
-  if (u_low.x > 0.001 && above) {
+  if (u_low.x > 0.001 && above && stack) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_LOW * 0.5, u_windOff * 1.2), 0.45, 0.45);
     vec3 col = cloudColor(0.95, -0.25, 0.60,
                           dayF, nightF, sunsetF, flash, gloom, 1.2, cloudSun) * 0.86;
     float lowBias = mix(1.0, 0.40, smoothstep(0.05, 0.55, rd.y));
-    disp = mix(disp, col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
+    OVER(col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
   }
 
   // ── Light leaking in under the cloud base ──
@@ -1718,11 +1772,11 @@ void main() {
   // distant light having passed beneath the clouds breaks through and
   // brightens things. This single band is usually what sells a rain-cloud sky.
   float deck = max(u_mid.z, max(u_mid.x, u_low.x));
-  if (deck > 0.01) {
+  if (deck > 0.01 && stack) {
     vec3 leak = mix(vec3(0.055, 0.058, 0.066), vec3(0.70, 0.70, 0.63), dayF);
     leak = mix(leak, vec3(0.86, 0.60, 0.40), sunsetF * 0.7);
     float band = smoothstep(0.22, 0.005, rd.y) * smoothstep(-0.02, 0.02, rd.y);
-    disp = mix(disp, leak, band * deck * 0.88);
+    OVER(leak, band * deck * 0.88);
   }
 
   // ── Pannus (ragged scud beneath rain clouds) ──
@@ -1733,13 +1787,34 @@ void main() {
   // frequency breaks down, so squeeze this into a band and stretch the
   // threshold's ramp wide to dissolve it into an outline-less haze instead.
   float fband = smoothstep(0.015, 0.075, rd.y) * smoothstep(0.42, 0.10, rd.y);
-  if (u_mid.z > 0.02 && fband > 0.001) {
+  if (u_mid.z > 0.02 && fband > 0.001 && stack) {
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 0.42, u_windOff * 2.4) + 77.0;
     float pedge = 0.90 - u_mid.z * 0.22;
     vec3 fr = cloudField(fuv, churn + 0.45, ldir, pedge, ramp * 2.2, pedge - 0.01);
     vec3 fcol = mix(vec3(0.030, 0.033, 0.040), vec3(0.26, 0.27, 0.29), dayF);
-    disp = mix(disp, fcol, fr.x * u_mid.z * fband * 0.80);
+    OVER(fcol, fr.x * u_mid.z * fband * 0.80);
   }
+
+  // ── Applying the stack (the split variant) ──
+#ifdef CLOUD_SPLIT
+  if (u_cloudMode > 1.5) {
+    // Composite: the stack was drawn at its own resolution in mode 1. The 22°
+    // halo goes beneath all of it here rather than between the cirrostratus
+    // and the layers above — the one place the split departs from one pass
+    float ring = smoothstep(0.028, 0.0, abs(sunAng - 0.384)) * u_high.y * sunVis;
+    if (ring > 0.0) disp = encodeSrgb(L(disp) + L(vec3(1.0, 0.95, 0.85)) * ring * 0.30);
+    // sampled where this pixel's ray was cast — after any lens droplet bent
+    // it — since mode 1 drew the stack for the undistorted rays over the same
+    // 0..1 frame
+    vec4 ct = CLOUD_FETCH(p);
+    cC = ct.rgb;
+    cT = ct.a;
+  } else if (u_cloudMode > 0.5) {
+    gl_FragColor = vec4(cC, cT);
+    return;
+  }
+  disp = disp * cT + cC;
+#endif
 
   // ── Below the horizon (out of frame with the default framing; used when looking down and for the skybox's lower hemisphere) ──
   {
@@ -1969,13 +2044,17 @@ void main() {
  * right picture — it just pays the flattened cost, the way it would have with
  * the arithmetic hash this replaced.
  */
-function fragSource(explicitLod: boolean): string {
+function fragSource(explicitLod: boolean, split = false): string {
   // an #extension directive has to precede every non-preprocessor token
   return (explicitLod
     ? '#extension GL_EXT_shader_texture_lod : enable\n'
       + '#define NOISE_FETCH(uv) texture2DLodEXT(u_noise, (uv), 0.0)\n'
     : '#define NOISE_FETCH(uv) texture2D(u_noise, (uv))\n'
-  ) + FRAG;
+  ) + (explicitLod
+    // the composite's read of the cloud stack sits in a branch too; same reason
+    ? '#define CLOUD_FETCH(uv) texture2DLodEXT(u_clouds, (uv), 0.0)\n'
+    : '#define CLOUD_FETCH(uv) texture2D(u_clouds, (uv))\n'
+  ) + (split ? '#define CLOUD_SPLIT\n' : '') + FRAG;
 }
 
 /**
@@ -1990,6 +2069,11 @@ function fragSource(explicitLod: boolean): string {
  * rides u_windOff / u_evo and is unaffected.
  */
 const TIME_WRAP_SEC = 4096;
+
+/** a cloud scale worth splitting for: past 0.95 the split costs more than it saves */
+function clampCloudScale(v: number): number {
+  return Number.isFinite(v) && v < 0.95 ? Math.max(0.25, v) : 1;
+}
 
 /**
  * How often to ask the driver whether the program has finished linking.
@@ -2010,6 +2094,7 @@ const UNIFORM_NAMES = [
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
+  'u_cloudMode', 'u_clouds',
 ] as const;
 
 export interface RendererOptions {
@@ -2064,6 +2149,54 @@ export interface RendererOptions {
    * afterwards may miss it; read {@link ready} and {@link available} instead.
    */
   onReady?: (available: boolean) => void;
+  /**
+   * Draw the clouds at this fraction of the frame's resolution, each way, and
+   * lay them over a full-resolution sky. Defaults to 1: one pass, as always.
+   *
+   * The clouds are most of the cost of a cloudy frame — three quarters or
+   * more — so 0.5 draws them at a quarter of the pixels and roughly halves
+   * the frame. What changes is only their edges, which soften by the same
+   * factor; the sky, sun, moon, stars, rain, snow, lens and ground stay at
+   * full resolution. One more difference: the 22° halo is laid under the
+   * whole cloud stack rather than between the cirrostratus and the layers
+   * above it.
+   *
+   * Needs half-float render targets (`OES_texture_half_float` with linear
+   * filtering, and a half-float color buffer) and is ignored without them —
+   * {@link AtmosphereRenderer.cloudScale} reads back what is in effect.
+   *
+   * Giving it at all — 1 included — compiles a variant of the shader that can
+   * split, and only that makes it changeable at run time through that
+   * setter. Left out, the shader is the one-pass one, untouched: the split
+   * variant costs that pass 6-16% just by carrying the code.
+   */
+  cloudScale?: number;
+  /**
+   * Measure how long each frame takes on the GPU (`EXT_disjoint_timer_query`),
+   * for {@link AtmosphereRenderer.takeGpuTimes}. Off by default; the
+   * measurement is asynchronous and does not stall, but there is no reason to
+   * pay for queries nobody reads. Ignored where the extension is missing.
+   */
+  timing?: boolean;
+}
+
+/** One GPU-time measurement of a frame: how long it took, and how many pixels it drew */
+export interface GpuTime {
+  ms: number;
+  pixels: number;
+}
+
+/** The parts of EXT_disjoint_timer_query this uses (WebGL1 has no type for it) */
+interface TimerQueryExt {
+  TIME_ELAPSED_EXT: number;
+  QUERY_RESULT_EXT: number;
+  QUERY_RESULT_AVAILABLE_EXT: number;
+  GPU_DISJOINT_EXT: number;
+  createQueryEXT(): WebGLQuery | null;
+  deleteQueryEXT(q: WebGLQuery | null): void;
+  beginQueryEXT(target: number, q: WebGLQuery): void;
+  endQueryEXT(target: number): void;
+  getQueryObjectEXT(q: WebGLQuery, pname: number): number | boolean;
 }
 
 export interface ProbeOptions {
@@ -2096,6 +2229,18 @@ export class AtmosphereRenderer {
   private probeTex: WebGLTexture | null = null;
   private probeSize: [number, number] = [0, 0];
   private probePixels: Uint8Array | null = null;
+  // the cloud stack's own target, when cloudScale < 1 (see RendererOptions.cloudScale)
+  private cloudScaleWanted: number;
+  // whether the program is the split variant: decided once, at construction
+  private readonly split: boolean;
+  private cloudSupport: boolean | null = null;   // null = not asked yet on this context
+  private cloudFbo: WebGLFramebuffer | null = null;
+  private cloudTex: WebGLTexture | null = null;
+  private cloudSize: [number, number] = [0, 0];
+  // GPU timing (RendererOptions.timing): queries in flight, and finished results
+  private timer: TimerQueryExt | null = null;
+  private pending: { q: WebGLQuery; pixels: number }[] = [];
+  private gpuTimes: GpuTime[] = [];
   private u: Uniforms = {};
   private lost = false;
   private p3 = false;
@@ -2117,6 +2262,8 @@ export class AtmosphereRenderer {
   constructor(canvas: HTMLCanvasElement, options: RendererOptions = {}) {
     this.canvas = canvas;
     this.opts = options;
+    this.cloudScaleWanted = options.cloudScale ?? 1;
+    this.split = options.cloudScale !== undefined;
     canvas.addEventListener('webglcontextlost', this.onLost);
     canvas.addEventListener('webglcontextrestored', this.onRestored);
     this.init();
@@ -2148,13 +2295,47 @@ export class AtmosphereRenderer {
    */
   get colorSpace(): PredefinedColorSpace { return this.p3 ? 'display-p3' : 'srgb'; }
 
+  /**
+   * The cloud stack's resolution relative to the frame, as in effect: what
+   * was asked for, or 1 where half-float targets are missing. Setting it
+   * takes effect on the next frame — but only on a renderer constructed with
+   * {@link RendererOptions.cloudScale} (any value, 1 included), which is what
+   * compiles the split variant of the shader. Without it this stays 1.
+   */
+  get cloudScale(): number {
+    return !this.split || this.cloudSupport === false ? 1 : clampCloudScale(this.cloudScaleWanted);
+  }
+  set cloudScale(v: number) { this.cloudScaleWanted = v; }
+
+  /**
+   * The GPU times of the frames measured since the last call, oldest first —
+   * empty without {@link RendererOptions.timing} or the extension.
+   *
+   * Asynchronous by construction: a frame's time can only be read once the
+   * GPU has finished it, so results trail render() by a frame or two. Frames
+   * spanning a GPU disjoint event (a clock change, a context switch) are
+   * dropped rather than reported wrong.
+   */
+  takeGpuTimes(): GpuTime[] {
+    this.harvestTimes();
+    const out = this.gpuTimes;
+    this.gpuTimes = [];
+    return out;
+  }
+
   private init(): void {
     this.linked = false;
     this.stopPolling();
-    // handles from a lost context are dead; the probe target is rebuilt on demand
+    // handles from a lost context are dead; the probe and cloud targets are
+    // rebuilt on demand, and the new context is asked about half floats again
     this.probeFbo = null;
     this.probeTex = null;
     this.probeSize = [0, 0];
+    this.cloudFbo = null;
+    this.cloudTex = null;
+    this.cloudSize = [0, 0];
+    this.cloudSupport = null;
+    this.pending = [];
     const gl = this.canvas.getContext('webgl', {
       alpha: false, antialias: false, depth: false, stencil: false,
       powerPreference: 'low-power',
@@ -2186,7 +2367,7 @@ export class AtmosphereRenderer {
 
     const vs = compile(gl.VERTEX_SHADER, VERT);
     const fs = compile(gl.FRAGMENT_SHADER,
-      fragSource(gl.getExtension('EXT_shader_texture_lod') !== null));
+      fragSource(gl.getExtension('EXT_shader_texture_lod') !== null, this.split));
     if (!vs || !fs) { this.gl = null; this.notifyReady(false); return; }
 
     const prog = gl.createProgram();
@@ -2272,6 +2453,11 @@ export class AtmosphereRenderer {
     // the sampler binding lives in the program, so once is enough; which
     // texture unit 0 holds is context state, and render() re-establishes that
     gl.uniform1i(this.u.u_noise, 0);
+    gl.uniform1i(this.u.u_clouds, 1);
+
+    this.timer = this.opts.timing
+      ? gl.getExtension('EXT_disjoint_timer_query') as TimerQueryExt | null
+      : null;
 
     this.linked = true;
     this.notifyReady(true);
@@ -2316,13 +2502,132 @@ export class AtmosphereRenderer {
     const gl = this.bind(timeSec, s, windOff, evo);
     if (!gl) return;
     const u = this.u;
-    gl.uniform4f(u.u_frame, 0, 0, this.canvas.width, this.canvas.height);
-    gl.uniform1f(u.u_aspect, this.canvas.width / Math.max(1, this.canvas.height));
+    const w = this.canvas.width, h = this.canvas.height;
+    const query = this.beginTiming(w * h);
+    gl.uniform1f(u.u_aspect, w / Math.max(1, h));
     gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
+
+    // the cloud stack on its own, at its own resolution (mode 1), then the
+    // frame with that stack laid in (mode 2) — or the frame in one pass (mode 0)
+    let mode = 0;
+    const scale = this.cloudScale;
+    if (scale < 1) {
+      const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+      if (this.cloudTarget(gl, cw, ch)) {
+        // the target's texture must not sit on a unit the program samples
+        // while it is being drawn into, or the draw is a feedback loop
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.cloudFbo);
+        gl.viewport(0, 0, cw, ch);
+        gl.uniform4f(u.u_frame, 0, 0, cw, ch);
+        gl.uniform1f(u.u_cloudMode, 1);
+        // the stack is drawn for the undistorted rays; the composite reads it
+        // back wherever a droplet has bent each pixel's ray
+        gl.uniform1f(u.u_lensDrops, 0);
+        gl.uniform1f(u.u_p3, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, w, h);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, this.cloudTex);
+        gl.activeTexture(gl.TEXTURE0);
+        mode = 2;
+      }
+    }
+
+    gl.uniform4f(u.u_frame, 0, 0, w, h);
+    gl.uniform1f(u.u_cloudMode, mode);
     gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
     gl.uniform1f(u.u_lensDrops, s.lens.droplets);
     gl.uniform1f(u.u_lensFx, 1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (query) this.timer!.endQueryEXT(this.timer!.TIME_ELAPSED_EXT);
+  }
+
+  /** start a timer query for this frame, if timing is on and not too many are in flight */
+  private beginTiming(pixels: number): WebGLQuery | null {
+    const t = this.timer;
+    if (!t) return null;
+    this.harvestTimes();
+    // a GPU that falls this far behind is reporting late anyway; skip a frame
+    if (this.pending.length >= 8) return null;
+    const q = t.createQueryEXT();
+    if (!q) return null;
+    t.beginQueryEXT(t.TIME_ELAPSED_EXT, q);
+    this.pending.push({ q, pixels });
+    return q;
+  }
+
+  /** move finished timer queries into gpuTimes, oldest first */
+  private harvestTimes(): void {
+    const t = this.timer, gl = this.gl;
+    if (!t || !gl) return;
+    // a disjoint event makes every query in flight meaningless
+    if (gl.getParameter(t.GPU_DISJOINT_EXT)) {
+      for (const p of this.pending) t.deleteQueryEXT(p.q);
+      this.pending = [];
+      return;
+    }
+    while (this.pending.length) {
+      const p = this.pending[0];
+      if (!t.getQueryObjectEXT(p.q, t.QUERY_RESULT_AVAILABLE_EXT)) break;
+      const ns = t.getQueryObjectEXT(p.q, t.QUERY_RESULT_EXT) as number;
+      t.deleteQueryEXT(p.q);
+      this.pending.shift();
+      this.gpuTimes.push({ ms: ns / 1e6, pixels: p.pixels });
+    }
+    // nobody is reading: keep only the recent past
+    if (this.gpuTimes.length > 120) this.gpuTimes.splice(0, this.gpuTimes.length - 120);
+  }
+
+  /**
+   * The cloud stack's half-float target, (re)made to size. false — and
+   * cloudScale falls back to 1 for this context — where half floats cannot be
+   * rendered to and filtered.
+   */
+  private cloudTarget(gl: WebGLRenderingContext, w: number, h: number): boolean {
+    if (this.cloudSupport === false) return false;
+    if (this.cloudFbo && this.cloudSize[0] === w && this.cloudSize[1] === h) return true;
+    const hf = gl.getExtension('OES_texture_half_float');
+    // the composite upsamples with the sampler's bilinear filter
+    const hfLinear = gl.getExtension('OES_texture_half_float_linear');
+    gl.getExtension('EXT_color_buffer_half_float');
+    if (!hf || !hfLinear) { this.cloudSupport = false; return false; }
+    this.freeClouds(gl);
+    const tex = gl.createTexture();
+    const fbo = gl.createFramebuffer();
+    if (!tex || !fbo) { this.cloudSupport = false; return false; }
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    // half float, not 8-bit: what the stack adds runs past 1.0 where lightning
+    // lights a cloud from inside, and 8 bits would clip it
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, hf.HALF_FLOAT_OES, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.cloudTex = tex;
+    this.cloudFbo = fbo;
+    if (!ok) { this.freeClouds(gl); this.cloudSupport = false; return false; }
+    this.cloudSupport = true;
+    this.cloudSize = [w, h];
+    return true;
+  }
+
+  private freeClouds(gl: WebGLRenderingContext): void {
+    if (this.cloudFbo) gl.deleteFramebuffer(this.cloudFbo);
+    if (this.cloudTex) gl.deleteTexture(this.cloudTex);
+    this.cloudFbo = null;
+    this.cloudTex = null;
+    this.cloudSize = [0, 0];
   }
 
   /**
@@ -2371,6 +2676,8 @@ export class AtmosphereRenderer {
     gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
     gl.uniform1f(u.u_lensDrops, s.lens.droplets);
     gl.uniform1f(u.u_lensFx, 1);
+    // one pass: at a few dozen pixels there is nothing to save by splitting
+    gl.uniform1f(u.u_cloudMode, 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     if (layout.environment) {
@@ -2498,6 +2805,9 @@ export class AtmosphereRenderer {
       if (this.buffer) gl.deleteBuffer(this.buffer);
       if (this.noise) gl.deleteTexture(this.noise);
       this.freeProbe(gl);
+      this.freeClouds(gl);
+      for (const p of this.pending) this.timer?.deleteQueryEXT(p.q);
+      this.pending = [];
       if (options.loseContext) {
         gl.getExtension('WEBGL_lose_context')?.loseContext();
       }
