@@ -7,7 +7,7 @@
 // yourself; this file is barely more than that loop.
 
 import { type ColorSpaceOption } from './gamut.js';
-import { AtmosphereRenderer } from './renderer.js';
+import { AtmosphereRenderer, type RendererOptions } from './renderer.js';
 import { CUBE_FACE_CAMERAS, resolveConditions, type Conditions } from './state.js';
 
 export interface CubeFacesOptions {
@@ -17,6 +17,12 @@ export interface CubeFacesOptions {
   timeSec?: number;
   /** which color space to bake into. Defaults to `'auto'` — the faces come back in the same space */
   colorSpace?: ColorSpaceOption;
+  /**
+   * Filter the horizon's cumulus noise for the face's pixels — see
+   * {@link RendererOptions.noiseLod}. A face's pixels are coarse (90° across
+   * `size`), so this is where the horizon grain shows most. Off by default
+   */
+  noiseLod?: RendererOptions['noiseLod'];
 }
 
 /**
@@ -47,6 +53,7 @@ export function renderCubeFaces(
   // come back on and the shader has to be linked before the first one
   const renderer = new AtmosphereRenderer(source, {
     colorSpace: options.colorSpace,
+    noiseLod: options.noiseLod,
     compile: 'sync',
   });
   if (!renderer.available) {

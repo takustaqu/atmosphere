@@ -507,6 +507,39 @@ pass `renderer.colorSpace` through:
 canvas.getContext('2d', { colorSpace: renderer.colorSpace }).drawImage(source, 0, 0);
 ```
 
+## Horizon noise LOD
+
+Toward the horizon a cloud layer's noise lattice shrinks below a pixel, and a
+point sample there reads an unrelated cell every row and every frame — a fine
+grain that crawls along the horizon as the clouds move. `noiseLod` filters it:
+cumulus, fractus and pannus read their noise through the lattice texture's
+mipmaps at the level each octave's footprint calls for, and their density ramps
+widen by the variance that was averaged away, so the mean coverage holds.
+
+```ts
+const sky = new Atmosphere(canvas, { noiseLod: true });
+sky.noiseLod;         // true when it's actually running (needs EXT_shader_texture_lod)
+sky.noiseLodBias = 1; // filter as if pixels were twice as wide; -Infinity turns it off in place
+```
+
+It's off by default, and off is the picture as it has always been, pixel for
+pixel. On, only the band near the horizon changes (below about 15° of elevation
+with a 48° field of view at 1080p); against a 4×-supersampled reference its
+error drops 3–9% below 10° and its frame-to-frame flicker 11–26% below 8°.
+
+It is for the picture, not for speed. On an Apple M2 Max (ANGLE / Metal) it
+costs about 6% of the frame — cloudless skies included, since the cost comes
+from compiling the variant rather than running it — so leave it off where the
+horizon is out of frame. It also compiles a second shader, a full link the
+first time a browser sees it.
+
+`renderCubeFaces` takes the same `noiseLod` option — a face's pixels are coarse,
+so a bake is where the grain shows most.
+
+The footprint follows the drawing buffer, so the same sky at a lower
+`resolutionScale` comes out softer near the horizon. To filter every resolution
+alike, set the bias to `log2(height / referenceHeight)`.
+
 ## Reduced motion
 
 A full-screen background in constant motion is hard on users with vestibular

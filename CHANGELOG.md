@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`noiseLod`: filter the grain that crawls along the horizon.** Opt-in, and
+  off is the picture as it was, pixel for pixel (the tests hold the
+  preprocessed shader to the previous release's text; a readback diff on an
+  M2 Max is zero in every scene measured). On, cumulus, fractus and pannus read
+  their noise through the lattice texture's mipmaps at the level each octave's
+  footprint calls for, and widen their density ramps by the variance averaged
+  away. Only the band below about 15° changes; against a 4×-supersampled
+  reference, error drops 3–9% below 10° and frame-to-frame flicker 11–26%
+  below 8°. It costs about 6% of the frame on an M2 Max (ANGLE / Metal) —
+  cloudless skies included — so it is for the picture, not for speed.
+  `noiseLodBias` changes the filter width at run time, and `renderCubeFaces`
+  takes the same option. See "Horizon noise LOD".
+
+### Changed
+
+- The cumulonimbus's tropopause height (`anvilTop`) is computed only in the
+  azimuths that carry a tower, and the veil's height only where the mass
+  stands above 0.50 — the only places either is read. The picture is
+  unchanged (readback diff zero).
+
 ## 0.3.1 — 2026-09-27
 
 Faster everywhere, the rain and snow turn with the camera, the lens droplets and the falling rain and snow can be switched off, and the sky hands its light to whatever stands in front of it.

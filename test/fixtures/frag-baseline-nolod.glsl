@@ -1,56 +1,5 @@
-// renderer.ts — atmosphere's renderer core (no dependencies, WebGL1)
-//
-// One fragment shader generates the atmosphere. Drawing is done in
-// **view-ray basis, cast from the camera**: sky color, clouds, sun, moon and
-// stars are all resolved as "what's visible in that direction". Only
-// lens-side phenomena (droplets, flare, vignette) stay in screen space.
-//
-//   - the sun is given as azimuth/elevation (a real solar position from
-//     latitude/longitude can be passed straight through)
-//   - being ray-basis, drawing the 6 directions at fov=90° gives a cubemap
-//
-// Dev note: swapping this module out via HMR leaves an already-mounted
-// AtmosphereRenderer running the old shader. Reload the page to see changes.
+#define NOISE_FETCH(uv) texture2D(u_noise, (uv))
 
-import { SRGB_TO_DISPLAY_P3, glslMat3, type ColorSpaceOption } from './gamut.js';
-import {
-  PROBE_FACE, PROBE_SUB, probeLayout, summarizeProbe,
-  type LightMeasurement, type ProbeLayout,
-} from './light.js';
-import { NOISE_SIZE, noiseLattice, noiseMoments } from './noise.js';
-import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
-
-const VERT = `
-attribute vec2 a_pos;
-void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
-`;
-
-/**
- * How far the marked light sources reach past sRGB. 0 disables the widening,
- * making the Display P3 path appearance-identical to the sRGB one; 1 is the
- * naive "just flip the flag" over-saturation. Per-part strengths are folded
- * into `wide` at each site in main(), so this is the single global trim.
- *
- * **Held at 0 deliberately, on measurement.** The widening does not work on this
- * palette, and the reason is structural: sRGB and Display P3 share the same blue
- * primary, so P3's extra room is entirely in red and green — and a sky renderer
- * is blue-dominated. Its one warm color (`warm`, at magic hour) composites down
- * to a desaturated salmon that sits nowhere near a gamut boundary. Measured
- * against a two-space readback diff: at reach 1 the widened pixels land only
- * 0.7–1.5% outside sRGB and magic hour never leaves sRGB at all; pushing to
- * reach 6 changes the color a lot (16.8/255 across 46% of the frame) while the
- * excursion stays at ~1%. It distorts hue inside sRGB rather than reaching past
- * it, which is the opposite of the point.
- *
- * The conversion below is still worth having on its own: it is exactly
- * appearance-preserving, and highlights that run past 1.0 (the sun's core, a
- * lightning flash) clip later in P3, so a little more of the blowout survives.
- *
- * Raising this only pays off after the palette itself is re-tuned for P3.
- */
-const GAMUT_REACH = 0.0;
-
-const FRAG = `
 // highp is optional for fragment shaders in WebGL1. Without this guard the
 // shader fails to compile outright on older mobile GPUs, and the sky silently
 // disappears (available === false). Banding gets worse at mediump, but a
@@ -229,7 +178,9 @@ float polarizerTransmission(float dop, float ePhi) {
 // Everything above is authored and composited as sRGB-encoded values, so the
 // conversion is: decode with the sRGB transfer function, change primaries,
 // re-encode with the same curve (Display P3 shares it). Matrix from gamut.ts.
-const mat3 SRGB_TO_P3 = ${glslMat3(SRGB_TO_DISPLAY_P3)};
+const mat3 SRGB_TO_P3 = mat3(0.82246197, 0.03319420, 0.01708263,
+       0.17753803, 0.96680580, 0.07239744,
+       0.00000000, 0.00000000, 0.91051993);
 
 vec3 srgbToDisplayP3(vec3 c) {
   // clamp before every pow(): a negative base is undefined, and mix() computes
@@ -267,7 +218,7 @@ float hash12(vec2 p) {
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
-  return NOISE_FETCH((i + f + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)}).r;
+  return NOISE_FETCH((i + f + 0.5) * 0.0039062500).r;
 }
 float fbm(vec2 p) {
   float v = 0.0, a = 0.5;
@@ -555,147 +506,30 @@ vec3 meteorStreak(vec3 rd, float t, float zhr, float hasRadiant, vec2 radiant) {
 // detail is skipped too. Both are exact: fbm is a sum of texels in 0..1 under
 // weights that total FBM_MAX, so that is a hard ceiling, not an estimate.
 const float FBM_MAX = 0.96875;
-#ifdef NOISE_LOD
-// ── Noise LOD (opt-in; see RendererOptions.noiseLod) ──
-// fbm read through the lattice texture's mipmaps. Toward the horizon a cloud
-// plane's lattice shrinks below a pixel, and a point sample there reads an
-// unrelated cell every row and every frame — the grain that crawls along the
-// horizon. Reading each octave at the mip level its footprint calls for lets
-// the sampler average exactly the lattice cells the pixel covers, the way any
-// minified texture is filtered.
-//
-// Done in the sampler (the mip level) rather than in arithmetic (a per-octave
-// weight toward the mean, the first cut): it is the least code, and the sampler
-// averages exactly the cells a pixel covers. Neither form is free, though.
-// Measured on an M2 Max (ANGLE/Metal), turning the variant on costs ~6% of the
-// whole sky — cloudless pixels included, which never run any of it. It tracked
-// neither the amount of added code (a third of it cost the same) nor the
-// variable-level fetch (a level-0 fetch with the same arithmetic cost more), so
-// it reads as a whole-program compiler effect of any filtering in cloudField,
-// not something a leaner body avoids. Hence opt-in, and off costs nothing.
-uniform vec2 u_noiseLod;            // x: rad a pixel spans at the image centre, x 2^bias (0 = exactly fbm); y: tan(fov/2)
-const float LOD_START = 0.6135;     // log2(1.53): an octave is left alone up to 1.53 lattice cells a pixel
-const float LOD_STEP = 1.0215;      // log2(2.03): each octave's lattice is 2.03x finer
-const float LOD_TOP = ${Math.log2(NOISE_SIZE).toFixed(1)};      // the lattice's top mip level (NOISE_SIZE = 2^top)
-float vnoiseL(vec2 p, float l) {
-  vec2 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return texture2DLodEXT(u_noise, (i + f + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)}, l).r;
-}
-// fbm with octave i read at mip level max(l + i*LOD_STEP, 0). l far below zero
-// reads level 0 throughout, which is fbm's own fetch, bit for bit. keep0 = 1
-// keeps octave 0 at level 0 (the broad shape a threshold cuts)
-float fbmL(vec2 p, float l, float keep0) {
-  float v = 0.0, a = 0.5;
-  for (int i = 0; i < 5; i++) {
-    float li = clamp(l, 0.0, LOD_TOP);  // 0 below the filtered band; the sampler stops at the top level anyway
-    if (i == 0) li *= 1.0 - keep0;
-    v += a * vnoiseL(p, li);
-    p = p * 2.03 + vec2(17.3, 9.1);
-    a *= 0.5;
-    l += LOD_STEP;
-  }
-  return v;
-}
-// the mip level octave 0 wants at footprint F (lattice cells a pixel)
-// (the floor is inside mediump's range: F is 0 on the probe's environment faces
-// and at bias -Infinity, and log2(0) is undefined)
-float lodLevel(float F) { return log2(max(F, 1.0 / 4096.0)) - LOD_START; }
-// variance fbmL takes out of fbm. A level-k texel averages 4^k lattice values,
-// so the octave keeps about 4^-level of its variance (a_i^2 = 4^-(i+1))
-float lodVar(float l, float keep0) {
-  float s = 0.0, w = 0.25;
-  for (int i = 0; i < 5; i++) {
-    float li = clamp(l, 0.0, LOD_TOP);
-    if (i == 0) li *= 1.0 - keep0;
-    s += w * (1.0 - exp2(-2.0 * li));
-    w *= 0.25;
-    l += LOD_STEP;
-  }
-  return NOISE_VAR * s;
-}
-// smoothstep of a value that lost variance s2: same centre, width grown to match
-// (smoothstep's ramp has variance w^2/20; moment-matched)
-float lodStep(float e0, float e1, float x, float s2) {
-  if (s2 <= 0.0) return smoothstep(e0, e1, x);
-  float c = 0.5 * (e0 + e1), h = 0.5 * sqrt((e1 - e0) * (e1 - e0) + 20.0 * s2);
-  return smoothstep(c - h, c + h, x);
-}
-float lodLow(float e0, float e1, float s2) {   // where lodStep leaves zero
-  return s2 <= 0.0 ? e0 : 0.5 * (e0 + e1) - 0.5 * sqrt((e1 - e0) * (e1 - e0) + 20.0 * s2);
-}
-// variance cloudField's density loses at footprint fp: dcomb = 2.2*(0.72 base + 0.28 detail) + c.
-// The warp only moves where the field is read, so it takes nothing out of the value
-float cloudVar(float fp) {
-  float l = lodLevel(fp);
-  // the finest octave read — detail's 4th — still at level 0: nothing was filtered.
-  // The same sum the fetches make, so this and fbmL agree to the bit on where filtering starts
-  if (l + 1.7225 + 4.0 * LOD_STEP <= 0.0) return 0.0;
-  return 4.84 * (0.5184 * lodVar(l, 1.0) + 0.0784 * lodVar(l + 1.7225, 0.0));   // log2(3.3)
-}
-// lattice cells a pixel on a cloud plane at altitude 1, long (radial) axis.
-// p is the (lens-refracted) 0..1 position: off the image centre a pixel spans
-// less, 1/|v| of viewRay's image-plane point. rdY, clamped as planeUV clamps it,
-// keeps it continuous at 0.03. Only the cloud layers that filter ask for it
-float lodPlaneAt(vec2 p, float aspect, float rdY) {
-  vec2 v = (p * 2.0 - 1.0) * vec2(aspect, 1.0) * u_noiseLod.y;
-  return u_noiseLod.x * inversesqrt(1.0 + dot(v, v)) / (rdY * rdY);
-}
-#endif
-#ifdef NOISE_LOD
-// lB: lodLevel of cuv's footprint (the base's octave 0; the warp reads x1.6, the
-// detail x3.3). x comes back 0: the caller cuts density from z with its own
-// widened ramp, which keeps the variance out of this function's live state
-vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp, float clear, float lB) {
-#else
 vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp, float clear) {
-#endif
   // shape evolution: the warp field itself drifts slowly, so the silhouette
   // crumbles and reassembles over time
   // (u_evo is integrated on the CPU side, so the offset doesn't jump even when the wind picks up)
-#ifdef NOISE_LOD
-  vec2 q = cuv + (0.30 + churn * 0.34) * vec2(
-    fbmL(cuv * 1.6 + u_evo, lB + 0.6781, 1.0),
-    fbmL(cuv * 1.6 - u_evo * 0.8, lB + 0.6781, 1.0)
-  );
-#else
   vec2 q = cuv + (0.30 + churn * 0.34) * vec2(
     fbm(cuv * 1.6 + u_evo),
     fbm(cuv * 1.6 - u_evo * 0.8)
   );
-#endif
   // detail drifts at a different speed from the base, so edges erode and reform gradually.
   // rides u_evo rather than u_time: the CPU integrates it, so the phase
   // survives u_time's wrap, and the rate follows the wind like the rest of
   // the cloud motion (the factors reproduce the old u_time × 0.026 / 0.017
   // at light wind)
   vec2 drift = vec2(u_evo * 0.33, -u_evo * 0.21);
-#ifdef NOISE_LOD
-  float base = fbmL(q, lB, 1.0);
-#else
   float base = fbm(q);
-#endif
   float dmax = (base * 0.72 + FBM_MAX * 0.28 - 0.5) * 2.2 + 0.5;
   if (dmax <= clear) return vec3(0.0, 0.0, dmax);
-#ifdef NOISE_LOD
-  float detail = fbmL(q * 3.3 + 17.0 + drift, lB + 1.7225, 0.0);
-#else
   float detail = fbm(q * 3.3 + 17.0 + drift);
-#endif
   float dcomb = (base * 0.72 + detail * 0.28 - 0.5) * 2.2 + 0.5;
-#ifdef NOISE_LOD
-  float den = 0.0;
-#else
   float den = smoothstep(edge - 0.01, edge + ramp, dcomb);
-#endif
   float lit = 0.0;
   if (dcomb > clear) {
     vec2 ql = q + ldir * 0.16;
-#ifdef NOISE_LOD
-    float dl = fbmL(ql, lB, 1.0) * 0.72 + fbmL(ql * 3.3 + 17.0 + drift, lB + 1.7225, 0.0) * 0.28;
-#else
     float dl = fbm(ql) * 0.72 + fbm(ql * 3.3 + 17.0 + drift) * 0.28;
-#endif
     // ×4 saturates immediately into flat blocks of light and dark, so keep it gentle
     lit = clamp((dcomb - dl) * 2.5, -1.0, 1.0);
   }
@@ -1802,54 +1636,27 @@ void main() {
     // the smaller the amount, the higher the threshold — sparse clouds only sprout here and there
     float edge = 0.88 - u_low.z * 0.52;
     // the veil's skirt reaches lower than the density's, so it sets the floor
-#ifdef NOISE_LOD
-    float lodPl = lodPlaneAt(p, aspect, rdY);   // shared with the fractus below
-    float fpCu = lodPl * (ALT_LOW * 2.5);
-    float s2Cu = cloudVar(fpCu);
-    vec3 dl = cloudField(cuv, churn, ldir, edge, ramp, lodLow(edge - 0.26, edge + 0.02, s2Cu), lodLevel(fpCu));
-    dl.x = lodStep(edge - 0.01, edge + ramp, dl.z, s2Cu);
-#else
     vec3 dl = cloudField(cuv, churn, ldir, edge, ramp, edge - 0.26);
-#endif
     // a thin, translucent veil cloud: give the density threshold a wide skirt below it
     // (it drifts as a bright haze around the lumps, and in places that never formed one)
     // must scale with the amount, or a residual haze is all that's left in an otherwise cloudless sky
-#ifdef NOISE_LOD
-    float veil = lodStep(edge - 0.26, edge + 0.02, dl.z, s2Cu) * 0.42 * u_low.z;
-#else
     float veil = smoothstep(edge - 0.26, edge + 0.02, dl.z) * 0.42 * u_low.z;
-#endif
     float alpha = max(dl.x, veil) * u_low.z * horizonFade;
     // over a cumulonimbus tower, a translucent fringe reads as a dirty
     // smudge stamped onto the bright mass — let only near-opaque cores
     // cross it (a half-dense patch is the worst case: neither cloud nor sky)
     alpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, dl.x)) * 0.92;
     // shade from continuous thickness across the wide ramp, not from the saturated density (den)
-#ifdef NOISE_LOD
-    float thick = lodStep(edge, edge + 0.35, dl.z, s2Cu);
-#else
     float thick = smoothstep(edge, edge + 0.35, dl.z);
-#endif
     vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightF, sunsetF, flash, gloom, 1.0, cloudSun);
     disp = mix(disp, c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 1.2, u_windOff * 1.9) + 51.7;
     float fedge = 0.94 - u_low.z * 0.42;
-#ifdef NOISE_LOD
-    float fpFr = lodPl * (ALT_LOW * 1.2);
-    float s2Fr = cloudVar(fpFr);
-    vec3 fl = cloudField(fuv, churn * 1.2, ldir, fedge, ramp, lodLow(fedge - 0.01, fedge + ramp, s2Fr), lodLevel(fpFr));
-    fl.x = lodStep(fedge - 0.01, fedge + ramp, fl.z, s2Fr);
-#else
     vec3 fl = cloudField(fuv, churn * 1.2, ldir, fedge, ramp, fedge - 0.01);
-#endif
     float falpha = fl.x * u_low.z * horizonFade * (1.0 - cbMask * 0.6);
-#ifdef NOISE_LOD
-    float fthick = lodStep(fedge, fedge + 0.35, fl.z, s2Fr);
-#else
     float fthick = smoothstep(fedge, fedge + 0.35, fl.z);
-#endif
     vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightF, sunsetF, flash, gloom, 1.25, cloudSun);
     disp = mix(disp, fc, falpha * 0.95);
   }
@@ -1885,14 +1692,7 @@ void main() {
   if (u_mid.z > 0.02 && fband > 0.001) {
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 0.42, u_windOff * 2.4) + 77.0;
     float pedge = 0.90 - u_mid.z * 0.22;
-#ifdef NOISE_LOD
-    float fpPa = lodPlaneAt(p, aspect, rdY) * (ALT_LOW * 0.42);
-    float s2Pa = cloudVar(fpPa);
-    vec3 fr = cloudField(fuv, churn + 0.45, ldir, pedge, ramp * 2.2, lodLow(pedge - 0.01, pedge + ramp * 2.2, s2Pa), lodLevel(fpPa));
-    fr.x = lodStep(pedge - 0.01, pedge + ramp * 2.2, fr.z, s2Pa);
-#else
     vec3 fr = cloudField(fuv, churn + 0.45, ldir, pedge, ramp * 2.2, pedge - 0.01);
-#endif
     vec3 fcol = mix(vec3(0.030, 0.033, 0.040), vec3(0.26, 0.27, 0.29), dayF);
     disp = mix(disp, fcol, fr.x * u_mid.z * fband * 0.80);
   }
@@ -2098,7 +1898,7 @@ void main() {
     // exactly undoing part of the conversion. wide=0 is appearance-preserving,
     // wide=1 degenerates to the naive over-saturated flip; nothing in between
     // can blow up, and no new color literal is needed.
-    sky = mix(srgbToDisplayP3(sky), sky, clamp(wide, 0.0, 1.0) * ${GAMUT_REACH.toFixed(4)});
+    sky = mix(srgbToDisplayP3(sky), sky, clamp(wide, 0.0, 1.0) * 0.0000);
   }
 
   // dither (to prevent banding). Last, so it lands in whatever space the 8-bit
@@ -2106,698 +1906,4 @@ void main() {
   sky += (hash12(gl_FragCoord.xy + fract(u_time)) - 0.5) * (2.0 / 255.0);
 
   gl_FragColor = vec4(sky, 1.0);
-}
-`;
-
-/**
- * How `vnoise` reads the lattice, decided per context.
- *
- * `texture2D` in a fragment shader carries an implicit derivative — it has to
- * pick a mip level, even for a texture that has none — and a derivative is
- * undefined inside non-uniform control flow. So D3D will not let one sit in a
- * branch, and ANGLE resolves that by flattening: every `if (u_high.x > 0.001)`
- * in this shader stops being a skip, and a clear sky starts paying for all ten
- * cloud genera. Measured on a Radeon 780M at 880x495: 1.14 ms for a clear sky
- * became 4.57 ms, exactly the cost of an overcast one.
- *
- * Naming the level instead asks for no derivative, and the branches go back to
- * branching. Where the extension is missing the plain fetch still draws the
- * right picture — it just pays the flattened cost, the way it would have with
- * the arithmetic hash this replaced.
- */
-export function fragSource(explicitLod: boolean, noiseLod = false): string {
-  // an #extension directive has to precede every non-preprocessor token
-  return (explicitLod
-    ? '#extension GL_EXT_shader_texture_lod : enable\n'
-      + '#define NOISE_FETCH(uv) texture2DLodEXT(u_noise, (uv), 0.0)\n'
-    : '#define NOISE_FETCH(uv) texture2D(u_noise, (uv))\n'
-  ) + (noiseLod ? noiseLodDefines() : '') + FRAG;
-}
-
-/**
- * The defines that switch the noise LOD variant on. Everything the variant adds
- * or changes in FRAG sits under `#ifdef NOISE_LOD`, with the plain line in the
- * `#else` — so without these the preprocessed source is the plain shader, token
- * for token (the tests hold it to a frozen copy).
- */
-function noiseLodDefines(): string {
-  const m = noiseMoments();
-  return '#define NOISE_LOD\n'
-    + `#define NOISE_MEAN ${m.mean.toFixed(7)}\n`
-    + `#define NOISE_VAR ${m.variance.toFixed(7)}\n`;
-}
-
-/**
- * Whether the noise LOD variant runs, and its starting bias. The variant reads
- * each octave at a mip level it chooses, and a GLSL ES 1.00 fragment shader has
- * no way to name a level without EXT_shader_texture_lod (texture2D's third
- * argument is a bias on the implicit level, which would need the derivatives
- * that get branches flattened — see fragSource). Without the extension the
- * option is ignored.
- * @internal
- */
-export function resolveNoiseLod(
-  o: RendererOptions['noiseLod'],
-  explicitLod: boolean,
-): { active: boolean; bias: number } {
-  const bias = typeof o === 'object' && o !== null ? clampLodBias(o.bias ?? 0) : 0;
-  return { active: !!o && explicitLod, bias };
-}
-
-/** NaN reads as 0; the top is capped (past 8 octaves nothing is left to filter). -Infinity is allowed */
-function clampLodBias(b: number): number {
-  if (Number.isNaN(b)) return 0;
-  return Math.min(8, b);
-}
-
-/**
- * Radians a pixel spans at the image centre, times 2^bias — the noise LOD's
- * footprint unit. The image plane is 2·tan(fov/2) tall across `height`
- * pixels, and u_aspect keeps pixels square.
- * @internal
- */
-export function noisePixelAngle(fov: number, height: number, bias: number): number {
-  return (2 * Math.tan(fov / 2)) / Math.max(1, height) * 2 ** bias;
-}
-
-/**
- * u_time's wrap period, in seconds (~68 min).
- *
- * The shader's float32 has a 24-bit mantissa, so an ever-growing u_time gets
- * coarser: after 8 hours the rain cycle (u_time × 8.5, fract'ed) is quantized
- * to ~3% steps and visibly stutters. 4096 keeps the worst-case fract step
- * under 0.5% while making the wrap rare. u_time only drives short-lived,
- * randomized screen effects (rain, snow, droplets, twinkle, lightning), so
- * the wrap amounts to a one-frame reshuffle of those patterns; cloud motion
- * rides u_windOff / u_evo and is unaffected.
- */
-const TIME_WRAP_SEC = 4096;
-
-/**
- * How often to ask the driver whether the program has finished linking.
- *
- * Each ask is a cheap flag read, so this is only about how promptly the sky
- * appears once the compile lands — a frame's worth of latency, against a
- * compile that runs for seconds.
- */
-const POLL_MS = 16;
-
-type Uniforms = Record<string, WebGLUniformLocation | null>;
-
-const UNIFORM_NAMES = [
-  'u_noise',
-  'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun',
-  'u_cover', 'u_high', 'u_mid', 'u_low',
-  'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
-  'u_windOff', 'u_evo',
-  'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
-  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
-  'u_noiseLod',
-] as const;
-
-export interface RendererOptions {
-  /** which color space to render into. Defaults to `'auto'` — see {@link ColorSpaceOption} */
-  colorSpace?: ColorSpaceOption;
-  /**
-   * Display ceiling, in multiples of SDR white. Defaults to 1 (standard range).
-   *
-   * The scene is composited in linear light and the light sources emit well past
-   * 1.0, so this is the headroom the tone map's shoulder expands into. 1 keeps
-   * the classic look — the sun's core flat white. Above 1 the sun, moon, stars
-   * and lightning get brighter than paper white *if* the output can carry it.
-   *
-   * WebGL has no HDR output path today: `drawingBufferColorSpace` accepts only
-   * `srgb` and `display-p3`, and neither `drawingBufferToneMapping` nor the
-   * `rec2100-*` spaces are implemented in any shipping browser. So values above
-   * 1 are clipped by the 8-bit drawing buffer for now, and this exists so the
-   * shader is already correct when that changes (or when driven from a
-   * float16 WebGPU/WebGL2 target).
-   */
-  headroom?: number;
-  /**
-   * When to find out whether the program linked.
-   *
-   * `'auto'` (the default) asks the driver via `KHR_parallel_shader_compile`
-   * and keeps the main thread free while it works. The trade is that the
-   * renderer is not usable the moment the constructor returns: {@link ready}
-   * starts false, {@link render} draws nothing until it flips, and
-   * {@link RendererOptions.onReady} fires when it does.
-   *
-   * `'sync'` blocks in the constructor until the program is linked, so one
-   * `render()` right after it produces a frame. That is the right choice for a
-   * one-shot bake (it is what {@link renderCubeFaces} uses) and the wrong one
-   * for anything on screen: on Windows the link runs through ANGLE's D3D
-   * backend, and this shader has been measured at around three seconds of
-   * frozen page there — nineteen, before the noise lattice moved into a
-   * texture. (Only on a first visit; browsers cache compiled shaders.)
-   *
-   * Where the extension is missing, `'auto'` degrades to `'sync'`.
-   */
-  compile?: 'auto' | 'sync';
-  /**
-   * Prefilter the cumulus-family noise for the pixel it lands on — fbm's
-   * analogue of a mipmap. Off by default, and off is the picture as it has
-   * always been, pixel for pixel.
-   *
-   * Toward the horizon a cloud plane's lattice shrinks below a pixel, and a
-   * point sample there reads an unrelated cell every row and every frame: the
-   * fine grain that crawls along the horizon as the clouds move. With this on,
-   * cumulus, fractus and pannus read each octave of their noise through the
-   * lattice texture's mipmaps, at the level that octave's footprint calls for
-   * (the same number of reads, from coarser levels), and their density ramps
-   * widen by the variance averaged away so the mean coverage holds. The upper
-   * sky is untouched, and so is every other genus.
-   *
-   * This is for the picture, not for speed. It costs GPU time: ~6% of the
-   * whole sky on an Apple M2 Max (ANGLE/Metal) at 1920x1080, cloudless skies
-   * included — measured with the variant compiled in, not with it doing
-   * anything, so leave it off where the horizon is out of frame. In return, near
-   * the horizon the picture sits closer to a supersampled reference (3–9% lower
-   * error below 10° of elevation) and flickers less from frame to frame (11–26%
-   * below 8°).
-   *
-   * The footprint follows the drawing buffer, so the same sky drawn at a lower
-   * resolution comes out softer near the horizon. To filter every resolution
-   * alike, set the bias to log2(height / reference height).
-   *
-   * Compiles a second shader variant (a full link the first time a browser
-   * sees it). Needs EXT_shader_texture_lod; ignored without it — see
-   * {@link AtmosphereRenderer.noiseLod}.
-   */
-  noiseLod?: boolean | NoiseLodOptions;
-  /**
-   * Called once it is known whether this renderer will ever draw: the program
-   * linked (`true`), it failed to compile or link, or WebGL itself is
-   * unavailable (`false`).
-   *
-   * `false` means the caller should keep its fallback background up for good.
-   *
-   * It can fire before the constructor returns — always under
-   * `compile: 'sync'`, and in either mode when WebGL is missing or the shader
-   * fails to *compile* (only the link is deferred). So a listener attached
-   * afterwards may miss it; read {@link ready} and {@link available} instead.
-   */
-  onReady?: (available: boolean) => void;
-}
-
-export interface NoiseLodOptions {
-  /**
-   * Where filtering starts, in octaves. Defaults to 0: each octave keeps the
-   * share of its contrast a pixel-sized box filter would keep. 1 filters as if
-   * pixels were twice as wide (softer toward the horizon, a few more fetches
-   * skipped); -Infinity reads every octave, which is the picture without the
-   * option. Changeable at run time — see {@link AtmosphereRenderer.noiseLodBias}.
-   */
-  bias?: number;
-}
-
-export interface ProbeOptions {
-  /**
-   * The frame grid's size, `[cols, rows]`. Defaults to `[8, 6]`.
-   *
-   * Cells are cut from the picture as shown, whatever its aspect, so choose
-   * the grid for how finely the foreground needs to read its surroundings,
-   * not to match the canvas.
-   */
-  grid?: [number, number];
-  /** also measure the dome all around (six small cube faces). Defaults to true */
-  environment?: boolean;
-}
-
-/**
- * The atmosphere renderer. One `render()` call is one frame (one image seen from one camera).
- *
- * To bake a cubemap, pass each face of `CUBE_FACE_CAMERAS` in turn and draw 6 times.
- */
-export class AtmosphereRenderer {
-  private canvas: HTMLCanvasElement;
-  private readonly opts: RendererOptions;
-  private gl: WebGLRenderingContext | null = null;
-  private program: WebGLProgram | null = null;
-  private buffer: WebGLBuffer | null = null;
-  private noise: WebGLTexture | null = null;
-  // the light probe's offscreen target, made on first use and resized to the layout
-  private probeFbo: WebGLFramebuffer | null = null;
-  private probeTex: WebGLTexture | null = null;
-  private probeSize: [number, number] = [0, 0];
-  private probePixels: Uint8Array | null = null;
-  private u: Uniforms = {};
-  private lost = false;
-  private p3 = false;
-  // the noise LOD variant is running (decided in init(): it needs the explicit-LOD extension)
-  private lod = false;
-  private lodBias = 0;
-  private linked = false;
-  // Timer for the parallel-compile poll. The renderer polls itself rather than
-  // leaning on render() being called: under reduced motion the caller draws
-  // exactly one frame, and nothing would ever ask again.
-  //
-  // A timer and not requestAnimationFrame: rAF stops in a hidden tab and in an
-  // offscreen canvas that nothing paints, and a renderer built there would
-  // never report itself ready. A background tab throttles this to about once a
-  // second, which is nothing against a compile measured in seconds.
-  private poll: ReturnType<typeof setTimeout> | 0 = 0;
-  // kept so dispose() can detach them. A disposed renderer that still listens
-  // would re-init on a context restore and steal the live renderer's program
-  private readonly onLost = (e: Event) => { e.preventDefault(); this.lost = true; };
-  private readonly onRestored = () => { this.lost = false; this.init(); };
-
-  constructor(canvas: HTMLCanvasElement, options: RendererOptions = {}) {
-    this.canvas = canvas;
-    this.opts = options;
-    // the bias doesn't depend on the context; resolving it once here also keeps
-    // a value set at run time across a context restore
-    this.lodBias = resolveNoiseLod(options.noiseLod, true).bias;
-    canvas.addEventListener('webglcontextlost', this.onLost);
-    canvas.addEventListener('webglcontextrestored', this.onRestored);
-    this.init();
-  }
-
-  /**
-   * false in environments where WebGL isn't available, or once the shader has
-   * failed to compile (the caller should keep its fallback background).
-   *
-   * Under the default `compile: 'auto'` a shader failure is only discovered
-   * later, so this can start true and go false. {@link RendererOptions.onReady}
-   * is the callback for that moment.
-   */
-  get available(): boolean { return this.gl !== null; }
-
-  /**
-   * true once the program is linked and `render()` will actually draw.
-   *
-   * Always true by the time the constructor returns under `compile: 'sync'`.
-   */
-  get ready(): boolean { return this.linked; }
-
-  /**
-   * The space actually being rendered into — `'display-p3'` only where the
-   * browser supports it, whatever was requested.
-   *
-   * A 2D canvas that receives a `drawImage` of this one should be created with
-   * the same `colorSpace`, or the wide-gamut pixels get clipped in the copy.
-   */
-  get colorSpace(): PredefinedColorSpace { return this.p3 ? 'display-p3' : 'srgb'; }
-
-  /**
-   * true when the noise LOD variant is what is drawing — asked for through
-   * {@link RendererOptions.noiseLod}, and the explicit-LOD extension is there.
-   */
-  get noiseLod(): boolean { return this.lod; }
-
-  /**
-   * The noise LOD's bias, in octaves (see {@link NoiseLodOptions.bias}).
-   * Takes effect from the next draw; has no effect while {@link noiseLod} is false.
-   */
-  get noiseLodBias(): number { return this.lodBias; }
-  set noiseLodBias(b: number) { this.lodBias = clampLodBias(b); }
-
-  /**
-   * The noise LOD's per-draw uniform for a picture `height` pixels tall seen
-   * through `fov`: the pixel angle (0 = no filtering) and tan(fov/2), which the
-   * shader would otherwise recompute per pixel. A no-op on the plain program,
-   * whose location for it is null.
-   */
-  private setNoiseLod(gl: WebGLRenderingContext, fov: number, height: number): void {
-    gl.uniform2f(this.u.u_noiseLod,
-      this.lod ? noisePixelAngle(fov, height, this.lodBias) : 0, Math.tan(fov / 2));
-  }
-
-  private init(): void {
-    this.linked = false;
-    this.stopPolling();
-    // handles from a lost context are dead; the probe target is rebuilt on demand
-    this.probeFbo = null;
-    this.probeTex = null;
-    this.probeSize = [0, 0];
-    const gl = this.canvas.getContext('webgl', {
-      alpha: false, antialias: false, depth: false, stencil: false,
-      powerPreference: 'low-power',
-    });
-    if (!gl) { this.gl = null; this.notifyReady(false); return; }
-    this.gl = gl;
-
-    // Assigning an unsupported value is specified to leave the property alone,
-    // so read it back rather than trusting the write. init() also runs on
-    // context restore, which is what re-applies this after a GPU reset
-    this.p3 = false;
-    if (this.opts.colorSpace !== 'srgb' && 'drawingBufferColorSpace' in gl) {
-      gl.drawingBufferColorSpace = 'display-p3';
-      this.p3 = gl.drawingBufferColorSpace === 'display-p3';
-    }
-
-    const compile = (type: number, src: string): WebGLShader | null => {
-      const sh = gl.createShader(type);
-      if (!sh) return null;
-      gl.shaderSource(sh, src);
-      gl.compileShader(sh);
-      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-        console.error('atmosphere shader compile error:', gl.getShaderInfoLog(sh));
-        gl.deleteShader(sh);
-        return null;
-      }
-      return sh;
-    };
-
-    const vs = compile(gl.VERTEX_SHADER, VERT);
-    const explicitLod = gl.getExtension('EXT_shader_texture_lod') !== null;
-    // decided here rather than in the constructor so a context restore makes the
-    // same choice against the (possibly different) restored context
-    this.lod = resolveNoiseLod(this.opts.noiseLod, explicitLod).active;
-    const fs = compile(gl.FRAGMENT_SHADER, fragSource(explicitLod, this.lod));
-    if (!vs || !fs) { this.gl = null; this.notifyReady(false); return; }
-
-    const prog = gl.createProgram();
-    if (!prog) { this.gl = null; this.notifyReady(false); return; }
-    gl.attachShader(prog, vs);
-    gl.attachShader(prog, fs);
-    gl.linkProgram(prog);
-    gl.deleteShader(vs);
-    gl.deleteShader(fs);
-    this.program = prog;
-
-    this.noise = this.createNoise(gl);
-
-    // On Windows, linkProgram is where ANGLE hands the whole shader to the
-    // D3D compiler, and reading LINK_STATUS is what waits for it. Asking the
-    // driver whether it's finished instead keeps the page alive through it.
-    const parallel = this.opts.compile === 'sync'
-      ? null
-      : gl.getExtension('KHR_parallel_shader_compile');
-    if (!parallel) { this.finishLink(); return; }
-
-    const step = (): void => {
-      this.poll = 0;
-      const g = this.gl;
-      if (!g || !this.program) return;
-      if (!g.getProgramParameter(this.program, parallel.COMPLETION_STATUS_KHR)) {
-        this.poll = setTimeout(step, POLL_MS);
-        return;
-      }
-      this.finishLink();
-    };
-    // a turn of the event loop before the first ask, so the caller gets to
-    // finish constructing and paint its fallback first
-    this.poll = setTimeout(step, POLL_MS);
-  }
-
-  /** the baked value-noise lattice, tiling and bilinear-filtered — see noise.ts */
-  private createNoise(gl: WebGLRenderingContext): WebGLTexture | null {
-    const tex = gl.createTexture();
-    if (!tex) return null;
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, NOISE_SIZE, NOISE_SIZE, 0,
-      gl.LUMINANCE, gl.UNSIGNED_BYTE, noiseLattice());
-    // REPEAT is what lets the lattice tile, LINEAR is what does vnoise's
-    // interpolation, and no mipmaps: a minified fetch must stay the same noise
-    // the neighbouring pixel read, or the fbm chains lose their high octaves
-    // in a smear wherever the projection compresses
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    if (this.lod) {
-      // The noise LOD variant reads chosen levels explicitly (texture2DLodEXT
-      // with the level its footprint calls for), and only there — level 0
-      // everywhere else, which is the fetch above. Its mips are what average
-      // the lattice cells a pixel covers near the horizon
-      gl.generateMipmap(gl.TEXTURE_2D);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-    }
-    return tex;
-  }
-
-  /** collect the link result and finish the one-time GL setup that depends on it */
-  private finishLink(): void {
-    const gl = this.gl;
-    const prog = this.program;
-    if (!gl || !prog) return;
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      console.error('atmosphere shader link error:', gl.getProgramInfoLog(prog));
-      gl.deleteProgram(prog);
-      if (this.noise) gl.deleteTexture(this.noise);
-      this.noise = null;
-      this.program = null;
-      this.gl = null;
-      this.notifyReady(false);
-      return;
-    }
-    gl.useProgram(prog);
-
-    // a fullscreen triangle
-    this.buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'a_pos');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
-    this.u = {};
-    for (const name of UNIFORM_NAMES) this.u[name] = gl.getUniformLocation(prog, name);
-    // the sampler binding lives in the program, so once is enough; which
-    // texture unit 0 holds is context state, and render() re-establishes that
-    gl.uniform1i(this.u.u_noise, 0);
-
-    this.linked = true;
-    this.notifyReady(true);
-  }
-
-  private notifyReady(available: boolean): void {
-    this.opts.onReady?.(available);
-  }
-
-  private stopPolling(): void {
-    if (!this.poll) return;
-    clearTimeout(this.poll);
-    this.poll = 0;
-  }
-
-  resize(width: number, height: number): void {
-    this.canvas.width = width;
-    this.canvas.height = height;
-    this.gl?.viewport(0, 0, width, height);
-  }
-
-  /**
-   * Draw one frame.
-   *
-   * @param timeSec elapsed seconds (used for real-time phenomena: rain, snow, lightning, twinkling).
-   *   Wrapped modulo {@link TIME_WRAP_SEC} before upload — the shader's float32
-   *   would otherwise quantize fast cycles (rain) into visible stepping after a
-   *   few hours. Cloud motion rides the integrated offsets, so the wrap only
-   *   reshuffles short-lived screen effects once per period.
-   * @param s       the resolved state
-   * @param camera  the viewpoint. Defaults to the default framing
-   * @param windOff wind's integrated offset (speed×dt, accumulated by the caller)
-   * @param evo     shape evolution's integrated offset (same idea)
-   */
-  render(
-    timeSec: number,
-    s: AtmosphereState,
-    camera: Camera = DEFAULT_CAMERA,
-    windOff = 0,
-    evo = 0,
-  ): void {
-    const gl = this.bind(timeSec, s, windOff, evo);
-    if (!gl) return;
-    const u = this.u;
-    gl.uniform4f(u.u_frame, 0, 0, this.canvas.width, this.canvas.height);
-    gl.uniform1f(u.u_aspect, this.canvas.width / Math.max(1, this.canvas.height));
-    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
-    this.setNoiseLod(gl, camera.fov, this.canvas.height);
-    gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
-    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.uniform1f(u.u_lensFx, 1);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-  }
-
-  /**
-   * Measure the sky's light: draw the same frame, tiny, into an offscreen
-   * buffer — plus six cube faces for the dome all around — and read it back.
-   *
-   * For lighting whatever stands in front of the sky; see light.ts. The frame
-   * is drawn exactly as {@link render} would draw it for this camera and the
-   * canvas's current aspect, lens effects included, since light wrap wants
-   * what is actually behind the foreground. The cube faces leave the lens out:
-   * a flare or a vignette is not light in the scene.
-   *
-   * Always sRGB, whatever the drawing buffer is. The canvas is untouched.
-   *
-   * **This synchronizes with the GPU** — readPixels waits for the draw to
-   * finish — so it is not free the way render() is. The draws themselves are
-   * a few thousand pixels against the frame's million or so; the cost is the
-   * wait. Call it at a few hertz rather than every frame (Atmosphere's
-   * `lightProbe` option does that and smooths the series), and before
-   * render() in a frame rather than after, so it waits only on its own draws.
-   *
-   * @returns null until the shader is ready (or when WebGL is unavailable)
-   */
-  probe(
-    timeSec: number,
-    s: AtmosphereState,
-    camera: Camera = DEFAULT_CAMERA,
-    windOff = 0,
-    evo = 0,
-    options: ProbeOptions = {},
-  ): LightMeasurement | null {
-    const [cols, rows] = options.grid ?? [8, 6];
-    const layout = probeLayout(cols, rows, options.environment ?? true);
-    const gl = this.bind(timeSec, s, windOff, evo);
-    if (!gl || !this.probeTarget(gl, layout)) return null;
-    const u = this.u;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
-    // sRGB regardless of the canvas: these numbers leave the GPU for someone
-    // else's pipeline, and sRGB is the one every consumer assumes
-    gl.uniform1f(u.u_p3, 0);
-
-    const fw = layout.cols * PROBE_SUB, fh = layout.frameHeight;
-    gl.viewport(0, 0, fw, fh);
-    gl.uniform4f(u.u_frame, 0, 0, fw, fh);
-    gl.uniform1f(u.u_aspect, this.canvas.width / Math.max(1, this.canvas.height));
-    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
-    // filtered for the canvas's pixels, not this tiny viewport's: the probe
-    // measures the picture as shown, and at 32x24 nearly every octave would drop
-    this.setNoiseLod(gl, camera.fov, this.canvas.height);
-    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.uniform1f(u.u_lensFx, 1);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-
-    if (layout.environment) {
-      gl.uniform1f(u.u_aspect, 1);
-      // the dome all around is not a picture anyone sees: unfiltered, as it always was
-      gl.uniform2f(u.u_noiseLod, 0, 1);
-      gl.uniform1f(u.u_lensDrops, 0);
-      gl.uniform1f(u.u_lensFx, 0);
-      CUBE_FACE_CAMERAS.forEach((face, i) => {
-        gl.viewport(i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);
-        gl.uniform4f(u.u_frame, i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);
-        gl.uniform3f(u.u_cam, face.yaw, face.pitch, face.fov);
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
-      });
-    }
-
-    const px = this.probePixels!;
-    gl.readPixels(0, 0, layout.width, layout.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    return summarizeProbe(px, layout);
-  }
-
-  /**
-   * Make the program current and upload everything that follows the state —
-   * the part render() and probe() share. Returns null when there is nothing to
-   * draw with yet.
-   */
-  private bind(timeSec: number, s: AtmosphereState, windOff: number, evo: number): WebGLRenderingContext | null {
-    const gl = this.gl;
-    if (!gl || this.lost || !this.program || !this.linked) return null;
-    // bind every frame rather than only at init: another renderer sharing this
-    // canvas (or anything else touching the context) may have swapped programs
-    gl.useProgram(this.program);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.noise);
-    const u = this.u;
-    gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
-    gl.uniform2f(u.u_sun, s.sunElevation, s.sunAzimuth);
-    const c = s.clouds;
-    gl.uniform1f(u.u_cover, s.cloudCover);
-    gl.uniform3f(u.u_high, c.cirrus, c.cirrostratus, c.cirrocumulus);
-    gl.uniform3f(u.u_mid, c.altostratus, c.altocumulus, c.nimbostratus);
-    gl.uniform4f(u.u_low, c.stratus, c.stratocumulus, c.cumulus, c.cumulonimbus);
-    gl.uniform1f(u.u_rain, s.rain);
-    gl.uniform1f(u.u_snow, s.snow);
-    gl.uniform1f(u.u_fall, s.particles.precipitation);
-    gl.uniform1f(u.u_wind, s.wind);
-    gl.uniform1f(u.u_thunder, s.thunder);
-    gl.uniform1f(u.u_haze, s.haze);
-    gl.uniform2f(u.u_cbFeat, s.features.anvil, s.features.velum);
-    gl.uniform1f(u.u_windOff, windOff);
-    gl.uniform1f(u.u_evo, evo);
-    gl.uniform1f(u.u_filtAmt, s.filter.amount);
-    gl.uniform3f(u.u_filtTint, s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]);
-    gl.uniform1f(u.u_filtSat, s.filter.saturation);
-    gl.uniform1f(u.u_filtLift, s.filter.lift);
-    gl.uniform1f(u.u_headroom, Math.max(1, this.opts.headroom ?? 1));
-    const t = s.tone;
-    gl.uniform4f(u.u_tone, t.exposure, t.contrast, t.knee, t.bleach);
-    const pz = s.polarizer;
-    gl.uniform4f(u.u_pol, pz.strength, pz.angle, pz.saturation, pz.stopLoss);
-    const ce = s.celestial;
-    gl.uniform4f(u.u_sky, ce.bortle, ce.milkyWay, ce.meteors, ce.radiant ? 1 : 0);
-    gl.uniform2f(u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
-    return gl;
-  }
-
-  /** the probe's framebuffer, (re)made to fit the layout. false if the driver refuses it */
-  private probeTarget(gl: WebGLRenderingContext, layout: ProbeLayout): boolean {
-    if (this.probeFbo && this.probeSize[0] === layout.width && this.probeSize[1] === layout.height) {
-      return true;
-    }
-    this.freeProbe(gl);
-    const tex = gl.createTexture();
-    const fbo = gl.createFramebuffer();
-    if (!tex || !fbo) return false;
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, layout.width, layout.height, 0,
-      gl.RGBA, gl.UNSIGNED_BYTE, null);
-    // NPOT in WebGL1: clamp and no mipmaps, or the texture is incomplete
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    // unit 0 is the noise lattice's, and the draw that follows expects it bound there
-    gl.bindTexture(gl.TEXTURE_2D, this.noise);
-    this.probeTex = tex;
-    this.probeFbo = fbo;
-    if (!ok) { this.freeProbe(gl); return false; }
-    this.probeSize = [layout.width, layout.height];
-    this.probePixels = new Uint8Array(layout.width * layout.height * 4);
-    return true;
-  }
-
-  private freeProbe(gl: WebGLRenderingContext): void {
-    if (this.probeFbo) gl.deleteFramebuffer(this.probeFbo);
-    if (this.probeTex) gl.deleteTexture(this.probeTex);
-    this.probeFbo = null;
-    this.probeTex = null;
-    this.probeSize = [0, 0];
-  }
-
-  /**
-   * Release GPU resources.
-   *
-   * @param options.loseContext
-   *   Force the WebGL context itself to be released. Off by default: the same
-   *   canvas usually gets reused across remounts (React StrictMode runs
-   *   effects twice, and getContext would otherwise come back in a lost
-   *   state). Turn it on for a throwaway canvas — e.g. an offscreen one used
-   *   to bake a cubemap. Browsers cap how many contexts can be alive at once
-   *   and evict the oldest, so leaking throwaway contexts eventually kills
-   *   the live renderer's own context.
-   */
-  dispose(options: { loseContext?: boolean } = {}): void {
-    const gl = this.gl;
-    this.stopPolling();
-    this.canvas.removeEventListener('webglcontextlost', this.onLost);
-    this.canvas.removeEventListener('webglcontextrestored', this.onRestored);
-    if (gl) {
-      if (this.program) gl.deleteProgram(this.program);
-      if (this.buffer) gl.deleteBuffer(this.buffer);
-      if (this.noise) gl.deleteTexture(this.noise);
-      this.freeProbe(gl);
-      if (options.loseContext) {
-        gl.getExtension('WEBGL_lose_context')?.loseContext();
-      }
-    }
-    this.gl = null;
-    this.program = null;
-    this.buffer = null;
-    this.noise = null;
-    this.linked = false;
-  }
 }
