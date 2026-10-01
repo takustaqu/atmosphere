@@ -14,10 +14,12 @@ day's sweep the cost moves only ±10%; it is the margin, not the time of day.
   them over a full-resolution sky. The cloud stack's washes compose to one
   affine map, so it is drawn on its own into a half-float target and applied
   in one step. 0.5 takes 0.49–0.62 of the one-pass time, 0.75 takes
-  0.81–0.89 (2160p summer: 11.3 → 5.5 ms); cloud edges soften. Opt-in, and
-  compiled as a separate variant of the shader: carrying the split costs the
-  one pass 6–16% by its presence alone, so without the option the shader is
-  bit-identical to before, and as fast.
+  0.81–0.89 (2160p summer: 11.3 → 5.5 ms); cloud edges soften. A frame
+  with no clouds is drawn in one pass regardless, where the split would only
+  add a pass and a composite (1.25–1.45× a clear frame on a Radeon 8060S).
+  Opt-in, and compiled as a separate variant of the shader: carrying the
+  split costs the one pass 6–16% by its presence alone, so without the option
+  the shader is bit-identical to before, and as fast.
 - **`adaptiveResolution`** — hold each frame under a GPU time budget by
   lowering the resolution when a frame would overrun it, and raising it again
   in probing steps. Robust to a GPU that clocks down at light loads, which

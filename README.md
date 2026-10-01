@@ -508,11 +508,12 @@ drawn at full resolution; the sun, moon, stars, rain, snow, lens and ground keep
 theirs. Against the one-pass renderer: 0.5 takes 0.49–0.62 of the time, 0.75
 takes 0.81–0.89 (2160p summer: 11.3 → 5.5 ms). The cost is softer cloud edges,
 and the 22° halo is laid under the whole stack rather than between the
-cirrostratus and the layers above it. Needs half-float render targets; without
-them it draws in one pass. Giving the option at all — 1 included — compiles a
-variant of the shader that can split, which is what makes `sky.cloudScale`
-settable later; that variant costs about 10% when not splitting, so leave the
-option out unless you use it.
+cirrostratus and the layers above it. A frame with no clouds at all is drawn
+in one pass whatever the setting, since splitting nothing out would only add
+work. Needs half-float render targets; without them it draws in one pass.
+Giving the option at all — 1 included — compiles a variant of the shader that
+can split, which is what makes `sky.cloudScale` settable later; that variant
+costs about 10% when not splitting, so leave the option out unless you use it.
 
 **`adaptiveResolution`** measures each frame's GPU time and lowers the
 resolution when a frame would overrun its budget — by default three quarters of

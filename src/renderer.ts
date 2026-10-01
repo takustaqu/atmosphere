@@ -12,6 +12,7 @@
 // Dev note: swapping this module out via HMR leaves an already-mounted
 // AtmosphereRenderer running the old shader. Reload the page to see changes.
 
+import { CLOUD_GENERA_IDS, type CloudMix } from './clouds.js';
 import { SRGB_TO_DISPLAY_P3, glslMat3, type ColorSpaceOption } from './gamut.js';
 import {
   PROBE_FACE, PROBE_SUB, probeLayout, summarizeProbe,
@@ -2076,6 +2077,18 @@ function clampCloudScale(v: number): number {
 }
 
 /**
+ * Whether any layer of the cloud stack draws. Every layer's gate in the
+ * shader is its genus amount past 0.001 (or a stricter bound on the same
+ * amounts), so below that the stack is the identity wash and splitting it out
+ * would only add a pass and a composite — 1.25–1.45× a clear frame on a
+ * Radeon 8060S.
+ */
+function hasCloudStack(c: CloudMix): boolean {
+  for (const g of CLOUD_GENERA_IDS) if (c[g] > 0.001) return true;
+  return false;
+}
+
+/**
  * How often to ask the driver whether the program has finished linking.
  *
  * Each ask is a cheap flag read, so this is only about how promptly the sky
@@ -2508,10 +2521,12 @@ export class AtmosphereRenderer {
     gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
 
     // the cloud stack on its own, at its own resolution (mode 1), then the
-    // frame with that stack laid in (mode 2) — or the frame in one pass (mode 0)
+    // frame with that stack laid in (mode 2) — or the frame in one pass (mode
+    // 0), which is also what a cloudless frame takes: the same picture, and
+    // none of the split's two extra steps
     let mode = 0;
     const scale = this.cloudScale;
-    if (scale < 1) {
+    if (scale < 1 && hasCloudStack(s.clouds)) {
       const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
       if (this.cloudTarget(gl, cw, ch)) {
         // the target's texture must not sit on a unit the program samples
