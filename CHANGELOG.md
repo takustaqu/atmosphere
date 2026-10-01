@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The cumulonimbus's tropopause height (`anvilTop`) is computed only in the
+  azimuths that carry a tower, and the veil's height only where the mass
+  stands above 0.50 — the only places either is read. The picture is
+  unchanged (readback diff zero).
+
 ## 0.3.1 — 2026-09-27
 
 Faster everywhere, the rain and snow turn with the camera, the lens droplets and the falling rain and snow can be switched off, and the sky hands its light to whatever stands in front of it.

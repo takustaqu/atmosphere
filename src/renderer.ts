@@ -1360,7 +1360,6 @@ void main() {
     // if a tower grows past this, its top gets sliced perfectly flat and
     // reads as a slab. Leave the roundness to the tower's own tapering, and
     // place the tropopause at the height "only the tallest tower's tip reaches"
-    float anvilTop = 0.62 + 0.16 * cbAmt + (fbm4(acir * 1.6 + 11.0) - 0.5) * 0.10;
 
     // The silhouette is decided by one formula: "thrust − height".
     //
@@ -1383,6 +1382,10 @@ void main() {
     // skipped for those columns. It is a function of azimuth alone, so the
     // branch splits the frame into clean vertical bands rather than diverging.
     if (env > 0.0) {
+      // anvilTop is read only inside this branch (the anvil flare, the ceiling
+      // carve and the shading depth), so a column with no tower need not pay
+      // its fbm4
+      float anvilTop = 0.62 + 0.16 * cbAmt + (fbm4(acir * 1.6 + 11.0) - 0.5) * 0.10;
       // the mass itself. A domain-warped 2D field does double duty as both
       // silhouette bumpiness and internal grain.
       // warping is meant to break up the overall shape. Applying the same
@@ -1622,7 +1625,9 @@ void main() {
     // tower, but heavily flattened vertically per cylindrical coordinate.
     // Round lobes stretch horizontally and overlap into a "flat mass",
     // giving it thickness variation and skin naturally.
-    if (u_cbFeat.y > 0.001) {
+    // spread is zero wherever massE <= 0.50, and the veil draws only past
+    // spread > 0.02 — so velumY's fbm4 is needed only above that line
+    if (u_cbFeat.y > 0.001 && massE > 0.50) {
       // veil forms as a horizontal sheet at a stable layer, so its height
       // stays roughly constant regardless of azimuth. Scaling it with tower
       // height turns the veil into a zigzag tracing the ridgeline.
