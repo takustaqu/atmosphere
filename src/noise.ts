@@ -81,3 +81,37 @@ export function noiseLattice(): Uint8Array {
   cached = data;
   return data;
 }
+
+let moments: { mean: number; variance: number } | null = null;
+
+/**
+ * Mean and variance of `vnoise` over the plane, from the baked lattice.
+ *
+ * The noise LOD (RendererOptions.noiseLod) pulls an octave toward its mean
+ * where a pixel spans many lattice cells, and widens the density ramps by the
+ * variance it took out, so both have to be the lattice's own numbers rather
+ * than the 0.5 / 1/12 of an ideal uniform draw.
+ *
+ * - mean: the texels' average. Interpolation is an average of texels with
+ *   weights summing to one, so it leaves the mean where it is.
+ * - variance: the texels' variance times (26/35)². Along one axis the
+ *   smoothstepped blend of two independent corners has, averaged over the
+ *   cell, a variance of 26/35 of a single corner's; the two axes multiply.
+ *
+ * Memoized, like the lattice.
+ */
+export function noiseMoments(): { mean: number; variance: number } {
+  if (moments) return moments;
+  const data = noiseLattice();
+  let sum = 0;
+  let sumSq = 0;
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i]! / 255;
+    sum += v;
+    sumSq += v * v;
+  }
+  const mean = sum / data.length;
+  const latticeVar = sumSq / data.length - mean * mean;
+  moments = { mean, variance: latticeVar * (26 / 35) ** 2 };
+  return moments;
+}

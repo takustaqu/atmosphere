@@ -12,7 +12,7 @@ import {
   celestialLights, mixMeasurement,
   type AtmosphereLight, type LightMeasurement,
 } from './light.js';
-import { AtmosphereRenderer, type ProbeOptions } from './renderer.js';
+import { AtmosphereRenderer, type NoiseLodOptions, type ProbeOptions, type RendererOptions } from './renderer.js';
 import {
   resolveCamera, resolveConditions,
   type AtmosphereState, type Camera, type Conditions,
@@ -46,6 +46,12 @@ export interface AtmosphereOptions extends Conditions {
    * amber reaching colors sRGB can't express.
    */
   colorSpace?: ColorSpaceOption;
+  /**
+   * Prefilter the horizon's cumulus noise for the pixel it lands on, taking
+   * out the grain that crawls there. Off by default (the picture as it has
+   * always been) — see {@link RendererOptions.noiseLod}.
+   */
+  noiseLod?: boolean | NoiseLodOptions;
   /** tuning for following / wind / shape evolution */
   animator?: AnimatorOptions;
   /** pass false to not start rendering on construction */
@@ -146,6 +152,7 @@ export class Atmosphere {
     this.cam = resolveCamera(options.camera);
     this.renderer = new AtmosphereRenderer(canvas, {
       colorSpace: options.colorSpace,
+      noiseLod: options.noiseLod,
       onReady: this.onRendererReady,
     });
     this.animator = new StateAnimator(this.target, options.animator);
@@ -176,6 +183,17 @@ export class Atmosphere {
 
   /** the space actually being rendered into (`'display-p3'` only where supported) */
   get colorSpace(): PredefinedColorSpace { return this.renderer.colorSpace; }
+
+  /** true when the noise LOD is drawing — see {@link AtmosphereRenderer.noiseLod} */
+  get noiseLod(): boolean { return this.renderer.noiseLod; }
+
+  /**
+   * The noise LOD's bias, in octaves — see {@link NoiseLodOptions.bias}.
+   * Takes effect from the next drawn frame; a still sky (reduced motion) needs
+   * a {@link jump} to redraw.
+   */
+  get noiseLodBias(): number { return this.renderer.noiseLodBias; }
+  set noiseLodBias(b: number) { this.renderer.noiseLodBias = b; }
 
   /**
    * A snapshot of the current (mid-transition) state.
