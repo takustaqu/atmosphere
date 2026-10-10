@@ -208,7 +208,11 @@ const SHEETS: Record<string, () => Tile[]> = {
   })),
 };
 
-const sheet = new URLSearchParams(location.search).get('sheet') ?? 'weather';
+const params = new URLSearchParams(location.search);
+const sheet = params.get('sheet') ?? 'weather';
+// ?cloudScale=0.5 and ?rays=1 put every tile on the split variant, for checking it
+const cloudScale = params.has('cloudScale') ? Number(params.get('cloudScale')) : undefined;
+const rays = params.has('rays') ? Number(params.get('rays')) : undefined;
 const tiles = (SHEETS[sheet] ?? SHEETS.weather)();
 
 const root = document.getElementById('sheet')!;
@@ -231,6 +235,7 @@ for (const tile of tiles) {
   const sky = new Atmosphere(canvas, {
     ...tile.conditions, fps: tile.animate ? 30 : 24,
     resolutionScale: 0.7, animator: tile.animator,
+    cloudScale, rays,
     // a QA sheet has to show the motion it is checking, reduced motion or not
     // (Windows sets prefers-reduced-motion whenever "Animation effects" is off)
     respectReducedMotion: false,

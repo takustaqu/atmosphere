@@ -468,6 +468,10 @@ syncers.push(chips(
   (id) => sky.cloudScale === Number(id),
   (id) => { sky.cloudScale = Number(id); },
 ));
+note('Crepuscular rays: shafts of sunlit air through the gaps in a deck, read off '
+  + 'the split\'s cloud stack. Best with a low sun behind broken cloud.');
+syncers.push(slider('Crepuscular rays', 0, 1, 0.01,
+  () => sky.rays, (v) => { sky.rays = v; }, (v) => v.toFixed(2)));
 const perfEl = document.createElement('p');
 perfEl.className = 'note';
 host.append(perfEl);

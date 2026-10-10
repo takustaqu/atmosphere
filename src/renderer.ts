@@ -103,6 +103,7 @@ uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowf
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
 uniform float u_aurora;    // 0..1 how much aurora is in the sky
 uniform float u_contrails; // 0..1 how often a jet draws a trail
+uniform float u_rays;      // 0..1 crepuscular rays, in the split variant's composite
 #ifdef CLOUD_SPLIT
 uniform float u_cloudMode; // 0 = one pass, 1 = the cloud stack alone, 2 = composite it from u_clouds
 uniform sampler2D u_clouds; // the cloud stack drawn by mode 1: rgb = what it adds, a = what it lets through
@@ -2209,6 +2210,43 @@ void main() {
     return;
   }
   disp = disp * cT + cC;
+
+  // ── Crepuscular rays ──
+  // Sunlight through the gaps in a cloud deck lights the air it crosses, and
+  // the lit air between the shadows reads as shafts fanning out from the
+  // sun. The cloud stack's alpha is the deck's transmittance, pixel by pixel,
+  // so a march along the line toward the sun's place on screen, summing what
+  // gets through, is how much sunlit air stands between this pixel and the
+  // sun — the shadow-volume integral in screen space. Only here, in the
+  // composite, where that stack exists to be read; jittered per pixel so the
+  // march's steps do not band
+  if (u_cloudMode > 1.5 && u_rays > 0.001 && sunVis > 0.0) {
+    vec3 proj = projectDir(sunDir, u_cam.x, u_cam.y, u_cam.z, aspect);
+    float near = proj.z > 0.0 ? smoothstep(2.4, 1.2, max(abs(proj.x), abs(proj.y))) : 0.0;
+    if (near > 0.0) {
+      vec2 sunPos = proj.xy * 0.5 + 0.5;
+      vec2 dp = sunPos - p;
+      const int N = 24;
+      float jitter = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
+      float lit = 0.0, wsum = 0.0;
+      for (int i = 0; i < N; i++) {
+        float f = (float(i) + jitter) / float(N);
+        vec2 q = clamp(p + dp * f, 0.0, 1.0);
+        float wgt = 1.0 - f * 0.5;
+        lit += CLOUD_FETCH(q).a * wgt;
+        wsum += wgt;
+      }
+      // squared: a line half in cloud is a shadow, not half a shaft
+      float shaft = lit / wsum;
+      shaft *= shaft;
+      // the shafts show against the sky near the sun, and most when the sun
+      // is low and the air it crosses is long
+      float glow = exp(-sunAng * 1.5) * near * sunVis * u_rays
+                 * (0.35 + 0.65 * smoothstep(0.6, 0.05, sunDir.y));
+      vec3 shaftCol = L(mix(vec3(1.0, 0.95, 0.85), vec3(1.05, 0.62, 0.35), sunsetF));
+      disp = encodeSrgb(L(disp) + shaftCol * shaft * glow * 1.2);
+    }
+  }
 #endif
 
   // ── Below the horizon ──
@@ -2692,7 +2730,7 @@ const UNIFORM_NAMES = [
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
-  'u_sea', 'u_aurora', 'u_contrails',
+  'u_sea', 'u_aurora', 'u_contrails', 'u_rays',
   'u_cloudMode', 'u_clouds',
 ] as const;
 
@@ -2771,6 +2809,17 @@ export interface RendererOptions {
    */
   cloudScale?: number;
   /**
+   * Crepuscular rays — shafts of sunlit air fanning out from the sun through
+   * the gaps in a cloud deck — at this strength, 0..1. Defaults to 0.
+   *
+   * Drawn in the split variant's composite from the cloud stack's own
+   * transmittance, so this needs {@link RendererOptions.cloudScale} given
+   * (1 is fine); without it the option does nothing. With rays on, a cloudy
+   * frame always takes the split's two passes, cloud scale 1 included.
+   * Changeable at run time through {@link AtmosphereRenderer.rays}.
+   */
+  rays?: number;
+  /**
    * Measure how long each frame takes on the GPU (`EXT_disjoint_timer_query`),
    * for {@link AtmosphereRenderer.takeGpuTimes}. Off by default; the
    * measurement is asynchronous and does not stall, but there is no reason to
@@ -2830,6 +2879,7 @@ export class AtmosphereRenderer {
   private probePixels: Uint8Array | null = null;
   // the cloud stack's own target, when cloudScale < 1 (see RendererOptions.cloudScale)
   private cloudScaleWanted: number;
+  private raysWanted: number;
   // whether the program is the split variant: decided once, at construction
   private readonly split: boolean;
   private cloudSupport: boolean | null = null;   // null = not asked yet on this context
@@ -2862,6 +2912,7 @@ export class AtmosphereRenderer {
     this.canvas = canvas;
     this.opts = options;
     this.cloudScaleWanted = options.cloudScale ?? 1;
+    this.raysWanted = options.rays ?? 0;
     this.split = options.cloudScale !== undefined;
     canvas.addEventListener('webglcontextlost', this.onLost);
     canvas.addEventListener('webglcontextrestored', this.onRestored);
@@ -2905,6 +2956,15 @@ export class AtmosphereRenderer {
     return !this.split || this.cloudSupport === false ? 1 : clampCloudScale(this.cloudScaleWanted);
   }
   set cloudScale(v: number) { this.cloudScaleWanted = v; }
+
+  /**
+   * The crepuscular rays' strength in effect — see {@link RendererOptions.rays}.
+   * 0 on a renderer built without `cloudScale`, whatever was asked for.
+   */
+  get rays(): number {
+    return !this.split || this.cloudSupport === false ? 0 : Math.min(1, Math.max(0, this.raysWanted));
+  }
+  set rays(v: number) { this.raysWanted = v; }
 
   /**
    * The GPU times of the frames measured since the last call, oldest first —
@@ -3112,7 +3172,8 @@ export class AtmosphereRenderer {
     // none of the split's two extra steps
     let mode = 0;
     const scale = this.cloudScale;
-    if (scale < 1 && hasCloudStack(s.clouds)) {
+    // the rays are read off the cloud stack's target, so they too want the split
+    if ((scale < 1 || this.rays > 0) && hasCloudStack(s.clouds)) {
       const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
       if (this.cloudTarget(gl, cw, ch)) {
         // the target's texture must not sit on a unit the program samples
@@ -3346,6 +3407,7 @@ export class AtmosphereRenderer {
     gl.uniform2f(u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
     gl.uniform1f(u.u_aurora, ce.aurora);
     gl.uniform1f(u.u_contrails, s.particles.contrails);
+    gl.uniform1f(u.u_rays, this.rays);
     return gl;
   }
 

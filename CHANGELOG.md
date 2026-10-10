@@ -50,6 +50,11 @@
   thin sharp line lengthening behind the plane that spreads into a soft band
   and dissolves over the minutes after, uneven where the air was drier. A
   slider in the controller.
+- **`rays`** — crepuscular rays: shafts of sunlit air fanning out from the
+  sun through the gaps in a cloud deck, read off the split's cloud stack as
+  the shadow-volume integral in screen space. Needs `cloudScale` given;
+  with them on a cloudy frame always takes the split's two passes. A slider
+  in the controller's Performance drawer; `rays` on the React sample.
 - **`celestial.aurora`** — curtains of light standing toward the north,
   folding along wandering lines and shimmering in vertical rays, green at
   the foot with red tops and a purple fringe at high activity; they come

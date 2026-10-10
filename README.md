@@ -547,6 +547,24 @@ strength.
 `sky.measureLight()` takes one right now, unsmoothed, probe option or not;
 `AtmosphereRenderer.probe()` is the same thing for a custom loop.
 
+## Crepuscular rays
+
+Shafts of sunlit air fanning out from the sun through the gaps in a cloud
+deck. The split's cloud stack holds the deck's transmittance pixel by pixel,
+so a march along the line toward the sun's place on screen, summing what gets
+through, is how much sunlit air stands between a pixel and the sun — the
+shadow-volume integral, in screen space. That is why they live in the split
+variant: `rays` needs `cloudScale` given (1 is fine), and with them on a
+cloudy frame always takes the split's two passes.
+
+```ts
+const sky = new Atmosphere(canvas, { cloudScale: 1, rays: 1, time: 17, weather: 'fair' });
+sky.rays = 0.5;   // changeable at run time
+```
+
+Best with a low sun behind broken cloud, on screen or just off its edge; a
+clear sky shows only a soft glow around the sun, and a full deck nothing.
+
 ## Large canvases — 1080p, 2160p
 
 The sky's cost is per pixel: the same scene at 2160p costs about 3.2× what it

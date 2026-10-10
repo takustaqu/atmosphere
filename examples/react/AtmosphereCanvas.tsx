@@ -78,6 +78,8 @@ export interface AtmosphereCanvasProps extends Conditions {
   onLight?: AtmosphereOptions['onLight'];
   /** clouds at a fraction of the resolution. Init-only, like {@link AtmosphereCanvasProps.fps} */
   cloudScale?: AtmosphereOptions['cloudScale'];
+  /** crepuscular rays through the gaps in a deck (needs `cloudScale`). Init-only, like {@link AtmosphereCanvasProps.fps} */
+  rays?: AtmosphereOptions['rays'];
   /** hold frames inside a GPU budget by trading resolution. Init-only */
   adaptiveResolution?: AtmosphereOptions['adaptiveResolution'];
   /** class name appended to the default "atmo-canvas" */
@@ -95,6 +97,7 @@ export function AtmosphereCanvas({
   lightProbe,
   onLight,
   cloudScale,
+  rays,
   adaptiveResolution,
   className,
 }: AtmosphereCanvasProps) {
@@ -120,7 +123,7 @@ export function AtmosphereCanvas({
   // read the initial values via a ref so they aren't re-read on remount
   const initRef = useRef({
     time, location, weather, filter, lens, particles, ground, camera,
-    fps, resolutionScale, animator, lightProbe, cloudScale, adaptiveResolution,
+    fps, resolutionScale, animator, lightProbe, cloudScale, rays, adaptiveResolution,
   });
   // read through a ref, so a new callback each render never rebuilds the sky
   const onLightRef = useRef(onLight);

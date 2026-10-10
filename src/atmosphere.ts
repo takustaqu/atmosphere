@@ -93,6 +93,14 @@ export interface AtmosphereOptions extends Conditions {
    */
   cloudScale?: number;
   /**
+   * Crepuscular rays — shafts of sunlit air fanning out from the sun through
+   * the gaps in a cloud deck — at this strength, 0..1 (`true` is 1). Defaults
+   * to 0. Needs `cloudScale` given (1 is fine), since the shafts are read off
+   * the split's cloud stack; with them on, a cloudy frame always takes the
+   * split's two passes. Changeable at run time through {@link Atmosphere.rays}.
+   */
+  rays?: boolean | number;
+  /**
    * Hold each frame inside a GPU time budget by lowering the resolution when
    * it would run over, and raising it back when there is room — for large
    * canvases (1080p, 2160p) and busy skies, where a frame that sometimes
@@ -187,6 +195,7 @@ export class Atmosphere {
       colorSpace: options.colorSpace,
       onReady: this.onRendererReady,
       cloudScale: options.cloudScale,
+      rays: options.rays === true ? 1 : options.rays === false ? 0 : options.rays,
       timing: !!adaptive,
     });
     this.animator = new StateAnimator(this.target, options.animator);
@@ -232,6 +241,13 @@ export class Atmosphere {
   get cloudScale(): number { return this.renderer.cloudScale; }
   set cloudScale(v: number) {
     this.renderer.cloudScale = v;
+    if (this.wantRunning && !this.raf) this.draw(performance.now());
+  }
+
+  /** the crepuscular rays' strength in effect — see {@link AtmosphereOptions.rays} */
+  get rays(): number { return this.renderer.rays; }
+  set rays(v: number) {
+    this.renderer.rays = v;
     if (this.wantRunning && !this.raf) this.draw(performance.now());
   }
 
