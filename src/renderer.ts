@@ -102,6 +102,7 @@ uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky 
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
 uniform float u_aurora;    // 0..1 how much aurora is in the sky
+uniform float u_contrails; // 0..1 how often a jet draws a trail
 #ifdef CLOUD_SPLIT
 uniform float u_cloudMode; // 0 = one pass, 1 = the cloud stack alone, 2 = composite it from u_clouds
 uniform sampler2D u_clouds; // the cloud stack drawn by mode 1: rgb = what it adds, a = what it lets through
@@ -454,6 +455,9 @@ vec3 meteorOne(vec3 rd, float t, float rate, float hasRadiant, vec2 radiant, flo
   float slot = floor(t / CELL) + seed;
   float p = hash11(slot * 1.37);
   if (p > clamp(rate / 3600.0 * CELL, 0.0, 0.92)) return vec3(0.0);
+  // one in sixteen is a fireball: far brighter, wider, slower to burn out,
+  // and it leaves a train that lingers
+  float fb = step(0.94, hash11(slot * 23.7));
 
   float ph = fract(t / CELL);
   float travel = ph / FLIGHT;                   // 1.0 at the nominal end, keeps rising
@@ -500,7 +504,7 @@ vec3 meteorOne(vec3 rd, float t, float rate, float hasRadiant, vec2 radiant, flo
 
   // near-constant width, about a pixel: any taper draws a wedge, and a wedge
   // reads as a comet. Brightness carries the shape instead
-  float width = mix(0.0019, 0.0016, clamp(u, 0.0, 1.0));
+  float width = mix(0.0019, 0.0016, clamp(u, 0.0, 1.0)) * (1.0 + 1.6 * fb);
   float core = exp(-(perp * perp) / (width * width));
 
   float u01 = clamp(u, 0.0, 1.0);
@@ -511,9 +515,11 @@ vec3 meteorOne(vec3 rd, float t, float rate, float hasRadiant, vec2 radiant, flo
   // It burns out over a long, smooth ramp while still moving, so there is never a
   // frame where it is stationary and visible. Squared so the last of it goes
   // gently rather than stepping off.
-  float burn = 1.0 - smoothstep(BURN_IN, BURN_OUT, travel);
+  float burn = 1.0 - smoothstep(BURN_IN, BURN_OUT + 0.6 * fb, travel);
   burn *= burn;
   float life = smoothstep(0.0, 0.035, ph) * burn;
+  // the fireball's train: its wake, decaying slower than the trail does
+  prof = mix(prof, max(prof, exp(-(back / max(span, 1e-4) * FLIGHT) * 1.2) * 0.35), fb);
 
   float hue = hash11(slot * 17.3);
   vec3 trailCol = hue < 0.38 ? vec3(0.62, 1.00, 0.70)
@@ -521,7 +527,7 @@ vec3 meteorOne(vec3 rd, float t, float rate, float hasRadiant, vec2 radiant, flo
                              : vec3(0.86, 0.92, 1.00);
   vec3 col = mix(trailCol, vec3(1.0), (1.0 - smoothstep(0.0, 0.30, u01)) * 0.7);
 
-  return col * core * prof * life * (0.55 + 0.45 * hash11(slot * 13.9));
+  return col * core * prof * life * (0.55 + 0.45 * hash11(slot * 13.9)) * (1.0 + 5.0 * fb);
 }
 
 /**
@@ -617,6 +623,75 @@ vec3 aurora(vec3 rd, float amt) {
   // faint, a storm's curtains are not
   return sum * (1.0 / float(STEPS)) * amt * (0.35 + 0.65 * amt)
        * min(1.0 / max(rd.y, 0.15), 3.0) * 0.35;
+}
+
+// ── Ice halos ──
+// What the ice crystals of a cirrostratus do with the sun and the moon: the
+// 22° halo (refraction through the crystals, red on its inner edge), the
+// parhelia — the sun dogs — that sit on it level with a low sun, and a pillar
+// of light standing on a sun at the horizon, off the flat faces of falling
+// plates. The moon gets its halo too. Linear light to add; nothing without
+// the veil.
+vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
+             vec3 moonDir, float moonAng, float moonVis, float nightF) {
+  float ice = u_high.y;
+  if (ice < 0.001 || rd.y < 0.0) return vec3(0.0);
+  // The crystals are where the veil is. A halo drawn evenly round the sun is
+  // a drawn circle; the real one is patchy and broken where the veil thins,
+  // so everything here is weighted by the veil's own density along this ray
+  vec2 vuv = rd.xz / max(rd.y, 0.03) * (3.2 * 0.5) + vec2(u_windOff * 0.3, u_windOff * 0.045);
+  float veil = 0.35 + 0.65 * smoothstep(0.30, 0.72, fbm4(vuv + vec2(u_evo * 0.15, 0.0)));
+  vec3 add = vec3(0.0);
+  if (sunVis > 0.0) {
+    float sunEl = sunDir.y;
+    // the 22° halo: a sharp inner edge, red, and a long fade outward into a
+    // faint brightening of the sky — the refraction has a minimum deviation
+    // and no maximum. The inside of the ring is a shade darker than the sky
+    float d = sunAng - 0.379;
+    float ring = smoothstep(-0.014, 0.006, d) * exp(-max(d, 0.0) * 22.0);
+    vec3 ringCol = mix(vec3(1.0, 0.62, 0.50), vec3(1.0, 0.96, 0.90), smoothstep(0.0, 0.035, d));
+    add += L(ringCol) * ring * 0.16 * sunVis;
+    // sun dogs: level with the sun, 22° out and a little more as it climbs,
+    // red on the side toward the sun and a white tail trailing away from it;
+    // brightest with the sun low, gone above 45° or so
+    float low = smoothstep(0.70, 0.10, sunEl);
+    if (low > 0.0) {
+      float spread = 0.384 / max(sqrt(1.0 - sunEl * sunEl), 0.5);
+      vec2 hs = normalize(sunDir.xz + vec2(1e-5)), hr = normalize(rd.xz + vec2(1e-5));
+      // signed azimuth from the sun, scaled to sky radians at this elevation
+      float dAz = atan(hr.x * hs.y - hr.y * hs.x, dot(hr, hs)) * sqrt(max(1.0 - rd.y * rd.y, 0.0));
+      float dEl = el - u_sun.x;
+      float x = abs(dAz) - spread * sqrt(max(1.0 - sunEl * sunEl, 0.0));   // outward from the dog
+      float dog = exp(-dEl * dEl / 0.00028)
+                * (exp(-x * x / 0.0004) + smoothstep(0.0, 0.02, x) * exp(-x * 22.0) * 0.5);
+      vec3 dogCol = mix(vec3(1.0, 0.55, 0.40), vec3(1.0, 0.95, 0.88), smoothstep(-0.012, 0.012, x));
+      add += L(dogCol) * dog * 0.45 * low * sunVis;
+    }
+    // the pillar: a column above and below a sun near the horizon
+    float lowP = smoothstep(0.20, 0.02, sunEl) * smoothstep(-0.08, 0.0, sunEl);
+    if (lowP > 0.0) {
+      vec2 hs = normalize(sunDir.xz + vec2(1e-5)), hr = normalize(rd.xz + vec2(1e-5));
+      float dAz = acos(clamp(dot(hs, hr), -1.0, 1.0)) * sqrt(max(1.0 - rd.y * rd.y, 0.0));
+      float dEl = el - u_sun.x;
+      float column = exp(-dAz * dAz / 0.0008) * exp(-abs(dEl) * 12.0) * smoothstep(0.0, 0.02, abs(dEl));
+      add += L(vec3(1.0, 0.70, 0.45)) * column * 0.25 * lowP * sunVis;
+    }
+  }
+  if (moonVis > 0.0) {
+    float d = moonAng - 0.379;
+    float ring = smoothstep(-0.014, 0.006, d) * exp(-max(d, 0.0) * 22.0);
+    add += L(vec3(0.95, 0.95, 1.0)) * ring * 0.07 * moonVis * u_moon.z * nightF;
+  }
+  return add * ice * veil;
+}
+
+// a rainbow's colors across its width: 0 the inner edge (violet), 1 the outer (red)
+vec3 spectrum(float t) {
+  return clamp(vec3(
+    smoothstep(0.55, 1.0, t) + smoothstep(0.25, 0.0, t) * 0.45,
+    smoothstep(0.15, 0.5, t) * smoothstep(0.95, 0.6, t),
+    smoothstep(0.45, 0.0, t)
+  ), 0.0, 1.0);
 }
 
 // ── Clouds ──────────────────────────────────────────────
@@ -1290,58 +1365,96 @@ void main() {
   // high up gives all of it, a crescent a sliver, a set moon none — with a
   // floor for the starlight and airglow a night keeps regardless
   float nightM = nightF * mix(0.3, 1.0, moonUp * u_moon.z);
+  float moonAng = acos(clamp(dot(rd, moonDir), -1.0, 1.0));
   if (moonVis > 0.0 && skyLight) {
-    float ang = acos(clamp(dot(rd, moonDir), -1.0, 1.0));
+    float ang = moonAng;
     float moon = smoothstep(0.048, 0.043, ang);
     vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), moonDir) + vec3(1e-6, 0.0, 0.0));
     vec3 up = cross(moonDir, right);
     float vis = moonVis;
 
     // Moon-fixed frame: the ray projected onto the disc plane, in units of the
-    // disc radius. The mare pattern samples this, so it stays glued to the
-    // surface however the camera swings.
+    // disc radius, x toward the right of the sky and y up. The face is drawn
+    // in this frame, so it stays glued to the surface however the camera
+    // swings (and turns with the moon's position the way the real face does
+    // against the horizon).
     vec2 muv = vec2(dot(rd, right), dot(rd, up)) / 0.048;
-    // the surface normal under this ray, the disc being the near face of a
-    // sphere, and how much sun that surface gets: the terminator, soft over
-    // the sphere's own curvature
+    // the surface under this ray, the disc being the near face of a sphere:
+    // its normal, the cosine of the sun's incidence on it and of our view of it
     float rr = min(dot(muv, muv), 1.0);
-    vec3 nrm = right * muv.x + up * muv.y - moonDir * sqrt(1.0 - rr);
-    float litF = smoothstep(-0.06, 0.12, dot(nrm, sunDir));
-    float lit = moon * litF;
-    // only ever read through the disc's own coverage, so off the disc it is skipped
-    float mare = 0.0;
-    if (moon > 0.0) mare = smoothstep(0.42, 0.72, fbm(muv * 2.3 + vec2(4.7, 9.2)));
+    float mu = sqrt(1.0 - rr);
+    vec3 nrm = right * muv.x + up * muv.y - moonDir * mu;
+    float mu0 = dot(nrm, sunDir);
+    // Lunar regolith reflects by Lommel-Seeliger, not Lambert: 2·μ0/(μ0+μ),
+    // which is flat across a full moon (no limb darkening — the full moon is a
+    // flat disc, famously) and falls to nothing at the terminator with the
+    // slow gradient a crescent shows. The surge near full is the opposition
+    // effect, what makes a full moon so much brighter than two half moons
+    float ls = max(mu0, 0.0) * 2.0 / max(mu0 + mu, 1e-3);
+    ls *= 1.0 + 0.5 * smoothstep(0.7, 1.0, u_moon.z);
+    float lit = moon * ls;
+
+    // ── the face ──
+    // The near side's maria, where they are: the large dark basins as
+    // ellipses with noise-torn edges, over a fine grain of highland. Read
+    // only through the disc, so off it none of this runs
+    float albedo = 1.0;
+    if (moon > 0.0) {
+      vec2 q = muv + (fbm4(muv * 2.6 + 3.0) - 0.5) * 0.18;   // torn edges
+      float m = 0.0;
+      #define MARE(cx, cy, rx, ry, k) { vec2 e = (q - vec2(cx, cy)) / vec2(rx, ry); m += k * smoothstep(1.25, 0.75, dot(e, e)); }
+      MARE(-0.55,  0.12, 0.34, 0.44, 0.55)   // Oceanus Procellarum
+      MARE(-0.24,  0.48, 0.30, 0.22, 0.62)   // Imbrium
+      MARE( 0.22,  0.42, 0.18, 0.17, 0.62)   // Serenitatis
+      MARE( 0.42,  0.12, 0.22, 0.20, 0.58)   // Tranquillitatis
+      MARE( 0.62, -0.22, 0.14, 0.21, 0.52)   // Fecunditatis
+      MARE( 0.45, -0.37, 0.11, 0.11, 0.50)   // Nectaris
+      MARE(-0.30, -0.32, 0.21, 0.15, 0.52)   // Nubium
+      MARE(-0.52, -0.44, 0.10, 0.10, 0.50)   // Humorum
+      MARE( 0.76,  0.30, 0.10, 0.13, 0.62)   // Crisium
+      MARE(-0.10,  0.78, 0.45, 0.07, 0.42)   // Frigoris
+      #undef MARE
+      m = min(m, 1.0);
+      // the highlands: bright, cratered — a grain, and a few bright ray craters
+      float grain = fbm4(muv * 9.0 + 17.0) - 0.5;
+      float tycho = exp(-dot(muv - vec2(-0.16, -0.72), muv - vec2(-0.16, -0.72)) / 0.0025) * 0.35
+                  + exp(-dot(muv - vec2(0.36, -0.08), muv - vec2(0.36, -0.08)) / 0.0012) * 0.2;
+      albedo = mix(1.0, 0.52, m) * (1.0 + grain * 0.22) + tycho;
+      // shadows lengthen toward the terminator and the relief comes out
+      albedo *= 1.0 + (fbm(muv * 14.0 + 41.0) - 0.5) * 0.5 * smoothstep(0.5, 0.0, mu0);
+    }
 
     // Earthshine. The shadowed disc is rock, not glass: it occludes the stars
     // behind it (a replace, not an add) and holds a faint blue-grey glow of
-    // sunlight bounced off the Earth, an order of magnitude under the lit
-    // face. The occlusion saturates early so a clear-night vis of 0.9 does
-    // not leak 10% of every star through the rock, yet it still follows vis
-    // down under cloud so a heavy overcast dims the disc away instead of
-    // punching a dark hole in the cloud glow. By day the sky in front of it
-    // outshines it and the dark face is not there at all.
-    vec3 shine = L(vec3(0.62, 0.68, 0.78)) * (1.0 - 0.5 * mare) * 0.016 * MOON_LUM;
+    // sunlight bounced off the Earth, far under the lit face, strongest when
+    // the Earth is fullest from there — at a thin crescent. The occlusion
+    // saturates early so a clear-night vis of 0.9 does not leak 10% of every
+    // star through the rock, yet it still follows vis down under cloud so a
+    // heavy overcast dims the disc away instead of punching a dark hole in
+    // the cloud glow. By day the sky in front of it outshines it and the dark
+    // face is not there at all.
+    vec3 shine = L(vec3(0.62, 0.68, 0.78)) * albedo * 0.012 * (1.4 - u_moon.z) * MOON_LUM;
     sky = mix(sky, shine, moon * smoothstep(0.0, 0.55, vis) * nightF);
 
-    // The lit face: overexposed warm white, linear-light emission, the maria
-    // a shade darker on it; by day the daylit sky takes the edge off it
-    float dayDim = mix(0.45, 1.0, nightF);
-    sky += L(vec3(1.0, 0.96, 0.88)) * (1.0 - 0.35 * mare) * lit * vis * MOON_LUM * dayDim;
+    // The lit face. Held just over the tone curve's knee, not blown out: a
+    // moon that saturates to paper white loses its seas and reads as a disc
+    // of paper, which is exactly what it did. By day the daylit sky in front
+    // takes the edge off it — a white about a cloud's
+    float face = 0.42 * mix(0.55, 1.0, nightF);
+    sky += L(vec3(1.0, 0.97, 0.90)) * albedo * lit * vis * MOON_LUM * face;
 
-    // Bloom leans toward the lit limb, warm like the light that causes it,
-    // and grows with the phase; the shadowed limb keeps only a trace. Kept
-    // tight so it does not wash the Milky Way band nearby.
+    // Bloom: a little scatter around the lit limb, warm like the light that
+    // causes it, growing with the phase. Kept small — a wide halo is what a
+    // camera sees, not an eye, and it swallowed the disc
     vec2 litDir = normalize(vec2(dot(sunDir, right), dot(sunDir, up)) + vec2(1e-5, 0.0));
     float sideW = 0.5 + 0.5 * dot(muv, litDir) / max(length(muv), 1e-3);
     sideW = 0.12 + 0.88 * sideW;
-    float rim = exp(-max(ang - 0.045, 0.0) * 30.0) * (1.0 - moon) * (0.15 + 0.85 * u_moon.z);
-    // near-white with only a hint of warmth: a stronger yellow muddied to
-    // brown against the lavender of the Milky Way band
-    sky += L(vec3(1.0, 0.95, 0.87)) * rim * sideW * 0.30 * vis * nightF;
+    float rim = exp(-max(ang - 0.045, 0.0) * 55.0) * (1.0 - moon) * (0.1 + 0.9 * u_moon.z);
+    sky += L(vec3(1.0, 0.95, 0.87)) * rim * sideW * 0.10 * vis * nightF;
     // a whisper of scattered moonlight haze just past the limb, all around
     sky += L(vec3(0.45, 0.55, 0.75)) * exp(-max(ang - 0.045, 0.0) * 11.0)
-         * (1.0 - moon) * 0.035 * vis * u_moon.z * nightF;
-    wide = max(wide, max(lit, rim * sideW * 0.30) * vis * 0.7);
+         * (1.0 - moon) * 0.025 * vis * u_moon.z * nightF;
+    wide = max(wide, max(lit * 0.5, rim * sideW * 0.10) * vis * 0.7);
   }
 
   // ── Meteors ──
@@ -1393,18 +1506,39 @@ void main() {
     sky += L(vec3(0.30, 0.52, 0.38)) * exp(-h * (9.0 + 7.0 * agN)) * nightF
          * (0.07 * (0.55 + 0.90 * agN) * agDeep)
          * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
+
+    // ── Zodiacal light ──
+    // Sunlight off the dust that lies in the plane of the planets: at a dark
+    // site, once twilight has gone, a faint cone leans up from where the sun
+    // went down (and, before dawn, from where it will rise), along the
+    // ecliptic. The ecliptic is taken as the sun's own path across the sky —
+    // its daily arc about the pole — which is what sets the cone's lean.
+    // Gone again once the sun is far enough down that the dust near it has set
+    float zl = smoothstep(-0.16, -0.28, sunEl) * smoothstep(-0.60, -0.40, sunEl);
+    if (zl > 0.0) {
+      const vec3 POLE = vec3(0.0, 0.695, 0.719);     // a mid-northern latitude's celestial pole
+      vec3 along = normalize(cross(sunDir, POLE) + vec3(1e-6));
+      if (along.y < 0.0) along = -along;              // the branch that rises
+      vec3 off = normalize(cross(sunDir, along));
+      float u = atan(dot(rd, along), dot(rd, sunDir));   // up the ecliptic from the sun
+      float v = dot(rd, off);                            // off the plane
+      float halfW = 0.40 * (1.0 - clamp(u, 0.0, 1.4) / 1.8);
+      float cone = exp(-max(u, 0.0) * 1.4) * exp(-v * v / (halfW * halfW)) * smoothstep(0.0, 0.15, u);
+      sky += L(vec3(0.72, 0.75, 0.86)) * cone * 0.075 * zl * agDeep * nightF
+           * smoothstep(0.0, 0.03, h) * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
+    }
   }
 
   // ── Lightning (computed before the clouds so it lights them too) ──
   float flash = 0.0;
+  // the slot and its phase are read again after the clouds, for the bolt
+  float ltCell = floor(u_time * 0.55);
+  float ltPh = fract(u_time * 0.55);
   {
-    float lt = u_time * 0.55;
-    float cell = floor(lt);
-    float p1 = hash11(cell);
+    float p1 = hash11(ltCell);
     float thresh = mix(1.05, 0.55, u_thunder);   // never fires when thunder=0
     if (p1 > thresh) {
-      float ph = fract(lt);
-      flash = exp(-ph * 9.0) * (0.65 + 0.35 * sin(ph * 70.0 + p1 * 30.0));
+      flash = exp(-ltPh * 9.0) * (0.65 + 0.35 * sin(ltPh * 70.0 + p1 * 30.0));
     }
   }
 
@@ -1458,6 +1592,44 @@ void main() {
     col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
     OVER(col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
   }
+  // ── Contrails ──
+  // A jet's trail: a line drawn across the high sky from a point, lengthening
+  // at the plane's speed — thin and sharp just behind it, spreading into a
+  // soft band and dissolving over the minutes after, uneven along its length
+  // where the air was drier. One plane per slot of the clock, on a heading of
+  // its own, as often as the amount asks
+  if (u_contrails > 0.001 && above && stack) {
+    const float SLOT = 240.0;
+    const float SPEED = 0.06;                       // sky-plane units per second
+    // no wind in the projection: the trail is a placed thing, not a texture,
+    // and the wind's offset would carry its start off the sky
+    vec2 uv = rd.xz / rdY * (ALT_HIGH * 1.1);
+    vec3 col = mix(vec3(1.0), vec3(1.05, 0.62, 0.55), sunsetF);
+    col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
+    // two planes on clocks half a slot apart, so at full there is always a
+    // trail in some state across the sky, and the sky is never bare between
+    for (int k = 0; k < 2; k++) {
+      float tk = u_time + float(k) * SLOT * 0.5;
+      float slot = floor(tk / SLOT) + float(k) * 977.0;
+      if (hash11(slot * 3.7) >= u_contrails) continue;
+      // the plane has been flying for a minute already when its slot opens,
+      // with that much trail behind it, so a first frame is not an empty sky
+      float age = fract(tk / SLOT) * SLOT + 60.0;
+      float th = hash11(slot * 5.3) * 6.2831853;
+      vec2 dir = vec2(cos(th), sin(th));
+      vec2 rel = uv - (vec2(hash11(slot * 7.9), hash11(slot * 9.1)) - 0.5) * 5.0;
+      float s = dot(rel, dir) + 2.5;                // along the trail, from where it began
+      float n = dot(rel, vec2(-dir.y, dir.x));      // across it
+      float head = age * SPEED;                     // where the plane is now
+      if (s > 0.0 && s < head) {
+        float since = (head - s) / SPEED;           // seconds since the plane was here
+        float w = 0.012 + since * 0.0004;           // the ice drifts apart
+        float body = exp(-n * n / (w * w)) * exp(-since / 150.0);
+        body *= 0.55 + 0.45 * vnoise(vec2(s * 6.0, slot));
+        OVER(col, body * 0.75 * horizonFade * (1.0 - gloom * 0.8));
+      }
+    }
+  }
   // Cirrostratus Cs (veil cloud) — a thin veil across the whole sky. Haloes the sun
   if (u_high.y > 0.001 && stack) {
     // the halo below is sky-side and still shows under the horizon; the veil does not
@@ -1470,19 +1642,20 @@ void main() {
     // the 22° halo (refraction through ice crystals). Added light, so it is the
     // one term in this stretch that has to leave display space — and only on
     // the ring itself, where there is something to add
-    float ring = smoothstep(0.028, 0.0, abs(sunAng - 0.384)) * u_high.y * sunVis;
+    vec3 halo = iceHalo(rd, el, sunDir, sunAng, sunVis, moonDir, moonAng, moonVis, nightF);
+    float haloAmt = halo.r + halo.g + halo.b;
 #ifdef CLOUD_SPLIT
     // Mode 0 only: it sits between layers, so the washes so far are applied
     // first and the stack starts over above it. Mode 1 cannot draw it (it has
     // no sky to add to); mode 2 lays it under the whole stack instead
-    if (ring > 0.0 && u_cloudMode < 0.5) {
+    if (haloAmt > 0.0 && u_cloudMode < 0.5) {
       disp = disp * cT + cC;
       cC = vec3(0.0);
       cT = 1.0;
-      disp = encodeSrgb(L(disp) + L(vec3(1.0, 0.95, 0.85)) * ring * 0.30);
+      disp = encodeSrgb(L(disp) + halo);
     }
 #else
-    if (ring > 0.0) disp = encodeSrgb(L(disp) + L(vec3(1.0, 0.95, 0.85)) * ring * 0.30);
+    if (haloAmt > 0.0) disp = encodeSrgb(L(disp) + halo);
 #endif
   }
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
@@ -2023,8 +2196,8 @@ void main() {
     // Composite: the stack was drawn at its own resolution in mode 1. The 22°
     // halo goes beneath all of it here rather than between the cirrostratus
     // and the layers above — the one place the split departs from one pass
-    float ring = smoothstep(0.028, 0.0, abs(sunAng - 0.384)) * u_high.y * sunVis;
-    if (ring > 0.0) disp = encodeSrgb(L(disp) + L(vec3(1.0, 0.95, 0.85)) * ring * 0.30);
+    vec3 halo = iceHalo(rd, el, sunDir, sunAng, sunVis, moonDir, moonAng, moonVis, nightF);
+    if (halo.r + halo.g + halo.b > 0.0) disp = encodeSrgb(L(disp) + halo);
     // sampled where this pixel's ray was cast — after any lens droplet bent
     // it — since mode 1 drew the stack for the undistorted rays over the same
     // 0..1 frame
@@ -2291,6 +2464,65 @@ void main() {
   // during a flash and nothing between flashes
   wide = max(wide, clamp(flash * (0.18 + 0.3 * (1.0 - h)), 0.0, 1.0) * 0.7);
 
+  // ── The bolt ──
+  // The flash lights the clouds from inside; now and then the channel itself
+  // shows beneath the base — a crooked line down to the horizon with a fork
+  // off it, there for a few frames and gone, a white-violet core in a blue
+  // glow, flickering as the return strokes follow. Drawn in ray space at a
+  // fixed azimuth, so it stands in the sky as the view swings, and after the
+  // clouds, which it hangs below. Every other slot or so; the rest are the
+  // sheet lightning the flash alone is
+  if (flash > 0.0 && ltPh < 0.10 && hash11(ltCell * 3.3) > 0.4) {
+    float azB = hash11(ltCell * 5.9) * 6.2831853;           // where it strikes
+    float top = 0.18 + hash11(ltCell * 7.1) * 0.25;         // the base it comes out of
+    float dAz = az - azB;
+    dAz -= 6.2831853 * floor(dAz / 6.2831853 + 0.5);        // the short way round
+    // the channel wanders as it comes down: three octaves along the elevation
+    float wob = (vnoise(vec2(el * 9.0, ltCell)) - 0.5) * 0.12
+              + (vnoise(vec2(el * 31.0, ltCell + 7.0)) - 0.5) * 0.04
+              + (vnoise(vec2(el * 90.0, ltCell + 13.0)) - 0.5) * 0.015;
+    float dx = (dAz - wob) * sqrt(max(1.0 - rd.y * rd.y, 0.0));   // across it, in sky radians
+    float span = smoothstep(top + 0.02, top - 0.04, el) * smoothstep(-0.01, 0.02, el);
+    float core = exp(-dx * dx / 0.000004) * span;
+    float glow = exp(-abs(dx) * 60.0) * span;
+    // a fork leaving the channel partway down, leaning off to one side
+    float forkAt = top * (0.35 + 0.4 * hash11(ltCell * 11.3));
+    float lean = (hash11(ltCell * 2.7) - 0.5) * 2.0;
+    float fdx = dx - (forkAt - el) * lean;
+    float below = step(el, forkAt);
+    float fork = (exp(-fdx * fdx / 0.000003) * 0.8 + exp(-abs(fdx) * 90.0) * 0.5)
+               * smoothstep(forkAt - 0.14, forkAt - 0.02, el) * below * span;
+    float strobe = 0.55 + 0.45 * step(0.5, fract(ltPh * 60.0 + ltCell));
+    vec3 bolt = (L(vec3(0.95, 0.90, 1.0)) * (core + fork)
+               + L(vec3(0.55, 0.60, 1.0)) * glow * 0.25) * strobe * FLASH_LUM * 1.5;
+    sky += bolt;
+    wide = max(wide, min(core + fork, 1.0) * 0.5);
+  }
+
+  // ── Rainbow ──
+  // Sunlight sent back by the raindrops: a ring 42° from the point opposite
+  // the sun, red on the outside, and a fainter second ring outside it with
+  // the colors reversed; between the two the air sends back less and the
+  // sky is a shade darker — Alexander's band. Needs the rain and the sun at
+  // once, so a downpour under a full deck shows none; a shower with the sun
+  // out behind the camera is the sky it was made for. Drawn after the
+  // clouds: the rain falls beneath them
+  if (u_rain > 0.01 && sunVis > 0.0) {
+    float ang = acos(clamp(-dot(rd, sunDir), -1.0, 1.0));
+    // a light shower is bow enough; what the gloom took from the sun's disc
+    // it takes from the bow only in part — a bow stands against dark rain
+    float amt = smoothstep(0.03, 0.25, u_rain) * sqrt(sunVis) * smoothstep(-0.02, 0.06, rd.y);
+    float t1 = (ang - 0.7086) / 0.0297;                // 40.6°..42.3°, violet to red
+    float t2 = 1.0 - (ang - 0.878) / 0.056;             // 50.3°..53.5°, red to violet
+    float bow1 = smoothstep(-0.2, 0.15, t1) * smoothstep(1.25, 0.95, t1);
+    float bow2 = smoothstep(-0.2, 0.15, t2) * smoothstep(1.25, 0.95, t2);
+    vec3 bows = spectrum(clamp(t1, 0.0, 1.0)) * bow1 + spectrum(clamp(t2, 0.0, 1.0)) * bow2 * 0.35;
+    float dark = smoothstep(0.73, 0.76, ang) * smoothstep(0.90, 0.87, ang);
+    sky *= 1.0 - dark * amt * 0.12;
+    sky += L(bows) * amt * 0.55;
+    wide = max(wide, min(bow1 + bow2, 1.0) * amt * 0.6);
+  }
+
   // ── Haze/mist (the shorter the visibility, the further out — toward the horizon — it crushes white) ──
   if (u_haze > 0.001) {
     vec3 hazeCol = mix(vec3(0.10, 0.11, 0.13), vec3(0.78, 0.80, 0.83), dayF);
@@ -2460,7 +2692,7 @@ const UNIFORM_NAMES = [
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
-  'u_sea', 'u_aurora',
+  'u_sea', 'u_aurora', 'u_contrails',
   'u_cloudMode', 'u_clouds',
 ] as const;
 
@@ -3113,6 +3345,7 @@ export class AtmosphereRenderer {
     gl.uniform4f(u.u_sky, ce.bortle, ce.milkyWay, ce.meteors, ce.radiant ? 1 : 0);
     gl.uniform2f(u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
     gl.uniform1f(u.u_aurora, ce.aurora);
+    gl.uniform1f(u.u_contrails, s.particles.contrails);
     return gl;
   }
 

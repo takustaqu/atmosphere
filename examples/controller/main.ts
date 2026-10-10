@@ -64,7 +64,7 @@ const ui = {
     radiant: readonly [number, number] | null; aurora: number;
   },
   lens: { droplets: 1 },
-  particles: { precipitation: 1 },
+  particles: { precipitation: 1, contrails: 0 },
   ground: { sea: 0, swell: 0.4 },
 };
 
@@ -419,6 +419,8 @@ syncers.push(chips(
   (id) => (id === 'on') === (ui.particles.precipitation > 0),
   (id) => { ui.particles.precipitation = id === 'on' ? 1 : 0; },
 ));
+syncers.push(slider('Contrails', 0, 1, 0.01,
+  () => ui.particles.contrails, (v) => { ui.particles.contrails = v; }, (v) => v.toFixed(2)));
 syncers.push(slider('Falling', 0, 1, 0.01,
   () => ui.particles.precipitation, (v) => { ui.particles.precipitation = v; }, (v) => v.toFixed(2)));
 

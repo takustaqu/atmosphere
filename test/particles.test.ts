@@ -5,7 +5,7 @@ import { resolveConditions } from '../src/state.js';
 
 describe('resolveParticles', () => {
   it('keeps the rain and snow on by default, which is what the renderer has always drawn', () => {
-    expect(resolveParticles(undefined)).toEqual({ precipitation: 1 });
+    expect(resolveParticles(undefined)).toEqual({ precipitation: 1, contrails: 0 });
     expect(resolveParticles(null)).toEqual(DEFAULT_PARTICLES);
     expect(resolveParticles({})).toEqual(DEFAULT_PARTICLES);
   });
@@ -58,5 +58,22 @@ describe('particles in the state', () => {
     a.jump(target);
     a.current.particles.precipitation = 0;
     expect(target.particles.precipitation).toBe(0.5);
+  });
+});
+
+describe('contrails', () => {
+  it('are off by default and take a boolean or a strength', () => {
+    expect(resolveParticles({}).contrails).toBe(0);
+    expect(resolveParticles({ contrails: true }).contrails).toBe(1);
+    expect(resolveParticles({ contrails: 0.3 }).contrails).toBe(0.3);
+    expect(resolveParticles({ contrails: 7 }).contrails).toBe(1);
+  });
+
+  it('ride the state and ease like the rest', () => {
+    const a = new StateAnimator(resolveConditions({}));
+    const target = resolveConditions({ particles: { contrails: 1 } });
+    a.step(target, 1 / 30);
+    expect(a.current.particles.contrails).toBeGreaterThan(0);
+    expect(a.current.particles.contrails).toBeLessThan(1);
   });
 });

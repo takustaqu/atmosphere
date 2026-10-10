@@ -4,6 +4,52 @@
 
 ### Added
 
+- **The moon moves, and has a phase — and a face.** With a location and a
+  date it stands where the lunar ephemeris puts it (the classic
+  low-precision series, good to about a degree), and its disc is drawn as a
+  sphere lit by the sun from where the sun actually is — so the phase, which
+  limb is bright and how the horns tilt all follow from the date, a thin
+  crescent through gibbous to full. It is up by day as well, where the lit
+  face shows against the blue and the dark face does not. Its light on the
+  clouds and the night grows with the phase and goes when it sets. Without a
+  date it is a full moon opposite the sun: rising at sunset, high at
+  midnight, gone by day — where it used to hang at a fixed 35° all night as
+  a crescent. `lunarPosition()` is exported; `light.moon` follows the real
+  position and phase.
+
+  The disc's lit side is held just over the tone curve's knee rather than
+  blown out — a moon that saturates to paper white loses its seas and reads
+  as a disc of paper, which is what it did — and the surface reflects by
+  Lommel-Seeliger, flat across a full moon and falling slowly to the
+  terminator the way a crescent's does, with the opposition surge near full.
+  The maria are where they are on the near side (Imbrium, Serenitatis,
+  Tranquillitatis, Procellarum and the rest) with noise-torn edges over a
+  grain of highland and a couple of bright ray craters; relief comes out
+  toward the terminator. The bloom is a fraction of what it was.
+- **Ice halos.** Where there is a cirrostratus, the sun gets the 22° halo it
+  always had, now with a sharp red inner edge and a long fade outward, the
+  parhelia — sun dogs — level with a low sun, red toward it and trailing a
+  white tail away, and a pillar standing on a sun at the horizon. The moon
+  gets its halo too. All of it is weighted by the veil's own density along
+  the ray, so the ring is patchy and broken where the veil thins rather than
+  a drawn circle.
+- **Rainbows.** Rain with the sun out: a ring 42° from the point opposite
+  the sun, red outside, a fainter second ring with the colors reversed, and
+  Alexander's dark band between them. Drawn after the clouds, where the rain
+  falls. A downpour under a full deck shows none — the sun has to be out.
+- **The bolt.** Every other flash or so, the channel itself shows beneath
+  the cloud base: a crooked line down to the horizon with a fork off it,
+  flickering through the return strokes for a few frames, then gone. Drawn
+  in ray space, so it stands in the sky as the view swings.
+- **Fireballs.** One meteor in sixteen is far brighter and wider, burns
+  longer, and leaves a train that lingers.
+- **Zodiacal light.** At a dark site, once twilight has gone, a faint cone
+  leans up from where the sun went down along the ecliptic, and before dawn
+  from where it will rise.
+- **`particles.contrails`** — jets drawing trails across the high sky: a
+  thin sharp line lengthening behind the plane that spreads into a soft band
+  and dissolves over the minutes after, uneven where the air was drier. A
+  slider in the controller.
 - **`celestial.aurora`** — curtains of light standing toward the north,
   folding along wandering lines and shimmering in vertical rays, green at
   the foot with red tops and a purple fringe at high activity; they come

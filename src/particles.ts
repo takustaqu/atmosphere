@@ -17,29 +17,43 @@ export interface Particles {
    * on the sky itself alone — heavy snow still whites out the view.
    */
   precipitation: number;
+  /**
+   * 0..1 how often a jet draws a contrail across the high sky.
+   *
+   * 0 (the default) is none. At 1 a plane crosses every few minutes: a thin
+   * sharp line lengthening behind it that spreads into a soft band and
+   * dissolves over the minutes after. A clear-sky detail, drawn with the
+   * high clouds; under a deck it is hidden like they are.
+   */
+  contrails: number;
 }
 
 /**
  * A particle specification.
  * - `{ precipitation: false }` … no falling rain or snow drawn, whatever the weather
  * - `{ precipitation: 0.4 }`   … fainter, sparser-looking rain and snow
- * - `null` / omitted           … the defaults (drawn)
+ * - `{ contrails: 1 }`         … a jet every few minutes
+ * - `null` / omitted           … the defaults (rain and snow drawn, no contrails)
  */
 export type ParticlesInput =
-  | { precipitation?: boolean | number }
+  | { precipitation?: boolean | number; contrails?: boolean | number }
   | null
   | undefined;
 
-export const DEFAULT_PARTICLES: Particles = { precipitation: 1 };
+export const DEFAULT_PARTICLES: Particles = { precipitation: 1, contrails: 0 };
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 /** Resolve a particle specification */
 export function resolveParticles(input: ParticlesInput): Particles {
   const p = input?.precipitation;
+  const c = input?.contrails;
   return {
     precipitation: p == null
       ? DEFAULT_PARTICLES.precipitation
       : typeof p === 'boolean' ? (p ? 1 : 0) : clamp01(p),
+    contrails: c == null
+      ? DEFAULT_PARTICLES.contrails
+      : typeof c === 'boolean' ? (c ? 1 : 0) : clamp01(c),
   };
 }

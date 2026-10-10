@@ -156,6 +156,7 @@ export class StateAnimator {
     c.lens.droplets += (target.lens.droplets - c.lens.droplets) * k;
     // and the rain or snow thins out rather than stopping dead
     c.particles.precipitation += (target.particles.precipitation - c.particles.precipitation) * k;
+    c.particles.contrails += (target.particles.contrails - c.particles.contrails) * k;
     // the sea rises or drains over the same seconds, and the swell settles
     c.ground.sea += (target.ground.sea - c.ground.sea) * k;
     c.ground.swell += (target.ground.swell - c.ground.swell) * k;

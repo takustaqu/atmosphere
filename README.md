@@ -29,7 +29,8 @@ be an easy way to get a sky that keeps changing procedurally.
 - **Time of day** — the sky's gradient, the sun (an outline-less blown-out glare),
   sunset/magic-hour mauve, city lights at night
 - **The night sky** — light pollution on the Bortle scale, a Milky Way made of
-  resolved stars with its bulge and Great Rift, meteor showers at a ZHR
+  resolved stars with its bulge and Great Rift, meteor showers at a ZHR with the
+  odd fireball, zodiacal light after dusk at a dark site
 - **The moon** — where the ephemeris puts it, lit by the sun from where the sun is, so
   the phase and the tilt of the horns follow from the date; earthshine and maria;
   the disc occludes the stars behind it; up by day too
@@ -45,7 +46,9 @@ be an easy way to get a sky that keeps changing procedurally.
 - **Cloud shape evolution** — the domain-warp field itself moves, so clouds billow and collapse in place
 - **Precipitation** — rain (leaning with the wind), snow (tumbling on the wind), droplets on the lens
   (both switchable — see [Falling rain and snow](#falling-rain-and-snow) and [Lens](#lens))
-- **Severe weather** — lightning, cloud turbulence from high wind
+- **Severe weather** — lightning that shows its bolt now and then, cloud turbulence from high wind
+- **Optics** — the 22° halo with sun dogs and a sun pillar through cirrostratus, a moon halo,
+  and a rainbow with its secondary and Alexander's band when the sun is out in the rain
 - **The sea** — optionally, open water below the horizon that mirrors the sky, with a swell
   and the sun's path across it (see [Ground](#ground--the-sea))
 - **Visibility** — haze/mist/fog. Thin haze only crushes the horizon; thick haze covers the whole sky
@@ -401,6 +404,7 @@ sky.set({ particles: { precipitation: true } });    // back to the default
 | field | what it does |
 |:---|:---|
 | `precipitation` | 0..1 (or a boolean) ceiling on the falling rain and snow. They still follow the weather, so a dry sky shows none at any value. Defaults to 1 |
+| `contrails` | 0..1 (or a boolean) how often a jet draws a trail across the high sky: a thin sharp line lengthening behind the plane, spreading into a soft band and dissolving over the minutes after. Drawn with the high clouds, so a deck hides it. Defaults to 0 |
 
 It eases like everything else, so the rain thins out rather than stopping dead.
 At 0 the particle passes are skipped, not drawn invisibly.
