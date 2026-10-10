@@ -567,31 +567,44 @@ vec3 meteorStreak(vec3 rd, float t, float zhr, float hasRadiant, vec2 radiant) {
 // Linear light; the caller gates it on night and cloud and scales it.
 vec3 aurora(vec3 rd, float amt) {
   if (amt < 0.001 || rd.y < 0.02) return vec3(0.0);
-  const int STEPS = 6;
+  const int STEPS = 12;
   const float A_LO = 1.0;     // the lower edge, ~100 km up: the bright green rim
-  const float A_HI = 2.6;     // the top, where the red has faded
+  const float A_HI = 2.8;     // the top, where the red has faded
   float stand = mix(3.2, 0.3, amt);
   float t = u_time;
+  // the march is coarse, and a coarse march through a thin sheet draws the
+  // sheet once per step, as a stack of bands. Starting each pixel's march at
+  // its own fraction of a step turns the stack into grain, which the eye
+  // reads as the curtain's own shimmer; the sheet also thickens with height
+  // (the top of a curtain is a diffuse glow, not a rib), so the upper steps
+  // overlap into one. The fraction is interleaved gradient noise rather than
+  // a hash — evenly spread over any few neighbouring pixels, so the grain
+  // stays fine instead of clumping — stepped along the golden ratio each
+  // frame so it never settles into a pattern
+  float jitter = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y)
+                       + floor(t * 30.0) * 0.618034);
   vec3 sum = vec3(0.0);
   for (int i = 0; i < STEPS; i++) {
-    float a = A_LO + (float(i) + 0.5) / float(STEPS) * (A_HI - A_LO);
+    float k = (float(i) + jitter) / float(STEPS);
+    float a = mix(A_LO, A_HI, k);
     vec2 p = rd.xz / rd.y * a;          // where the ray crosses this altitude
     // the main curtain's line across the sky: a slow, drifting wander
     float wander = (fbm2(vec2(p.x * 0.22 + t * 0.012, 3.1)) - 0.5) * 2.2
                  + (fbm2(vec2(p.x * 0.9 - t * 0.02, 7.7)) - 0.5) * 0.5;
     float d = p.y - (stand + wander);
-    // the sheet's thickness varies along its length: folds bunch and spread
-    float w = 0.10 + 0.16 * fbm2(vec2(p.x * 0.5 + 11.0, t * 0.01));
+    // the sheet's thickness varies along its length — folds bunch and
+    // spread — and grows with height
+    float w = (0.10 + 0.16 * fbm2(vec2(p.x * 0.5 + 11.0, t * 0.01))) * (1.0 + 2.2 * k);
     float band = exp(-d * d / (w * w));
     // a second, fainter curtain further north
     float d2 = p.y - (stand + 1.4 + (fbm2(vec2(p.x * 0.3 - t * 0.009, 19.0)) - 0.5) * 2.0);
-    band += 0.5 * exp(-d2 * d2 / 0.06);
-    // rays: vertical striations along the curtain, shimmering
+    float w2 = 0.25 * (1.0 + 2.2 * k);
+    band += 0.5 * exp(-d2 * d2 / (w2 * w2));
+    // rays: vertical striations along the curtain, shimmering, softer up top
     float ray = vnoise(vec2(p.x * 7.0 + t * 0.35, 1.3)) * 0.6
               + vnoise(vec2(p.x * 19.0 - t * 0.6, 5.1)) * 0.4;
-    ray = ray * ray * 1.6 + 0.15;
+    ray = mix(ray * ray * 1.6 + 0.15, 0.75, k * 0.7);
     // bright at the lower edge, thinning upward
-    float k = (a - A_LO) / (A_HI - A_LO);
     float prof = exp(-k * 2.2);
     // green at the foot, red up top; at high activity a purple fringe below the green
     vec3 col = mix(vec3(0.20, 1.00, 0.45), vec3(0.95, 0.25, 0.40), smoothstep(0.25, 1.0, k));
