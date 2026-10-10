@@ -43,6 +43,8 @@ be an easy way to get a sky that keeps changing procedurally.
 - **Precipitation** — rain (leaning with the wind), snow (tumbling on the wind), droplets on the lens
   (both switchable — see [Falling rain and snow](#falling-rain-and-snow) and [Lens](#lens))
 - **Severe weather** — lightning, cloud turbulence from high wind
+- **The sea** — optionally, open water below the horizon that mirrors the sky, with a swell
+  and the sun's path across it (see [Ground](#ground--the-sea))
 - **Visibility** — haze/mist/fog. Thin haze only crushes the horizon; thick haze covers the whole sky
 - **Lens flare** — ghosts along the optical axis, chromatic aberration, anamorphic-style streaks
 - **Color filters** — sepia, monochrome, cyanotype, and more
@@ -318,14 +320,20 @@ to carry one. Measured on a clear noon sky facing away from the sun at
 | overcast (all cloud) | **99.8%** |
 
 Clouds pop because the sky behind them dropped, not because they got brighter.
-Rotating `angle` sweeps smoothly between those extremes with a period of 180°, and
-because the polarization direction rotates across the frame, a wide shot picks up
-an uneven band of darkening — a real artifact of the real filter, reproduced.
+
+The ring is aimed for you, the way a photographer aims it: turned so that the
+middle of the frame is darkened most, whatever the framing and wherever the sun
+is. `angle` is a turn from there, sweeping smoothly between those extremes with
+a period of 180°. The aim is only exact at the middle — the polarization
+direction rotates across the frame, so a wide shot picks up an uneven band of
+darkening, a real artifact of the real filter, reproduced. Where the sky is
+barely polarized — toward the sun and straight away from it — no turn of the
+ring does much, on this one or a real one.
 
 | field | what it does |
 |:---|:---|
 | `strength` | 0..1 how much of the polarized component is rejected |
-| `angle` | rotation in radians. ~0 darkens, ~π/2 brightens |
+| `angle` | rotation in radians, from the aimed orientation. 0 darkens, π/2 brightens |
 | `saturation` | 0..1 extra saturation on what survives (the white veil goes with the polarized part) |
 | `stopLoss` | 0..1 how much of the real ~1.3-stop loss to apply. Defaults to 0 — emulating the loss without the exposure compensation just makes the picture dark |
 
@@ -375,6 +383,46 @@ sky.set({ particles: { precipitation: true } });    // back to the default
 
 It eases like everything else, so the rain thins out rather than stopping dead.
 At 0 the particle passes are skipped, not drawn invisibly.
+
+## Ground — the sea
+
+What lies below the horizon. By default it is a plain plate of ground, out of
+frame in the default framing and there for the skybox's lower hemisphere and
+for anyone who tilts the camera down. Ask for a sea and that lower half is open
+water to the horizon.
+
+```ts
+sky.set({ ground: 'sea' });                  // open water, a light swell on it
+sky.set({ ground: { swell: 0.9 } });         // the sea, heaving more
+sky.set({ ground: 'land' });                 // back to the default
+```
+
+| field | what it does |
+|:---|:---|
+| `sea` | 0..1 how much of the ground is water. 0 is the plain ground, 1 a sea to the horizon; between the two it cross-fades. An object without it means 1 |
+| `swell` | 0..1 how much the water heaves. 0 is glass, 1 a long, heavy swell. The chop on top follows the wind on its own. Defaults to 0.4 |
+
+The sea is a mirror laid flat, and it is drawn as one: each ray that meets
+the water is reflected and asked what the sky is in that direction, so the
+sea takes the color of its hour exactly — blue at noon, rose under the Belt of
+Venus, grey under an overcast, leaden in a storm. The sun and the moon lay a
+path across it, their image scattered along the wind by the slopes of the
+waves. Fresnel decides how much of the mirror is seen: nearly all of it at a
+grazing look, next to none straight down, where the water's own dark
+green-blue shows instead. A [polarizer](#circular-polarizer) cuts the glare
+off it, fully at Brewster's angle, which is the other half of why one is
+carried.
+
+Only the sky's own color is mirrored, plus the sun, the moon and the city
+glow — not the clouds. At the grazing angles where the mirror is strong the
+sky it mirrors is the near-horizon sky, where the clouds have already faded;
+where the clouds would show, the mirror has gone weak. The horizon is a hard
+line, unlike the ground's. Above it the sea costs nothing: the gate is on the
+ray.
+
+Changing it eases like everything else, so the water rises over the ground
+rather than appearing. With a [light probe](#light-for-the-foreground) on,
+`environment.ground` becomes the sea's light.
 
 ## Light for the foreground
 
@@ -592,6 +640,7 @@ sky.reducedMotion;   // true while the sky is being held still
 | `resolveTone(t)` / `resolvePolarizer(p)` | resolving a tone curve / polarizer specification |
 | `resolveLens(l)` | resolving a lens specification |
 | `resolveParticles(p)` | resolving a falling-particle specification |
+| `resolveGround(g)` | resolving a ground specification (the sea) |
 | `celestialLights(s, cam, aspect)` | the sun and moon as directional lights, without a probe |
 | `ResolutionGovernor` | the adaptive resolution's control loop, for a custom render loop (feed it `renderer.takeGpuTimes()` with `timing: true`) |
 | `sampleLightGrid(g, x, y)` / `sampleEnvironment(env, n)` | reading a light measurement at a screen point / for a surface normal |

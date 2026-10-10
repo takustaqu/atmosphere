@@ -99,6 +99,7 @@ uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
 uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the lens
 uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky (environment probes)
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
+uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
 #ifdef CLOUD_SPLIT
 uniform float u_cloudMode; // 0 = one pass, 1 = the cloud stack alone, 2 = composite it from u_clouds
 uniform sampler2D u_clouds; // the cloud stack drawn by mode 1: rgb = what it adds, a = what it lets through
@@ -219,12 +220,14 @@ float skyPolarization(vec3 rd, vec3 sunDir) {
  * passes unchanged (Malus's law with the filter's flat 50% loss factored out —
  * u_pol.w reintroduces the real loss if asked for).
  *
- * Angle 0 is the crossed orientation, the one that kills the polarized component
- * and darkens the sky. Rotating by 90 degrees passes it instead and the same band
- * brightens, which is exactly what happens when you turn the ring on a real one.
+ * aim is where the ring is turned to: the e-vector's angle at the middle of
+ * the frame, so that u_pol.y = 0 is the crossed orientation there — the one that
+ * kills the polarized component and darkens the sky. Rotating by 90 degrees
+ * passes it instead and the same band brightens, which is exactly what happens
+ * when you turn the ring on a real one.
  */
-float polarizerTransmission(float dop, float ePhi) {
-  float d = sin(ePhi - u_pol.y);
+float polarizerTransmission(float dop, float ePhi, float aim) {
+  float d = sin(ePhi - aim - u_pol.y);
   float t = (1.0 - dop) + 2.0 * dop * d * d;
   t = mix(1.0, t, u_pol.x);
   return t * mix(1.0, 0.40, u_pol.w);   // 0.40 ~ the real 1.3-stop bite
@@ -769,6 +772,91 @@ vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, flo
   return c;
 }
 
+// ── The sky's own color, by direction ──
+// The gradient, the magic hour and the anti-twilight: what the sky is before
+// the polarizer, the overcast and the gloom act on it, and before any light is
+// added to it. A function of direction rather than a stretch of main() so the
+// sea can ask what it mirrors. Display-encoded (see the note at disp in
+// main); wide collects the gamut claim the way main's does.
+vec3 skyBase(vec3 rd, float el, float h, vec3 sunDir, float sunEl,
+             float dayF, float sunsetF, inout float wide) {
+  // ── Base sky gradient ──
+  // These four and the two ramps below stay display-encoded: the gradient was
+  // hand-tuned as a straight line in that space, and a straight line in linear
+  // light is a different curve (measurably ~+28/255 brighter at the midpoint).
+  // Interpolate where it was authored, then decode once into the scene.
+  vec3 dayZen  = vec3(0.10, 0.34, 0.74);      // deep summer blue
+  vec3 dayHor  = vec3(0.66, 0.83, 0.96);
+  vec3 nightZen = vec3(0.010, 0.018, 0.048);
+  vec3 nightHor = vec3(0.045, 0.065, 0.115);
+  vec3 zen = mix(nightZen, dayZen, dayF);
+  vec3 hor = mix(nightHor, dayHor, dayF);
+  // the approach to zenith color should look like scattering: saturate it
+  // exponentially against elevation
+  // (the top of the screen isn't the zenith, so holding this in screen
+  // coordinates would make the blue shallower depending on framing)
+  vec3 disp = mix(hor, zen, 1.0 - exp(-max(el, 0.0) * 2.6));
+
+  // magic hour: the horizon in the sun's direction turns amber, the sky above turns mauve
+  // (since this looks at a compass direction, facing away shows an unlit sky)
+  float towardSun = clamp(dot(normalize(vec3(rd.x, 0.0, rd.z) + 1e-5),
+                              normalize(vec3(sunDir.x, 0.0, sunDir.z) + 1e-5)), -1.0, 1.0);
+  float sunSide = 0.35 + 0.65 * smoothstep(-0.4, 1.0, towardSun);
+  vec3 warm = vec3(1.0, 0.47, 0.22);
+  vec3 mauve = vec3(0.45, 0.28, 0.45);
+  disp = mix(disp, warm, sunsetF * smoothstep(0.55, 0.0, h) * 0.55 * sunSide);
+  disp = mix(disp, mauve, sunsetF * smoothstep(0.10, 0.50, h) * 0.35);
+  wide = max(wide, sunsetF * smoothstep(0.55, 0.0, h) * sunSide * 0.5);
+
+  // ── Anti-twilight: the Earth's shadow and the Belt of Venus ──
+  // Opposite a sun just under the horizon, the Earth's own shadow climbs the
+  // sky as a band of blue-grey, and above it the air still in sunlight sends
+  // back reddened light as a band of rose — the anti-twilight arch. The
+  // shadow's edge stands about as high as the sun is deep, arching down away
+  // from the antisolar point; the belt rides a few degrees above it. In by
+  // sundown, gone by civil dusk, and the same again before sunrise. Without
+  // it the far horizon at magic hour was only the amber's leftover, a beige
+  // where the real sky goes cool.
+  float twi = smoothstep(0.04, -0.01, sunEl) * smoothstep(-0.14, -0.06, sunEl);
+  float away = smoothstep(0.45, -0.55, towardSun);
+  float amt = twi * away;
+  if (amt > 0.001) {
+    float edge = max(-sunEl, 0.0) * max(-towardSun, 0.0);
+    // the shadow: cooler and darker than the lit air above it, and it
+    // takes back the amber the far horizon was given above
+    float shadow = smoothstep(edge + 0.035, edge - 0.025, rd.y);
+    disp *= mix(vec3(1.0), vec3(0.72, 0.78, 0.94), shadow * amt * 0.8);
+    // the belt: a soft band of rose, brightest right above the shadow's
+    // edge and fading away upward into the blue — a sharp foot, a long head
+    float c = edge + 0.04;
+    float d = (rd.y - c) / (rd.y > c ? 0.085 : 0.035);
+    float belt = exp(-d * d) * smoothstep(-0.02, 0.01, rd.y);
+    // dimmer the deeper the sun: the sky it sits in is dimming too
+    vec3 rose = mix(vec3(0.60, 0.34, 0.42), vec3(0.98, 0.62, 0.64), smoothstep(-0.08, 0.0, sunEl));
+    disp = mix(disp, rose, belt * amt * 0.36);
+    wide = max(wide, belt * amt * 0.36 * 0.5);
+  }
+  return disp;
+}
+
+// what the weather does to the sky's color, wherever it is looked at
+vec3 skyWeather(vec3 disp, float dayF, float gloom) {
+  // overcast: the sky's blue drains toward a bright grey (including the sky peeking through gaps)
+  float overcastSky = smoothstep(0.5, 0.95, u_cover);
+  disp = mix(disp, mix(vec3(0.050, 0.055, 0.070), vec3(0.70, 0.73, 0.76), dayF), overcastSky * 0.85);
+  // severe weather: darken the whole sky to a leaden grey
+  disp = mix(disp, vec3(0.16, 0.18, 0.21) * (0.25 + 0.75 * dayF), gloom * 0.75);
+  return disp;
+}
+
+// ── Waves ──
+// The slope of one travelling sine across the water, height a·sin(k·p − ωt):
+// its gradient, a·k·cos(k·p − ωt). Slopes are all the sea needs — they tilt
+// the mirror — so the height itself is never summed
+vec2 waveSlope(vec2 p, vec2 k, float a, float w, float t) {
+  return a * k * cos(dot(k, p) - w * t);
+}
+
 // One layer of the cloud stack: a display-space wash, disp = mix(disp, col, a).
 //
 // The split variant (CLOUD_SPLIT, compiled only when cloudScale is asked for)
@@ -839,26 +927,6 @@ void main() {
   float gloom = clamp(max(u_rain, max(u_snow * 0.5, u_wind * 0.7)), 0.0, 1.0);
   float churn = clamp(u_wind * 0.9 + u_rain * 0.3, 0.0, 1.0);
 
-  // ── Base sky gradient ──
-  // These four and the two ramps below stay display-encoded: the gradient was
-  // hand-tuned as a straight line in that space, and a straight line in linear
-  // light is a different curve (measurably ~+28/255 brighter at the midpoint).
-  // Interpolate where it was authored, then decode once into the scene.
-  vec3 dayZen  = vec3(0.10, 0.34, 0.74);      // deep summer blue
-  vec3 dayHor  = vec3(0.66, 0.83, 0.96);
-  vec3 nightZen = vec3(0.010, 0.018, 0.048);
-  vec3 nightHor = vec3(0.045, 0.065, 0.115);
-  vec3 zen = mix(nightZen, dayZen, dayF);
-  vec3 hor = mix(nightHor, dayHor, dayF);
-  // the approach to zenith color should look like scattering: saturate it
-  // exponentially against elevation
-  // (the top of the screen isn't the zenith, so holding this in screen
-  // coordinates would make the blue shallower depending on framing)
-  //
-  // Held display-encoded as disp rather than decoded straight away: every
-  // overlay() below would only re-encode it. See the note on disp at the clouds.
-  vec3 disp = mix(hor, zen, 1.0 - exp(-max(el, 0.0) * 2.6));
-
   // How much this pixel should reach past sRGB, accumulated by the sections
   // below (magic hour, stars, moon, sun, lightning) and spent at the very end.
   // Only saturated light sources claim it — the clouds deliberately don't, since
@@ -872,47 +940,10 @@ void main() {
   // the sun.
   float wide = 0.0;
 
-  // magic hour: the horizon in the sun's direction turns amber, the sky above turns mauve
-  // (since this looks at a compass direction, facing away shows an unlit sky)
-  float towardSun = clamp(dot(normalize(vec3(rd.x, 0.0, rd.z) + 1e-5),
-                              normalize(vec3(sunDir.x, 0.0, sunDir.z) + 1e-5)), -1.0, 1.0);
-  float sunSide = 0.35 + 0.65 * smoothstep(-0.4, 1.0, towardSun);
-  vec3 warm = vec3(1.0, 0.47, 0.22);
-  vec3 mauve = vec3(0.45, 0.28, 0.45);
-  disp = mix(disp, warm, sunsetF * smoothstep(0.55, 0.0, h) * 0.55 * sunSide);
-  disp = mix(disp, mauve, sunsetF * smoothstep(0.10, 0.50, h) * 0.35);
-  wide = max(wide, sunsetF * smoothstep(0.55, 0.0, h) * sunSide * 0.5);
-
-  // ── Anti-twilight: the Earth's shadow and the Belt of Venus ──
-  // Opposite a sun just under the horizon, the Earth's own shadow climbs the
-  // sky as a band of blue-grey, and above it the air still in sunlight sends
-  // back reddened light as a band of rose — the anti-twilight arch. The
-  // shadow's edge stands about as high as the sun is deep, arching down away
-  // from the antisolar point; the belt rides a few degrees above it. In by
-  // sundown, gone by civil dusk, and the same again before sunrise. Without
-  // it the far horizon at magic hour was only the amber's leftover, a beige
-  // where the real sky goes cool.
-  {
-    float twi = smoothstep(0.04, -0.01, sunEl) * smoothstep(-0.14, -0.06, sunEl);
-    float away = smoothstep(0.45, -0.55, towardSun);
-    float amt = twi * away;
-    if (amt > 0.001) {
-      float edge = max(-sunEl, 0.0) * max(-towardSun, 0.0);
-      // the shadow: cooler and darker than the lit air above it, and it
-      // takes back the amber the far horizon was given above
-      float shadow = smoothstep(edge + 0.035, edge - 0.025, rd.y);
-      disp *= mix(vec3(1.0), vec3(0.72, 0.78, 0.94), shadow * amt * 0.8);
-      // the belt: a soft band of rose, brightest right above the shadow's
-      // edge and fading away upward into the blue — a sharp foot, a long head
-      float c = edge + 0.04;
-      float d = (rd.y - c) / (rd.y > c ? 0.085 : 0.035);
-      float belt = exp(-d * d) * smoothstep(-0.02, 0.01, rd.y);
-      // dimmer the deeper the sun: the sky it sits in is dimming too
-      vec3 rose = mix(vec3(0.60, 0.34, 0.42), vec3(0.98, 0.62, 0.64), smoothstep(-0.08, 0.0, sunEl));
-      disp = mix(disp, rose, belt * amt * 0.36);
-      wide = max(wide, belt * amt * 0.36 * 0.5);
-    }
-  }
+  // ── The sky's color in this direction: gradient, magic hour, anti-twilight ──
+  // Held display-encoded as disp rather than decoded straight away: every
+  // overlay() below would only re-encode it. See the note on disp at the clouds.
+  vec3 disp = skyBase(rd, el, h, sunDir, sunEl, dayF, sunsetF, wide);
 
   // ── Circular polarizer ──
   // Applied here on purpose: this is the scattered skylight, and it is the only
@@ -921,6 +952,10 @@ void main() {
   // direct or depolarized light and passes through untouched. That ordering is
   // what makes the clouds "pop": the sky behind them drops and they do not.
   float dop = skyPolarization(rd, sunDir);
+  // Where the ring is turned to, and how much of this pixel's sky it took.
+  // Both are read again below: the aim by the sea, the cut by the haze
+  float polAim = 0.0;
+  float polCut = 0.0;
   if (u_pol.x > 0.001) {
     vec3 sky = L(disp);
     // The e-vector is perpendicular to the scattering plane, so it already lies
@@ -929,28 +964,43 @@ void main() {
     vec3 fwd = dirFromAngles(u_cam.y, u_cam.x);
     vec3 camRight = normalize(cross(vec3(0.0, 1.0, 0.0), fwd) + vec3(1e-6, 0.0, 0.0));
     vec3 camUp = cross(fwd, camRight);
+    // The ring is aimed, the way a photographer aims it: turned so that the
+    // middle of the frame is darkened most, and the given angle is a turn
+    // from there. Held fixed in the frame instead, the filter sat at 45° to
+    // the sky's polarization in whole ranges of framings — the sun mid-high
+    // and off to one side is the common case — where a filter at 45° passes
+    // exactly as much as none, and the "strong" preset did nothing visible.
+    // (The e-vector's angle turns across the frame, so the aim is only right
+    // at the middle; that falloff toward the edges is the real filter's.)
+    // Looking straight at the sun or away from it the aim is undefined, and
+    // so is the effect, so any aim will do: horizontal
+    vec3 e0 = cross(fwd, sunDir);
+    float e0len = length(e0);
+    e0 = e0len > 1e-3 ? e0 / e0len : camRight;
+    polAim = atan(dot(e0, camUp), dot(e0, camRight));
     vec3 e = normalize(cross(rd, sunDir) + vec3(1e-6));
     float ePhi = atan(dot(e, camUp), dot(e, camRight));
 
-    sky *= polarizerTransmission(dop, ePhi);
+    float tr = polarizerTransmission(dop, ePhi, polAim);
+    // the rejection alone, without the flat stop loss — negative where the
+    // ring is turned to pass the polarized light and the band brightens
+    polCut = 1.0 - tr / mix(1.0, 0.40, u_pol.w);
+    sky *= tr;
 
     // the veil a polarizer removes is multiply-scattered white light, so what
     // survives reads more saturated than the darkening alone would explain.
     // dot() against the Rec.709 coefficients is a real luminance here — in the
-    // old gamma-encoded pipeline it never was
+    // old gamma-encoded pipeline it never was. Keyed to what was actually
+    // rejected: a ring turned to brighten the band takes no veil away
     if (u_pol.z > 0.001) {
       float lum = dot(sky, vec3(0.2126, 0.7152, 0.0722));
-      sky = max(mix(vec3(lum), sky, 1.0 + u_pol.z * dop * u_pol.x), 0.0);
+      sky = max(mix(vec3(lum), sky, 1.0 + u_pol.z * max(polCut, 0.0)), 0.0);
     }
     disp = encodeSrgb(sky);
   }
 
-  // overcast: the sky's blue drains toward a bright grey (including the sky peeking through gaps)
-  float overcastSky = smoothstep(0.5, 0.95, u_cover);
-  disp = mix(disp, mix(vec3(0.050, 0.055, 0.070), vec3(0.70, 0.73, 0.76), dayF), overcastSky * 0.85);
-
-  // severe weather: darken the whole sky to a leaden grey
-  disp = mix(disp, vec3(0.16, 0.18, 0.21) * (0.25 + 0.75 * dayF), gloom * 0.75);
+  // overcast and severe weather
+  disp = skyWeather(disp, dayF, gloom);
 
   // into linear light for the part of the sky that is added light
   vec3 sky = L(disp);
@@ -1895,12 +1945,130 @@ void main() {
   disp = disp * cT + cC;
 #endif
 
-  // ── Below the horizon (out of frame with the default framing; used when looking down and for the skybox's lower hemisphere) ──
+  // ── Below the horizon ──
+  // Out of frame with the default framing; there when looking down and for the
+  // skybox's lower hemisphere. A plate of ground, or — u_sea — open water.
   {
     vec3 ground = mix(vec3(0.020, 0.022, 0.028), vec3(0.17, 0.165, 0.150), dayF);
     ground = mix(ground, ground * 0.6, gloom * 0.5);
     ground += vec3(0.06, 0.03, 0.015) * sunsetF * 0.5;
-    disp = mix(disp, ground, smoothstep(0.0, -0.05, rd.y));
+    disp = mix(disp, ground, smoothstep(0.0, -0.05, rd.y) * (1.0 - u_sea.x));
+  }
+
+  // ── Sea ──
+  // Water is a mirror laid flat. What reaches the eye off it is mostly the
+  // sky, reflected — nearly all of it at a grazing look, next to none looking
+  // straight down (Fresnel), where the water's own dark green-blue shows
+  // instead. So the sea takes the color of its hour exactly, and the sun and
+  // the moon lay a path across it: their reflection, scattered along the wind
+  // by the slopes of the waves. The horizon is a hard line, unlike the
+  // ground's — a sea meets the sky at an edge.
+  //
+  // Only the sky's own color is mirrored (skyBase, skyWeather) plus the sun,
+  // the moon and the city glow — not the clouds. At the grazing angles where
+  // the mirror is strong the sky it mirrors is the near-horizon sky, where
+  // the clouds have already faded; where the clouds would show, the mirror
+  // has gone weak. The gate is on the ray alone, so above the horizon this
+  // costs nothing.
+  if (u_sea.x > 0.001 && rd.y < 0.0) {
+    // where the ray meets the water, with the eye one unit above it. The
+    // intersection runs off to infinity at the horizon, so each wave's slope
+    // is faded out before its length on screen falls under a pixel
+    float dist = 1.0 / max(-rd.y, 1e-3);
+    vec2 wp = rd.xz * dist;
+    // the wind's heading on the water, the one the clouds take
+    vec2 wdir = normalize(vec2(1.0, 0.15));
+    vec2 wperp = vec2(-wdir.y, wdir.x);
+    // ── slopes ──
+    // Every temporal frequency below is a whole number of cycles per wrap of
+    // u_time (2π·n / 4096), so the sea does not jump when the clock wraps —
+    // and each is deep-water dispersion's for its length, with the eye 1.6 m
+    // up, so long waves roll and short ones flicker in proportion
+    float t = u_time;
+    vec2 slope = vec2(0.0);
+    // swell: three long waves near the wind's heading, at different lengths
+    // so they beat against each other instead of marching in step
+    float sw = u_sea.y * (1.0 - smoothstep(200.0, 600.0, dist));
+    if (sw > 0.001) {
+      slope += waveSlope(wp, (wdir) * 0.157, 0.60 * sw, 0.9802, t);
+      slope += waveSlope(wp, (wdir * 0.94 + wperp * 0.34) * 0.233, 0.30 * sw, 1.1996, t);
+      slope += waveSlope(wp, (wdir * 0.88 - wperp * 0.48) * 0.105, 0.50 * sw, 0.8008, t);
+    }
+    // chop: short waves the wind raises, spread wide across its heading. These
+    // are what break the sun's image into a path: their slopes reach several
+    // degrees even in a light air, where the swell's are long and shallow
+    float ch = (0.35 + 0.65 * u_wind) * (1.0 - smoothstep(20.0, 60.0, dist));
+    if (ch > 0.001) {
+      slope += waveSlope(wp, (wdir * 0.62 + wperp * 0.78) * 2.09, 0.030 * ch, 3.580, t);
+      slope += waveSlope(wp, (wdir * 0.71 - wperp * 0.71) * 3.14, 0.018 * ch, 4.390, t);
+      slope += waveSlope(wp, (wdir * 0.97 + wperp * 0.26) * 1.40, 0.045 * ch, 2.930, t);
+    }
+    vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
+    vec3 r = reflect(rd, n);
+    // a slope steep enough to mirror the water itself is a slope the sea
+    // never shows at these amplitudes; keep the mirror pointed at the sky
+    r.y = max(r.y, 0.01);
+    float rel = asin(clamp(r.y, -1.0, 1.0));
+    float rh = clamp(rel / (PI * 0.5), 0.0, 1.0);
+
+    // ── what the mirror shows ──
+    float wideSea = 0.0;
+    vec3 mir = L(skyWeather(skyBase(r, rel, rh, sunDir, sunEl, dayF, sunsetF, wideSea), dayF, gloom));
+    // the sun's path: its disc and halo, as the sky draws them, in the
+    // mirrored direction — the waves' slopes are what spread it into a path.
+    // The disc is drawn a little wider than in the sky: the water's finest
+    // ripples, under the pixels, scatter it that much
+    if (sunVis > 0.0) {
+      float ang = acos(clamp(dot(r, sunDir), -1.0, 1.0));
+      vec3 sunCol = L(mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF));
+      float core = clamp(exp(-ang * ang * 400.0) * 2.2, 0.0, 1.0);
+      mir = mix(mir, vec3(SUN_LUM), core * sunVis);
+      mir += sunCol * exp(-ang * 4.0) * 0.22 * sunVis * HALO_LUM;
+    }
+    // the moon's, at night
+    if (moonVis > 0.0) {
+      vec3 moonDir = dirFromAngles(0.62, u_sun.y + PI);
+      float ang = acos(clamp(dot(r, moonDir), -1.0, 1.0));
+      mir += L(vec3(1.0, 0.96, 0.88)) * (smoothstep(0.075, 0.035, ang) * 0.55 + exp(-ang * 18.0) * 0.12)
+           * moonVis * MOON_LUM;
+    }
+    // the city's glow along the horizon, as the sky carries it
+    mir += L(vec3(0.26, 0.16, 0.09)) * exp(-rh * 8.0) * nightF
+         * (0.4 * (u_sky.x - 1.0) / 5.0) * (1.0 - gloom * 0.6);
+
+    // ── the water itself ──
+    // Fresnel: how much of the mirror is seen, against how much of the water
+    float cosT = clamp(dot(-rd, n), 0.0, 1.0);
+    float f1 = 1.0 - cosT;
+    float f2 = f1 * f1;
+    float fres = 0.02 + 0.98 * f2 * f2 * f1;
+    // light off water is polarized — wholly so at Brewster's angle, 37° down —
+    // with its e-vector flat along the horizon, which is what a polarizer
+    // turned to darken the sky cuts. Cutting the glare off water is the other
+    // half of why one is carried
+    float brewster = 1.0 - clamp(abs(cosT - 0.60) / 0.60, 0.0, 1.0);
+    if (u_pol.x > 0.001) mir *= polarizerTransmission(brewster * 0.9, 0.0, polAim);
+    // the body of the water: dark, green-blue, lit by the day; grey under an
+    // overcast, murkier in a storm
+    vec3 deep = L(mix(vec3(0.010, 0.016, 0.022), vec3(0.030, 0.105, 0.145), dayF));
+    deep = mix(deep, L(mix(vec3(0.012, 0.014, 0.017), vec3(0.085, 0.095, 0.105), dayF)),
+               smoothstep(0.5, 0.95, u_cover) * 0.8);
+    deep = mix(deep, deep * vec3(0.9, 0.85, 0.8), gloom * 0.5);
+    vec3 seaLin = mix(deep, mir, fres);
+    // ── the far water ──
+    // The last kilometres before the horizon sit behind a long reach of air,
+    // which scatters the horizon's own light into the line of sight: the
+    // water there takes the horizon sky's color and the sea meets the sky
+    // through a soft band rather than along a drawn line — the clouds and
+    // towers the sky carries above that line are not in the mirror, and a
+    // hard line made that plain. A little of it even on the clearest day,
+    // and a lot in haze, where a sea horizon goes altogether
+    vec3 rdH = normalize(vec3(rd.x, 1e-4, rd.z));
+    float wideH = 0.0;
+    vec3 horizonSky = L(skyWeather(skyBase(rdH, 0.0, 0.0, sunDir, sunEl, dayF, sunsetF, wideH), dayF, gloom));
+    float seaFog = 1.0 - exp(-dist * (0.0035 + 0.045 * u_haze));
+    seaLin = mix(seaLin, horizonSky, seaFog);
+    disp = mix(disp, encodeSrgb(seaLin), smoothstep(0.0, -0.012, rd.y) * u_sea.x);
   }
 
   // ── Rain (thin threads slanting with the wind) ──
@@ -2028,9 +2196,14 @@ void main() {
     hazeCol = mix(hazeCol, hazeCol * vec3(0.38, 0.40, 0.45), gloom);
     // thin haze only crushes the horizon; the thicker it gets, the higher it climbs toward the zenith, covering the whole sky
     float reach = mix(0.22, 1.0, u_haze * u_haze);
-    float hz = u_haze * mix(1.0, reach, smoothstep(0.0, 0.45, h));
-    // cutting haze is half the reason to carry the filter
-    hz *= 1.0 - u_pol.x * dop * 0.45;
+    // measured from the horizon either way: the ground and the water close
+    // below the eye sit behind as little air as the sky high above it
+    float hh = clamp(abs(el) / (PI * 0.5), 0.0, 1.0);
+    float hz = u_haze * mix(1.0, reach, smoothstep(0.0, 0.45, hh));
+    // cutting haze is half the reason to carry the filter — by as much as
+    // the filter actually took from this pixel's sky, so a ring turned to
+    // brighten the band leaves the haze alone
+    hz *= 1.0 - max(polCut, 0.0) * 0.6;
     sky = overlay(sky, hazeCol, clamp(hz, 0.0, 0.96));
   }
 
@@ -2185,6 +2358,7 @@ const UNIFORM_NAMES = [
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
+  'u_sea',
   'u_cloudMode', 'u_clouds',
 ] as const;
 
@@ -2816,6 +2990,7 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_rain, s.rain);
     gl.uniform1f(u.u_snow, s.snow);
     gl.uniform1f(u.u_fall, s.particles.precipitation);
+    gl.uniform2f(u.u_sea, s.ground.sea, s.ground.swell);
     gl.uniform1f(u.u_wind, s.wind);
     gl.uniform1f(u.u_thunder, s.thunder);
     gl.uniform1f(u.u_haze, s.haze);

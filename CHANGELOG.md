@@ -4,6 +4,22 @@
 
 ### Added
 
+- **`ground: 'sea'`** — open water below the horizon. The sea is drawn as the
+  mirror it is: each ray that meets the water is reflected and asked what the
+  sky is in that direction, so it takes the color of its hour exactly, and
+  the sun and the moon lay a path across it, their image scattered along the
+  wind by the slopes of the waves — a swell you set (`swell`) and a chop the
+  wind raises. Fresnel decides how much of the mirror is seen against the
+  water's own dark green-blue; a polarizer cuts the glare off it, fully at
+  Brewster's angle. The sky's gradient, magic hour and anti-twilight moved
+  into a function of direction (`skyBase`) so the sea could ask for them; the
+  sky above the horizon is bit-identical. The horizon is a hard line, and
+  above it the sea costs nothing. Controller example: a Ground drawer.
+- The haze now measures its reach from the horizon in both directions: the
+  ground and the water close below the eye sit behind as little air as the
+  sky high above it, where before the whole lower hemisphere carried the
+  horizon's full haze.
+
 - **The Earth's shadow and the Belt of Venus.** Opposite a sun just under
   the horizon, the Earth's own shadow climbs the sky as a band of blue-grey,
   and above it the air still in sunlight sends back reddened light as a soft
@@ -16,6 +32,18 @@
 
 ### Changed
 
+- **The polarizer's ring is aimed for you.** It was held at a fixed angle in
+  the frame, and in whole ranges of framings — the sun mid-high and off to
+  one side, the common case — that put it at 45° to the sky's polarization,
+  where a filter passes exactly as much as none: facing east at two in the
+  afternoon, `strong` darkened the sky by 3%. It is now turned the way a
+  photographer turns it, so that the middle of the frame is darkened most
+  whatever the framing and wherever the sun is, and `angle` is a turn from
+  there; the same framing now drops by 40%. The haze cut and the saturation
+  gain follow what the filter actually took from each pixel, so a ring turned
+  to brighten the band no longer thins the haze or saturates. Toward the sun
+  and straight away from it the sky is barely polarized, and there no turn of
+  the ring does much — on this one or a real one.
 - **The cumulonimbus is lit by the same light as every other cloud.** It
   carried a hand-authored palette of its own — its own white, its own shade,
   its own sunset tint and its own overcast pull — and no two of those agreed

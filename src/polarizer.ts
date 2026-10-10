@@ -32,17 +32,20 @@ export interface Polarizer {
    */
   strength: number;
   /**
-   * filter rotation in radians.
+   * filter rotation in radians, from the aimed orientation.
    *
-   * A real CPL is rotated in its mount to aim the effect, and 0 is roughly the
-   * darkening orientation: measured on a clear noon sky facing away from the sun,
-   * 0 drops the sky to ~62% and π/2 lifts it to ~126% of unfiltered.
+   * A real CPL is turned in its mount to aim the effect, and the renderer
+   * turns it for you the way a photographer does: so that the middle of the
+   * frame is darkened most, whatever the framing and wherever the sun is.
+   * `angle` is a turn from there — 0 darkens, π/2 passes the polarized light
+   * instead and the same band brightens. Measured on a clear noon sky facing
+   * away from the sun, 0 drops the sky to ~62% and π/2 lifts it to ~126% of
+   * unfiltered.
    *
-   * "Roughly" because there is no angle that darkens everywhere at once — the
-   * polarization direction rotates across the frame and as the camera swings, so
-   * the best setting shifts with the shot. That is not an approximation artifact;
-   * it is the same reason you re-rotate the ring after recomposing, and the same
-   * reason a wide frame gets an uneven band.
+   * The aim is only exact at the middle: the polarization direction rotates
+   * across the frame, so a wide shot gets an uneven band of darkening. That is
+   * not an approximation artifact; it is the same reason you re-rotate the ring
+   * after recomposing on a real one.
    */
   angle: number;
   /**

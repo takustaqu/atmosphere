@@ -169,6 +169,7 @@ export class Atmosphere {
       celestial: options.celestial,
       lens: options.lens,
       particles: options.particles,
+      ground: options.ground,
       camera: options.camera,
     };
     this.target = resolveConditions(this.conditions);
@@ -256,6 +257,7 @@ export class Atmosphere {
       },
       lens: { ...c.lens },
       particles: { ...c.particles },
+      ground: { ...c.ground },
     };
   }
 

@@ -5,6 +5,7 @@
 
 import { resolveCelestial, type Celestial, type CelestialInput } from './celestial.js';
 import { resolveFilter, type ColorFilter, type FilterInput } from './filter.js';
+import { resolveGround, type Ground, type GroundInput } from './ground.js';
 import { resolveLens, type Lens, type LensInput } from './lens.js';
 import { resolveParticles, type Particles, type ParticlesInput } from './particles.js';
 import { resolvePolarizer, type Polarizer, type PolarizerInput } from './polarizer.js';
@@ -65,6 +66,8 @@ export interface Conditions {
   lens?: LensInput;
   /** what is drawn falling through the air: rain streaks and snowflakes */
   particles?: ParticlesInput;
+  /** what lies below the horizon: the plain ground, or a sea that mirrors the sky */
+  ground?: GroundInput;
   /** camera (partial is fine) */
   camera?: Partial<Camera>;
 }
@@ -83,6 +86,7 @@ export interface AtmosphereState extends WeatherState {
   celestial: Celestial;
   lens: Lens;
   particles: Particles;
+  ground: Ground;
 }
 
 export const DEFAULT_CONDITIONS: Required<Pick<Conditions, 'time' | 'weather'>> = {
@@ -113,6 +117,7 @@ export function resolveConditions(c: Conditions): AtmosphereState {
     celestial: resolveCelestial(c.celestial),
     lens: resolveLens(c.lens),
     particles: resolveParticles(c.particles),
+    ground: resolveGround(c.ground),
   };
 }
 

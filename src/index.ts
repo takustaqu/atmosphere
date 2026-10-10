@@ -128,6 +128,18 @@ export {
 } from './lens.js';
 
 export {
+  resolveGround,
+  DEFAULT_GROUND,
+  GROUND_PRESETS,
+  GROUND_IDS,
+  isGroundId,
+  type Ground,
+  type GroundId,
+  type GroundInput,
+  type GroundPreset,
+} from './ground.js';
+
+export {
   resolveParticles,
   DEFAULT_PARTICLES,
   type Particles,

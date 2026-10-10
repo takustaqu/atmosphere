@@ -65,6 +65,7 @@ const ui = {
   },
   lens: { droplets: 1 },
   particles: { precipitation: 1 },
+  ground: { sea: 0, swell: 0.4 },
 };
 
 // the camera (for looking around). Defaults to a background-friendly, south-facing framing
@@ -116,6 +117,7 @@ function apply(): void {
     polarizer: ui.polarizer,
     lens: ui.lens,
     particles: ui.particles,
+    ground: ui.ground,
   };
   sky.set(conditions);
   readout(conditions);
@@ -349,7 +351,8 @@ section('Circular polarizer');
 note('An optical filter, not a grade: it rejects light by polarization, so it '
   + 'darkens the sky 90 degrees from the sun and leaves the clouds — whose light '
   + 'is unpolarized — alone. Best seen on a clear or lightly clouded day with the '
-  + 'sun off to one side. Turn the angle to sweep the effect.');
+  + 'sun off to one side. The ring is aimed to darken the middle of the frame; '
+  + 'turn the angle to sweep the effect from there.');
 syncers.push(chips(
   POLARIZER_IDS.map((id) => ({ id, label: POLARIZER_PRESETS[id].label })),
   (id) => {
@@ -413,6 +416,19 @@ syncers.push(chips(
 ));
 syncers.push(slider('Falling', 0, 1, 0.01,
   () => ui.particles.precipitation, (v) => { ui.particles.precipitation = v; }, (v) => v.toFixed(2)));
+
+section('Ground');
+note('What lies below the horizon — tilt the camera down to see it. A sea mirrors '
+  + 'the sky: it takes the color of the hour, the sun and the moon lay a path '
+  + 'across it, and a polarizer cuts the glare off it. The chop follows the wind; '
+  + 'the swell is yours.');
+syncers.push(chips(
+  [{ id: 'land', label: 'Land' }, { id: 'sea', label: 'Sea' }],
+  (id) => (id === 'sea') === (ui.ground.sea > 0.5),
+  (id) => { ui.ground.sea = id === 'sea' ? 1 : 0; },
+));
+syncers.push(slider('Swell', 0, 1, 0.01,
+  () => ui.ground.swell, (v) => { ui.ground.swell = v; }, (v) => v.toFixed(2)));
 
 section('Foreground light');
 note('What sky.light hands to a renderer drawing in front of the sky. The figure '
