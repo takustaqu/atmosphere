@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- **The Earth's shadow and the Belt of Venus.** Opposite a sun just under
+  the horizon, the Earth's own shadow climbs the sky as a band of blue-grey,
+  and above it the air still in sunlight sends back reddened light as a soft
+  band of rose — the anti-twilight arch. The shadow's edge stands about as
+  high as the sun is deep and arches down away from the antisolar point; the
+  belt rides a few degrees above it, with a sharp foot and a long head that
+  fades up into the blue. In by sundown, gone by civil dusk, and the same
+  again before sunrise. The far horizon at magic hour used to be only the
+  amber's leftover, a beige where the real sky goes cool.
+
 ### Changed
 
 - **The cumulonimbus is lit by the same light as every other cloud.** It

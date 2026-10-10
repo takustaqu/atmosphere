@@ -883,6 +883,37 @@ void main() {
   disp = mix(disp, mauve, sunsetF * smoothstep(0.10, 0.50, h) * 0.35);
   wide = max(wide, sunsetF * smoothstep(0.55, 0.0, h) * sunSide * 0.5);
 
+  // ── Anti-twilight: the Earth's shadow and the Belt of Venus ──
+  // Opposite a sun just under the horizon, the Earth's own shadow climbs the
+  // sky as a band of blue-grey, and above it the air still in sunlight sends
+  // back reddened light as a band of rose — the anti-twilight arch. The
+  // shadow's edge stands about as high as the sun is deep, arching down away
+  // from the antisolar point; the belt rides a few degrees above it. In by
+  // sundown, gone by civil dusk, and the same again before sunrise. Without
+  // it the far horizon at magic hour was only the amber's leftover, a beige
+  // where the real sky goes cool.
+  {
+    float twi = smoothstep(0.04, -0.01, sunEl) * smoothstep(-0.14, -0.06, sunEl);
+    float away = smoothstep(0.45, -0.55, towardSun);
+    float amt = twi * away;
+    if (amt > 0.001) {
+      float edge = max(-sunEl, 0.0) * max(-towardSun, 0.0);
+      // the shadow: cooler and darker than the lit air above it, and it
+      // takes back the amber the far horizon was given above
+      float shadow = smoothstep(edge + 0.035, edge - 0.025, rd.y);
+      disp *= mix(vec3(1.0), vec3(0.72, 0.78, 0.94), shadow * amt * 0.8);
+      // the belt: a soft band of rose, brightest right above the shadow's
+      // edge and fading away upward into the blue — a sharp foot, a long head
+      float c = edge + 0.04;
+      float d = (rd.y - c) / (rd.y > c ? 0.085 : 0.035);
+      float belt = exp(-d * d) * smoothstep(-0.02, 0.01, rd.y);
+      // dimmer the deeper the sun: the sky it sits in is dimming too
+      vec3 rose = mix(vec3(0.60, 0.34, 0.42), vec3(0.98, 0.62, 0.64), smoothstep(-0.08, 0.0, sunEl));
+      disp = mix(disp, rose, belt * amt * 0.36);
+      wide = max(wide, belt * amt * 0.36 * 0.5);
+    }
+  }
+
   // ── Circular polarizer ──
   // Applied here on purpose: this is the scattered skylight, and it is the only
   // thing a CPL acts on. Everything composited after this point — clouds (Mie
