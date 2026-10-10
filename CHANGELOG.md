@@ -4,6 +4,15 @@
 
 ### Added
 
+- **`celestial.aurora`** — curtains of light standing toward the north,
+  folding along wandering lines and shimmering in vertical rays, green at
+  the foot with red tops and a purple fringe at high activity; they come
+  overhead as the amount rises. A curtain is a vertical sheet between two
+  altitudes, marched in six steps the way the cloud planes are projected, so
+  a ray crosses it along some length of the sheet — edge-on a bright rib,
+  face-on a faint veil, which is what the folds are. In front of the stars,
+  under the same cloud, and mirrored by the sea. A preset, `aurora`, and a
+  slider in the controller's Night sky drawer.
 - **`ground: 'sea'`** — open water below the horizon. The sea is drawn as the
   mirror it is: each ray that meets the water is reflected and asked what the
   sky is in that direction, so it takes the color of its hour exactly, and

@@ -7,7 +7,7 @@ import { resolveConditions } from '../src/state.js';
 
 describe('resolveCelestial', () => {
   it('defaults to the suburban sky the renderer has always drawn', () => {
-    expect(resolveCelestial(undefined)).toEqual({ bortle: 6, milkyWay: 0, meteors: 0, radiant: null });
+    expect(resolveCelestial(undefined)).toEqual({ bortle: 6, milkyWay: 0, meteors: 0, radiant: null, aurora: 0 });
     expect(resolveCelestial(null)).toEqual(resolveCelestial(undefined));
   });
 

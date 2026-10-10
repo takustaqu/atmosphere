@@ -143,6 +143,7 @@ export class StateAnimator {
     ce.bortle += (ct.bortle - ce.bortle) * k;
     ce.milkyWay += (ct.milkyWay - ce.milkyWay) * k;
     ce.meteors += (ct.meteors - ce.meteors) * k;
+    ce.aurora += (ct.aurora - ce.aurora) * k;
     // the radiant is a place, not a quantity — sliding it would drag every
     // meteor's origin across the sky mid-shower. Cut to the new one instead
     ce.radiant = ct.radiant ? [ct.radiant[0], ct.radiant[1]] : null;

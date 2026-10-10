@@ -100,6 +100,7 @@ uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the 
 uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky (environment probes)
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
+uniform float u_aurora;    // 0..1 how much aurora is in the sky
 #ifdef CLOUD_SPLIT
 uniform float u_cloudMode; // 0 = one pass, 1 = the cloud stack alone, 2 = composite it from u_clouds
 uniform sampler2D u_clouds; // the cloud stack drawn by mode 1: rgb = what it adds, a = what it lets through
@@ -160,6 +161,7 @@ const float HALO_LUM  = 1.6;
 const float FLASH_LUM = 6.0;
 const float MOON_LUM  = 2.6;
 const float STAR_LUM  = 2.5;
+const float AURORA_LUM = 1.4;
 
 /**
  * Linear scene light → display.
@@ -551,6 +553,57 @@ vec3 meteorStreak(vec3 rd, float t, float zhr, float hasRadiant, vec2 radiant) {
 
 
 
+
+// ── Aurora ──
+// Curtains of light standing in the upper air toward the north, folding along
+// wavy lines that run east to west and shimmering in vertical rays. A curtain
+// is a vertical sheet between two altitudes, so a ray crosses it along some
+// length of the sheet — which is what makes the folds: seen edge-on the sheet
+// is a bright rib, seen face-on a faint veil. Marched in a few steps of
+// altitude; each step projects the ray onto that altitude's plane, the way the
+// cloud planes do, and asks how close it lands to the curtain's line. The
+// curtains come overhead as the activity rises.
+//
+// Linear light; the caller gates it on night and cloud and scales it.
+vec3 aurora(vec3 rd, float amt) {
+  if (amt < 0.001 || rd.y < 0.02) return vec3(0.0);
+  const int STEPS = 6;
+  const float A_LO = 1.0;     // the lower edge, ~100 km up: the bright green rim
+  const float A_HI = 2.6;     // the top, where the red has faded
+  float stand = mix(3.2, 0.3, amt);
+  float t = u_time;
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < STEPS; i++) {
+    float a = A_LO + (float(i) + 0.5) / float(STEPS) * (A_HI - A_LO);
+    vec2 p = rd.xz / rd.y * a;          // where the ray crosses this altitude
+    // the main curtain's line across the sky: a slow, drifting wander
+    float wander = (fbm2(vec2(p.x * 0.22 + t * 0.012, 3.1)) - 0.5) * 2.2
+                 + (fbm2(vec2(p.x * 0.9 - t * 0.02, 7.7)) - 0.5) * 0.5;
+    float d = p.y - (stand + wander);
+    // the sheet's thickness varies along its length: folds bunch and spread
+    float w = 0.10 + 0.16 * fbm2(vec2(p.x * 0.5 + 11.0, t * 0.01));
+    float band = exp(-d * d / (w * w));
+    // a second, fainter curtain further north
+    float d2 = p.y - (stand + 1.4 + (fbm2(vec2(p.x * 0.3 - t * 0.009, 19.0)) - 0.5) * 2.0);
+    band += 0.5 * exp(-d2 * d2 / 0.06);
+    // rays: vertical striations along the curtain, shimmering
+    float ray = vnoise(vec2(p.x * 7.0 + t * 0.35, 1.3)) * 0.6
+              + vnoise(vec2(p.x * 19.0 - t * 0.6, 5.1)) * 0.4;
+    ray = ray * ray * 1.6 + 0.15;
+    // bright at the lower edge, thinning upward
+    float k = (a - A_LO) / (A_HI - A_LO);
+    float prof = exp(-k * 2.2);
+    // green at the foot, red up top; at high activity a purple fringe below the green
+    vec3 col = mix(vec3(0.20, 1.00, 0.45), vec3(0.95, 0.25, 0.40), smoothstep(0.25, 1.0, k));
+    col = mix(col, vec3(0.70, 0.35, 1.00), smoothstep(0.2, 0.0, k) * amt * 0.6);
+    sum += col * band * ray * prof;
+  }
+  // the path through the slab lengthens as the ray flattens toward the
+  // horizon. Brightness rises faster than the amount: a quiet night's arc is
+  // faint, a storm's curtains are not
+  return sum * (1.0 / float(STEPS)) * amt * (0.35 + 0.65 * amt)
+       * min(1.0 / max(rd.y, 0.15), 3.0) * 0.35;
+}
 
 // ── Clouds ──────────────────────────────────────────────
 // cloud field density and lit-ness (x=density 0..1, y=lit-ness -1..1, z=raw density value)
@@ -1196,6 +1249,16 @@ void main() {
       // not only as width (rift-cut inside milkyWayBand)
       sky += L(mix(core, vec3(0.74, 0.75, 0.70), wash * 0.8)) * mwGlow * mwGate * 0.047;
       wide = max(wide, mw * 0.22);
+    }
+
+    // ── Aurora ──
+    // Light in the upper air, so it shares the stars' night and cloud — and
+    // is drawn after them: the curtains hang in front of the star field
+    if (u_aurora > 0.001) {
+      vec3 au = aurora(rd, u_aurora) * mwGate * AURORA_LUM;
+      sky += au;
+      // its green and its red are both well outside sRGB
+      wide = max(wide, min(max(max(au.r, au.g), au.b), 1.0) * 0.8);
     }
   }
 
@@ -2008,12 +2071,28 @@ void main() {
     // a slope steep enough to mirror the water itself is a slope the sea
     // never shows at these amplitudes; keep the mirror pointed at the sky
     r.y = max(r.y, 0.01);
-    float rel = asin(clamp(r.y, -1.0, 1.0));
+
+    // ── the far water ──
+    // The last kilometres before the horizon sit behind a long reach of air,
+    // which scatters the horizon's own light into the line of sight: the
+    // water there takes the horizon sky's color and the sea meets the sky
+    // through a soft band rather than along a drawn line — the clouds and
+    // towers the sky carries above that line are not in the mirror, and a
+    // hard line made that plain. A little of it even on the clearest day,
+    // and a lot in haze, where a sea horizon goes altogether. Folded into
+    // the mirror's direction, bent toward the horizon by that much, so the
+    // sky is asked only once; the sun, the moon and the water's own color
+    // fade by the same amount below
+    float seaFog = 1.0 - exp(-dist * (0.0035 + 0.045 * u_haze));
+    vec3 rm = normalize(mix(r, vec3(rd.x, 0.0, rd.z), seaFog));
+    rm.y = max(rm.y, 0.005);
+    float rel = asin(clamp(rm.y, -1.0, 1.0));
     float rh = clamp(rel / (PI * 0.5), 0.0, 1.0);
 
     // ── what the mirror shows ──
     float wideSea = 0.0;
-    vec3 mir = L(skyWeather(skyBase(r, rel, rh, sunDir, sunEl, dayF, sunsetF, wideSea), dayF, gloom));
+    vec3 mir = L(skyWeather(skyBase(rm, rel, rh, sunDir, sunEl, dayF, sunsetF, wideSea), dayF, gloom));
+    float clear = 1.0 - seaFog;
     // the sun's path: its disc and halo, as the sky draws them, in the
     // mirrored direction — the waves' slopes are what spread it into a path.
     // The disc is drawn a little wider than in the sky: the water's finest
@@ -2022,19 +2101,24 @@ void main() {
       float ang = acos(clamp(dot(r, sunDir), -1.0, 1.0));
       vec3 sunCol = L(mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF));
       float core = clamp(exp(-ang * ang * 400.0) * 2.2, 0.0, 1.0);
-      mir = mix(mir, vec3(SUN_LUM), core * sunVis);
-      mir += sunCol * exp(-ang * 4.0) * 0.22 * sunVis * HALO_LUM;
+      mir = mix(mir, vec3(SUN_LUM), core * sunVis * clear);
+      mir += sunCol * exp(-ang * 4.0) * 0.22 * sunVis * HALO_LUM * clear;
     }
     // the moon's, at night
     if (moonVis > 0.0) {
       vec3 moonDir = dirFromAngles(0.62, u_sun.y + PI);
       float ang = acos(clamp(dot(r, moonDir), -1.0, 1.0));
       mir += L(vec3(1.0, 0.96, 0.88)) * (smoothstep(0.075, 0.035, ang) * 0.55 + exp(-ang * 18.0) * 0.12)
-           * moonVis * MOON_LUM;
+           * moonVis * MOON_LUM * clear;
     }
     // the city's glow along the horizon, as the sky carries it
     mir += L(vec3(0.26, 0.16, 0.09)) * exp(-rh * 8.0) * nightF
          * (0.4 * (u_sky.x - 1.0) / 5.0) * (1.0 - gloom * 0.6);
+    // the aurora, under the same night and cloud as in the sky
+    if (u_aurora > 0.001) {
+      mir += aurora(r, u_aurora) * AURORA_LUM * clear * nightF
+           * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
+    }
 
     // ── the water itself ──
     // Fresnel: how much of the mirror is seen, against how much of the water
@@ -2054,20 +2138,9 @@ void main() {
     deep = mix(deep, L(mix(vec3(0.012, 0.014, 0.017), vec3(0.085, 0.095, 0.105), dayF)),
                smoothstep(0.5, 0.95, u_cover) * 0.8);
     deep = mix(deep, deep * vec3(0.9, 0.85, 0.8), gloom * 0.5);
-    vec3 seaLin = mix(deep, mir, fres);
-    // ── the far water ──
-    // The last kilometres before the horizon sit behind a long reach of air,
-    // which scatters the horizon's own light into the line of sight: the
-    // water there takes the horizon sky's color and the sea meets the sky
-    // through a soft band rather than along a drawn line — the clouds and
-    // towers the sky carries above that line are not in the mirror, and a
-    // hard line made that plain. A little of it even on the clearest day,
-    // and a lot in haze, where a sea horizon goes altogether
-    vec3 rdH = normalize(vec3(rd.x, 1e-4, rd.z));
-    float wideH = 0.0;
-    vec3 horizonSky = L(skyWeather(skyBase(rdH, 0.0, 0.0, sunDir, sunEl, dayF, sunsetF, wideH), dayF, gloom));
-    float seaFog = 1.0 - exp(-dist * (0.0035 + 0.045 * u_haze));
-    seaLin = mix(seaLin, horizonSky, seaFog);
+    // the far water is all air: the water's own color goes with the fog too
+    vec3 seaLin = mix(deep, mir, fres + (1.0 - fres) * seaFog);
+    //
     disp = mix(disp, encodeSrgb(seaLin), smoothstep(0.0, -0.012, rd.y) * u_sea.x);
   }
 
@@ -2358,7 +2431,7 @@ const UNIFORM_NAMES = [
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
-  'u_sea',
+  'u_sea', 'u_aurora',
   'u_cloudMode', 'u_clouds',
 ] as const;
 
@@ -3009,6 +3082,7 @@ export class AtmosphereRenderer {
     const ce = s.celestial;
     gl.uniform4f(u.u_sky, ce.bortle, ce.milkyWay, ce.meteors, ce.radiant ? 1 : 0);
     gl.uniform2f(u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
+    gl.uniform1f(u.u_aurora, ce.aurora);
     return gl;
   }
 

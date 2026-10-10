@@ -12,6 +12,9 @@
 //     unchanged as the view swings.
 //   - transient events: meteors. Fired stochastically off the clock, with a
 //     lifetime, then gone — the same machinery lightning already uses.
+//   - the aurora: curtains of light standing in the upper air toward the
+//     magnetic pole, folding and shimmering. Not weather — the air below it is
+//     doing nothing — and not fixed to the stars either; its own thing.
 //
 // Units follow the same rule as weather: whatever the observation is actually
 // measured in. Light pollution has the Bortle scale, meteor showers have ZHR.
@@ -58,9 +61,20 @@ export interface Celestial {
    * anywhere.
    */
   radiant: readonly [number, number] | null;
+  /**
+   * 0..1 how much aurora is in the sky.
+   *
+   * 0 is none (the default). A little is a faint green arc low on the
+   * northern horizon; 1 is a display that folds overhead with red tops and
+   * a purple fringe. The curtains stand toward the north — turn the camera
+   * that way (`camera: { yaw: 0 }`) to see them; the default framing faces
+   * south. Not an observation unit: the Kp index says how disturbed the
+   * field is, not what a given sky shows.
+   */
+  aurora: number;
 }
 
-export type CelestialId = 'dark-sky' | 'rural' | 'suburban' | 'city' | 'perseids' | 'geminids';
+export type CelestialId = 'dark-sky' | 'rural' | 'suburban' | 'city' | 'perseids' | 'geminids' | 'aurora';
 
 export interface CelestialPreset extends Celestial {
   /** display name */
@@ -73,12 +87,14 @@ const PERSEUS: readonly [number, number] = [1.05, 0.79];
 const GEMINI: readonly [number, number] = [0.98, 1.48];
 
 export const CELESTIAL_PRESETS: Record<CelestialId, CelestialPreset> = {
-  'dark-sky': { label: 'Dark sky',  bortle: 2, milkyWay: 1.00, meteors: 5, radiant: null },
-  rural:      { label: 'Rural',     bortle: 4, milkyWay: 0.45, meteors: 5, radiant: null },
-  suburban:   { label: 'Suburban',  bortle: 6, milkyWay: 0.00, meteors: 0, radiant: null },
-  city:       { label: 'City',      bortle: 8, milkyWay: 0.00, meteors: 0, radiant: null },
-  perseids:   { label: 'Perseids',  bortle: 3, milkyWay: 0.75, meteors: 100, radiant: PERSEUS },
-  geminids:   { label: 'Geminids',  bortle: 3, milkyWay: 0.75, meteors: 150, radiant: GEMINI },
+  'dark-sky': { label: 'Dark sky',  bortle: 2, milkyWay: 1.00, meteors: 5, radiant: null, aurora: 0 },
+  rural:      { label: 'Rural',     bortle: 4, milkyWay: 0.45, meteors: 5, radiant: null, aurora: 0 },
+  suburban:   { label: 'Suburban',  bortle: 6, milkyWay: 0.00, meteors: 0, radiant: null, aurora: 0 },
+  city:       { label: 'City',      bortle: 8, milkyWay: 0.00, meteors: 0, radiant: null, aurora: 0 },
+  perseids:   { label: 'Perseids',  bortle: 3, milkyWay: 0.75, meteors: 100, radiant: PERSEUS, aurora: 0 },
+  geminids:   { label: 'Geminids',  bortle: 3, milkyWay: 0.75, meteors: 150, radiant: GEMINI, aurora: 0 },
+  // a dark northern site on an active night: the Milky Way dimmed by the glow
+  aurora:     { label: 'Aurora',    bortle: 2, milkyWay: 0.55, meteors: 5, radiant: null, aurora: 0.8 },
 };
 
 export const CELESTIAL_IDS = Object.keys(CELESTIAL_PRESETS) as CelestialId[];
@@ -96,6 +112,7 @@ export const DEFAULT_CELESTIAL: Celestial = {
   milkyWay: 0,
   meteors: 0,
   radiant: null,
+  aurora: 0,
 };
 
 /**
@@ -128,6 +145,7 @@ function toCelestial(c: Celestial): Celestial {
     milkyWay: c.milkyWay,
     meteors: c.meteors,
     radiant: c.radiant ? [c.radiant[0], c.radiant[1]] : null,
+    aurora: c.aurora,
   };
 }
 
@@ -151,5 +169,6 @@ export function resolveCelestial(input: CelestialInput): Celestial {
     ),
     meteors: Math.max(0, input.meteors ?? base.meteors),
     radiant: input.radiant !== undefined ? input.radiant : base.radiant,
+    aurora: clamp(input.aurora ?? base.aurora, 0, 1),
   });
 }

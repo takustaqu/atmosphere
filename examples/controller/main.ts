@@ -61,7 +61,7 @@ const ui = {
   // sky it has always shown
   celestial: { ...CELESTIAL_PRESETS.suburban } as {
     bortle: number; milkyWay: number; meteors: number;
-    radiant: readonly [number, number] | null;
+    radiant: readonly [number, number] | null; aurora: number;
   },
   lens: { droplets: 1 },
   particles: { precipitation: 1 },
@@ -378,7 +378,7 @@ syncers.push(chips(
   (id) => {
     const p = CELESTIAL_PRESETS[id as CelestialId];
     return ui.celestial.bortle === p.bortle && ui.celestial.milkyWay === p.milkyWay
-      && ui.celestial.meteors === p.meteors;
+      && ui.celestial.meteors === p.meteors && ui.celestial.aurora === p.aurora;
   },
   (id) => { ui.celestial = { ...CELESTIAL_PRESETS[id as CelestialId] }; },
 ));
@@ -388,6 +388,11 @@ syncers.push(slider('Milky Way', 0, 1, 0.01,
   () => ui.celestial.milkyWay, (v) => { ui.celestial.milkyWay = v; }, (v) => v.toFixed(2)));
 syncers.push(slider('Meteors ZHR/h', 0, 3000, 25,
   () => ui.celestial.meteors, (v) => { ui.celestial.meteors = v; }, (v) => String(v)));
+syncers.push(slider('Aurora', 0, 1, 0.01,
+  () => ui.celestial.aurora, (v) => { ui.celestial.aurora = v; }, (v) => v.toFixed(2)));
+note('The curtains stand toward the north, and the default framing faces south: '
+  + 'drag the sky round to see them. Low activity is a faint arc on the horizon; '
+  + 'high activity folds overhead with red tops.');
 note('ZHR counts what an observer watching the WHOLE sky would see in an hour, and '
   + 'this frame covers under a fifth of it — so an honest ZHR 150 (the Geminids at '
   + 'their peak) puts roughly one meteor in shot every few minutes. Real, and far '

@@ -32,6 +32,8 @@ be an easy way to get a sky that keeps changing procedurally.
   resolved stars with its bulge and Great Rift, meteor showers at a ZHR
 - **The moon** — a crescent with earthshine and maria on the dark side;
   the disc occludes the stars behind it
+- **The aurora** — curtains toward the north that fold and shimmer, green with red tops,
+  coming overhead as the activity rises
 - **The ten cloud genera** — cirrus, cirrostratus, cirrocumulus, altostratus,
   altocumulus, nimbostratus, stratus, stratocumulus, cumulus, cumulonimbus.
   A perspective projection from the intersection of the view ray and each
@@ -242,8 +244,9 @@ measured in.
 | `milkyWay` | 0..1 | visibility. Derived from `bortle` when not given: gone by Bortle 6, which is why the default sky has never shown one |
 | `meteors` | /h | **ZHR** (zenithal hourly rate). ~5 is the sporadic background; the Perseids peak near 100, the Geminids near 150. Defaults to 0. **A ZHR counts the whole sky** and a frame covers under a fifth of it, so an honest 150 puts one in shot every few minutes — use values in the thousands if you want them watchable |
 | `radiant` | `[elevation, azimuth]` | where a shower's meteors stream from. `null` gives sporadics, from anywhere |
+| `aurora` | 0..1 | how much aurora is in the sky. 0 is none; a little is a faint green arc low in the north, 1 a display that folds overhead with red tops and a purple fringe. Not an observation unit — the Kp index says how disturbed the field is, not what a given sky shows. The curtains stand toward the north, and the default framing faces south: turn the camera (`camera: { yaw: 0 }`) |
 
-Presets: `dark-sky` `rural` `suburban` `city` `perseids` `geminids`.
+Presets: `dark-sky` `rural` `suburban` `city` `perseids` `geminids` `aurora`.
 
 The default is a no-op — `celestial: 'suburban'` is pixel-identical to omitting it
 entirely, so nothing about the existing sky changes until you ask for something.
@@ -256,6 +259,16 @@ remainder. Drawn the other way it reads as an airbrushed diagonal, which is
 exactly what it looked like before this was fixed. It is additive light in linear
 space — a faint band over a near-black sky is precisely the case that goes wrong
 in gamma-encoded compositing.
+
+**The aurora is a curtain, marched.** A curtain is a vertical sheet of light
+standing between two altitudes, so a ray crosses it along some length of the
+sheet — seen edge-on it is a bright rib, seen face-on a faint veil, and that
+is what the folds are. It is marched in a few steps of altitude, each step
+projecting the ray onto that altitude's plane the way the cloud planes do and
+asking how close it lands to the curtain's wandering line; vertical rays
+shimmer along it. Green at the foot, red at the top, purple below at high
+activity. It hangs in front of the stars, under the same cloud, and a sea
+mirrors it.
 
 **Meteors are events, not objects.** They run on the same machinery as lightning:
 chop the clock into slots, hash each one, fire if it clears the threshold. They
