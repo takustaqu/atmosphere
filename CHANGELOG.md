@@ -116,6 +116,14 @@
   for a lit rim; toward the horizon the crown stands clear above a grey
   bottom. The parallax between the planes is what gives a lump its side.
   Costs the cumulus layer about two thirds more.
+- **Clouds gather.** A noise field cut at one threshold peppers the sky
+  evenly; a real sky's clouds come in flocks, with bare stretches between.
+  A much coarser field now moves the cumulus threshold around the sky,
+  denser in some quarters and sparser in others, fading out as the cover
+  closes into a deck.
+- **Cirrus comes in tufts.** Mare's tails: dense heads where the ice forms,
+  with fibrous tails streaming downwind from them, in place of strands all
+  of one weight.
 - **The shader is compiled per combination of features in use.** The sea,
   the aurora, the halos, the rainbow, the bolt, the contrails, the rays, the
   dark-sky grids and the polarizer are each a block the shader only runs

@@ -832,7 +832,17 @@ float filament(vec2 uv) {
   float bend = fbm4(uv * vec2(0.30, 0.85)) - 0.5;
   vec2 q = uv + vec2(0.0, bend * 1.5);
   float f = smoothstep(0.46, 0.76, fbm(q * vec2(0.30, 3.2)));
-  return f * smoothstep(0.32, 0.62, fbm4(uv * 0.20 + 13.0));   // sparseness of the strands
+  float sparse = smoothstep(0.32, 0.62, fbm4(uv * 0.20 + 13.0));   // sparseness of the strands
+  // Mare's tails: a cirrus is not strands all of one weight but tufts — a
+  // dense head where the ice forms, with a fibrous tail streaming away from
+  // it downwind as the crystals fall into slower air. The heads are knots
+  // of a coarser noise; the tails are the strands, kept only where the
+  // same noise, read a little upwind, says a head is there to stream from
+  float head = smoothstep(0.56, 0.74, fbm4(uv * 0.42 + 7.0));
+  float tail = smoothstep(0.42, 0.64, fbm4((uv + vec2(1.1, 0.0)) * 0.42 + 7.0));
+  float strands = f * sparse * (0.30 + 0.70 * max(head, tail * 0.8));
+  // the heads themselves: denser knots, with a little of the strand texture through them
+  return min(strands + head * sparse * (0.45 + 0.35 * f), 1.0);
 }
 
 // A cluster of round lobes (the cauliflower texture of cumulus/cumulonimbus).
@@ -1659,7 +1669,7 @@ void main() {
     float f = filament(planeUV(rd, rdY, ALT_HIGH, u_windOff * 0.3) + vec2(u_windOff * 0.14, 0.0));
     vec3 col = mix(vec3(1.0), vec3(1.05, 0.62, 0.55), sunsetF);
     col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
-    OVER(col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
+    OVER(col, f * u_high.x * 0.72 * horizonFade * (1.0 - gloom * 0.8));
   }
 #ifdef FEAT_CONTRAILS
   // ── Contrails ──
@@ -2214,6 +2224,16 @@ void main() {
     );
     // the smaller the amount, the higher the threshold — sparse clouds only sprout here and there
     float edge = 0.88 - u_low.z * 0.52;
+    // Locality: a real sky's clouds gather — a flock here, a bare stretch
+    // there, a street downwind — where a noise field cut at one threshold
+    // is evenly peppered everywhere. A much coarser field moves the
+    // threshold around the sky, denser in some quarters and sparser in
+    // others; it fades out as the cover closes, since a full deck is a deck
+    {
+      vec2 puv = planeUV(rd, rdY, ALT_LOW * 2.5, u_windOff * 0.7);
+      float patch = fbm2(puv * 0.045 + 61.0) - 0.5;
+      edge += patch * 0.34 * (1.0 - smoothstep(0.55, 0.9, u_low.z));
+    }
 
     // the crown: the plane above, a narrower threshold so the lumps taper
     // into domes, lit from above and shaded shallowly
