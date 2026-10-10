@@ -880,16 +880,22 @@ float ghost(vec2 p, vec2 pos, float r, float aspect) {
 //   moon     the faint silver on a night cloud
 //   leaden   where severe weather drags everything
 //   diffuse  0..1 how much of the sun the overcast has taken away
-void cloudLight(float dayF, float nightF, float sunsetF, vec3 cloudSun,
+void cloudLight(float dayF, float nightF, float sunsetF, vec3 cloudSun, float alt,
                 out vec3 ambient, out vec3 glow, out vec3 sun, out vec3 shade,
                 out vec3 moon, out vec3 leaden, out float diffuse) {
   // under full overcast there's no direct sunlight, only diffuse light
   diffuse = smoothstep(0.55, 0.95, u_cover);
+  // Whether the sun still reaches this layer: a cloud at 10 km is lit until
+  // the sun is three degrees under, one at 1 km loses it as the sun touches
+  // the horizon. That order — the low deck going grey while the high clouds
+  // still burn — is most of what a sunset's clouds look like
+  float sunEl = sin(u_sun.x);
+  float sunUp = smoothstep(-0.035 - 0.07 * alt, 0.015 - 0.015 * alt, sunEl);
   ambient = mix(vec3(0.035, 0.045, 0.07), vec3(0.68, 0.73, 0.82), dayF);
-  // magic hour: the sky's afterglow tints clouds a faint pink even after sunset
-  glow = vec3(0.30, 0.17, 0.13) * sunsetF * (1.0 - dayF);
-  // sunset colors linger on clouds right after sundown too
-  sun = cloudSun * max(dayF, sunsetF * 0.55);
+  // the afterglow: a pink on the clouds once their direct sun has gone
+  glow = vec3(0.30, 0.17, 0.13) * sunsetF * (1.0 - dayF) * (1.0 - sunUp * 0.7);
+  // direct sun on the lit face, strongest and reddest at the horizon
+  sun = cloudSun * max(dayF, sunsetF * 0.9) * sunUp;
   // not a flat grey: a blue-tinted shadow color (ambient light from the sky)
   shade = (ambient + glow) * vec3(0.50, 0.54, 0.64) + vec3(0.02, 0.03, 0.05);
   moon = vec3(0.10, 0.12, 0.18) * nightF;
@@ -898,10 +904,10 @@ void cloudLight(float dayF, float nightF, float sunsetF, vec3 cloudSun,
 
 // cloud color (lighting shared by every plane layer)
 vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, float sunsetF,
-                float flash, float gloom, float darkMul, vec3 cloudSun) {
+                float flash, float gloom, float darkMul, vec3 cloudSun, float alt) {
   vec3 ambient, glow, sun, shade, moon, leaden;
   float diffuse;
-  cloudLight(dayF, nightF, sunsetF, cloudSun, ambient, glow, sun, shade, moon, leaden, diffuse);
+  cloudLight(dayF, nightF, sunsetF, cloudSun, alt, ambient, glow, sun, shade, moon, leaden, diffuse);
   // under overcast, weaken the lit/shadow contrast, the base shadow, and the
   // silver lining together
   float litE = lit * (1.0 - diffuse * 0.75);
@@ -948,16 +954,37 @@ vec3 skyBase(vec3 rd, float el, float h, vec3 sunDir, float sunEl,
   // coordinates would make the blue shallower depending on framing)
   vec3 disp = mix(hor, zen, 1.0 - exp(-max(el, 0.0) * 2.6));
 
-  // magic hour: the horizon in the sun's direction turns amber, the sky above turns mauve
-  // (since this looks at a compass direction, facing away shows an unlit sky)
+  // ── Magic hour ──
+  // Toward the sun the horizon goes red, then orange, then yellow up into
+  // the blue: the sunlight's own color after its long path through the air,
+  // scattered back by the air near the horizon. The band climbs as the sun
+  // sinks and shrinks to a rim once the sun is well under; away from the
+  // sun the horizon stays cool — the Earth's shadow and the Belt of Venus
+  // are what is there, below. The zenith keeps its blue all along: a sunset
+  // sky is blue overhead, not mauve. (This used to be one orange laid over
+  // the whole lower sky, the far side included, with a mauve over the rest;
+  // every sunset came out the same salmon.)
   float towardSun = clamp(dot(normalize(vec3(rd.x, 0.0, rd.z) + 1e-5),
                               normalize(vec3(sunDir.x, 0.0, sunDir.z) + 1e-5)), -1.0, 1.0);
-  float sunSide = 0.35 + 0.65 * smoothstep(-0.4, 1.0, towardSun);
-  vec3 warm = vec3(1.0, 0.47, 0.22);
-  vec3 mauve = vec3(0.45, 0.28, 0.45);
-  disp = mix(disp, warm, sunsetF * smoothstep(0.55, 0.0, h) * 0.55 * sunSide);
-  disp = mix(disp, mauve, sunsetF * smoothstep(0.10, 0.50, h) * 0.35);
-  wide = max(wide, sunsetF * smoothstep(0.55, 0.0, h) * sunSide * 0.5);
+  float side = smoothstep(-0.55, 0.85, towardSun);
+  // how much of the sun's warmth there is: golden hour in from 14° up, full
+  // from the horizon to 3° under, gone by 9° under
+  float warmth = smoothstep(0.25, 0.03, sunEl) * smoothstep(-0.16, -0.05, sunEl);
+  if (warmth > 0.001) {
+    // the band's height in h: climbs as the sun goes down, then collapses
+    float bandTop = 0.22 + 0.30 * smoothstep(0.10, -0.03, sunEl) - 0.34 * smoothstep(-0.05, -0.15, sunEl);
+    float y = h / max(bandTop, 0.05);
+    vec3 red = vec3(1.0, 0.36, 0.14), orange = vec3(1.0, 0.58, 0.22), yellow = vec3(1.0, 0.86, 0.50);
+    vec3 warmCol = y < 0.35 ? mix(red, orange, y / 0.35) : mix(orange, yellow, min((y - 0.35) / 0.65, 1.0));
+    // redder the lower the sun: the light has farther to come
+    warmCol = mix(warmCol, warmCol * vec3(1.0, 0.72, 0.55), smoothstep(0.03, -0.08, sunEl) * 0.6);
+    float wedge = (1.0 - smoothstep(0.45, 1.0, y)) * side * warmth;
+    disp = mix(disp, warmCol, wedge * 0.85);
+    // a lavender wash where the band meets the blue, on the sun's side only
+    vec3 mauve = vec3(0.60, 0.42, 0.62);
+    disp = mix(disp, mauve, smoothstep(0.6, 1.05, y) * (1.0 - smoothstep(1.3, 2.0, y)) * side * warmth * 0.28);
+    wide = max(wide, wedge * 0.5);
+  }
 
   // ── Anti-twilight: the Earth's shadow and the Belt of Venus ──
   // Opposite a sun just under the horizon, the Earth's own shadow climbs the
@@ -1072,8 +1099,17 @@ void main() {
   // ── Sun and day/night ──
   vec3 sunDir = dirFromAngles(u_sun.x, u_sun.y);
   float sunEl = sunDir.y;                      // sine of elevation, -1..1
-  float dayF = smoothstep(-0.12, 0.25, sunEl);
+  // Daylight falls away slowly through twilight: at sunset it is still
+  // three fifths of noon, a fifth at civil dusk, gone by nautical. It used
+  // to be a quarter by sunset — a sunset sky that was already dim, under a
+  // wash of one warm color. Photographs expose for the sky, and that is
+  // the look this draws
+  float dayF = smoothstep(-0.17, 0.14, sunEl);
   float nightF = 1.0 - dayF;
+  // the deep night the stars and the rest of the night sky's light keep to:
+  // in after civil dusk, full by nautical — not the twilight nightF still
+  // carries, which would put stars on a sunset
+  float starF = 1.0 - smoothstep(-0.22, -0.08, sunEl);
   float sunsetF = smoothstep(0.35, 0.02, abs(sunEl));
 
   // ── Severity of the weather (rebuilt from rain/snow/wind instead of the old "storm") ──
@@ -1169,7 +1205,7 @@ void main() {
   // grids and the Milky Way — so where it is zero (all day, and under heavy
   // cloud or gloom at night) the block adds exactly nothing and is skipped.
   // It is uniform across the frame, so the branch never diverges.
-  if (nightF * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom) > 0.0 && skyLight) {
+  if (starF * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom) > 0.0 && skyLight) {
     // fold the view direction onto a cubemap-like 2D grid.
     // pulling from a 3D grid leaves most lattice points off the sphere the
     // view ray actually passes through, so almost no stars show up
@@ -1248,7 +1284,7 @@ void main() {
     // the lower edge dips below the horizon at a dark site, so the grain meets
     // the skyline instead of stopping on a visible line just above it
     float horizonGate = smoothstep(mix(0.02, -0.02, deep), mix(0.16, 0.05, deep), h);
-    float vis = star * twinkle * nightF
+    float vis = star * twinkle * starF
               * horizonGate
               * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
     sky += tint * vis * STAR_LUM;
@@ -1257,7 +1293,7 @@ void main() {
 
     // the Milky Way shares the star field's occlusion exactly — same night, same
     // cloud, same gloom — so it is gated here rather than duplicating all of it
-    float mwGate = nightF * horizonGate
+    float mwGate = starF * horizonGate
                  * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
     float mw = mwHere * mwGate;
 
@@ -1482,7 +1518,7 @@ void main() {
   }
 
   // ── Meteors ──
-  float meteorVis = nightF * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
+  float meteorVis = starF * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
   if (meteorVis > 0.0 && skyLight) {
     vec3 m = meteorStreak(rd, u_time, u_sky.z, u_sky.w, u_radiant);
     float mi = max(max(m.r, m.g), m.b);
@@ -1502,7 +1538,12 @@ void main() {
     vec3 sunCol = L(mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF));
     // gain the core and clamp → produces a flat, saturated white patch at the center
     float core = clamp(exp(-sunAng * sunAng * 900.0) * 2.2, 0.0, 1.0);
-    sky = mix(sky, vec3(SUN_LUM), core * sunVis);
+    // At the horizon the disc itself is dimmed and reddened by the air it
+    // comes through — an orange you can look at, not a white you cannot.
+    // The blowout is kept for a sun with any height
+    float low = smoothstep(0.14, -0.02, sunEl);
+    vec3 disc = mix(vec3(SUN_LUM), L(vec3(1.0, 0.42, 0.16)) * SUN_LUM * 0.12, low);
+    sky = mix(sky, disc, core * sunVis);
     // keep the surrounding bleed subtle (a scattering halo)
     float halo = exp(-sunAng * 4.0);
     sky += sunCol * halo * 0.22 * sunVis * HALO_LUM;
@@ -1514,7 +1555,7 @@ void main() {
 
   // night city lights (a warm glow along the horizon — a Tokyo-like sky)
   // 0.4 at Bortle 6, which is what this has always drawn; nothing at Bortle 1
-  sky += L(vec3(0.26, 0.16, 0.09)) * exp(-h * 8.0) * nightF
+  sky += L(vec3(0.26, 0.16, 0.09)) * exp(-h * 8.0) * starF
        * (0.4 * (u_sky.x - 1.0) / 5.0) * (1.0 - gloom * 0.6);
 
   // airglow: at a truly dark site the horizon carries a faint green-grey rim of
@@ -1523,12 +1564,12 @@ void main() {
   // star layer's gate, so it is exactly absent at Bortle 6 and up.
   float agDeep = clamp((6.0 - u_sky.x) / 5.0, 0.0, 1.0);
 #ifdef FEAT_DARKSKY
-  if (agDeep * nightF > 0.0 && skyLight) {
+  if (agDeep * starF > 0.0 && skyLight) {
     // rippled around the compass — real airglow hangs in uneven waves, and a
     // uniform rim reads as a printed strip. Seeded off the horizontal ray
     // components, so it is seamless in azimuth and pinned as the view swings
     float agN = fbm2(vec2(rd.x, rd.z) * 2.5 + 31.0);
-    sky += L(vec3(0.30, 0.52, 0.38)) * exp(-h * (9.0 + 7.0 * agN)) * nightF
+    sky += L(vec3(0.30, 0.52, 0.38)) * exp(-h * (9.0 + 7.0 * agN)) * starF
          * (0.07 * (0.55 + 0.90 * agN) * agDeep)
          * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
 
@@ -1549,7 +1590,7 @@ void main() {
       float v = dot(rd, off);                            // off the plane
       float halfW = 0.40 * (1.0 - clamp(u, 0.0, 1.4) / 1.8);
       float cone = exp(-max(u, 0.0) * 1.4) * exp(-v * v / (halfW * halfW)) * smoothstep(0.0, 0.15, u);
-      sky += L(vec3(0.72, 0.75, 0.86)) * cone * 0.075 * zl * agDeep * nightF
+      sky += L(vec3(0.72, 0.75, 0.86)) * cone * 0.075 * zl * agDeep * starF
            * smoothstep(0.0, 0.03, h) * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
     }
   }
@@ -1586,7 +1627,9 @@ void main() {
   // the cloud plane's coordinate system is world xz; fold the sun direction onto the same plane
   vec2 ldir = normalize(sunDir.xz + vec2(1e-4, 1e-4));
   // display-encoded: this tints the cloud palette, which is authored there
-  vec3 cloudSun = mix(vec3(1.05, 1.0, 0.95), vec3(1.1, 0.55, 0.3), sunsetF);
+  vec3 cloudSun = mix(vec3(1.05, 1.0, 0.95), vec3(1.15, 0.50, 0.22), sunsetF);
+  // and redder still once the sun is under: what still reaches the high clouds has come the long way
+  cloudSun *= mix(vec3(1.0), vec3(1.0, 0.72, 0.58), smoothstep(0.02, -0.06, sunEl));
 
   // the cloud plane's projection scale (= altitude). Higher layers are larger, so the same lump looks smaller
   const float ALT_HIGH = 3.2;
@@ -1693,7 +1736,7 @@ void main() {
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
   if (u_high.z > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir);
-    vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun);
+    vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 1.0);
     OVER(col, g.x * u_high.z * 0.85 * horizonFade);
   }
 
@@ -1727,7 +1770,7 @@ void main() {
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
   if (u_mid.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir);
-    vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun);
+    vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun, 0.5);
     OVER(col, g.x * u_mid.y * 0.95 * horizonFade);
   }
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
@@ -2011,7 +2054,7 @@ void main() {
         // head, and is 1 at night, where nothing is overexposed.
         vec3 ambient, glow, sunL, shade, moon, leaden;
         float diffuse;
-        cloudLight(dayF, nightM, sunsetF, cloudSun, ambient, glow, sunL, shade, moon, leaden, diffuse);
+        cloudLight(dayF, nightM, sunsetF, cloudSun, 0.3, ambient, glow, sunL, shade, moon, leaden, diffuse);
         float gain = mix(1.0, 0.82, dayF);
         vec3 face = ambient + glow + sunL * 0.42;
         vec3 hi = (face + moon * 0.7) * gain;
@@ -2144,7 +2187,7 @@ void main() {
   // Stratocumulus Sc (roll cloud) — large mottled masses, arranged as rolls
   if (u_low.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
-    vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightM, sunsetF, flash, gloom, 1.05, cloudSun);
+    vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightM, sunsetF, flash, gloom, 1.05, cloudSun, 0.0);
     OVER(col, g.x * u_low.y * 0.95 * horizonFade);
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
@@ -2173,7 +2216,7 @@ void main() {
     alpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, dl.x)) * 0.92;
     // shade from continuous thickness across the wide ramp, not from the saturated density (den)
     float thick = smoothstep(edge, edge + 0.35, dl.z);
-    vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun);
+    vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun, 0.0);
     OVER(c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
@@ -2182,14 +2225,14 @@ void main() {
     vec3 fl = cloudField(fuv, churn * 1.2, ldir, fedge, ramp, fedge - 0.01);
     float falpha = fl.x * u_low.z * horizonFade * (1.0 - cbMask * 0.6);
     float fthick = smoothstep(fedge, fedge + 0.35, fl.z);
-    vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightM, sunsetF, flash, gloom, 1.25, cloudSun);
+    vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightM, sunsetF, flash, gloom, 1.25, cloudSun, 0.0);
     OVER(fc, falpha * 0.95);
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
   if (u_low.x > 0.001 && above && stack) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_LOW * 0.5, u_windOff * 1.2), 0.45, 0.45);
     vec3 col = cloudColor(0.95, -0.25, 0.60,
-                          dayF, nightM, sunsetF, flash, gloom, 1.2, cloudSun) * 0.86;
+                          dayF, nightM, sunsetF, flash, gloom, 1.2, cloudSun, 0.0) * 0.86;
     float lowBias = mix(1.0, 0.40, smoothstep(0.05, 0.55, rd.y));
     OVER(col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
   }
@@ -2388,12 +2431,12 @@ void main() {
            * moonVis * u_moon.z * MOON_LUM * clear;
     }
     // the city's glow along the horizon, as the sky carries it
-    mir += L(vec3(0.26, 0.16, 0.09)) * exp(-rh * 8.0) * nightF
+    mir += L(vec3(0.26, 0.16, 0.09)) * exp(-rh * 8.0) * starF
          * (0.4 * (u_sky.x - 1.0) / 5.0) * (1.0 - gloom * 0.6);
 #ifdef FEAT_AURORA
     // the aurora, under the same night and cloud as in the sky
     if (u_aurora > 0.001) {
-      mir += aurora(r, u_aurora) * AURORA_LUM * clear * nightF
+      mir += aurora(r, u_aurora) * AURORA_LUM * clear * starF
            * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
     }
 #endif

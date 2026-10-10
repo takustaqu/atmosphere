@@ -213,7 +213,7 @@ export function celestialLights(
   s: AtmosphereState, camera: Camera, aspect: number,
 ): Pick<AtmosphereLight, 'sun' | 'moon' | 'key'> {
   const sunY = Math.sin(s.sunElevation);
-  const dayF = smoothstep(-0.12, 0.25, sunY);
+  const dayF = smoothstep(-0.17, 0.14, sunY);
   const nightF = 1 - dayF;
   const sunsetF = smoothstep(0.35, 0.02, Math.abs(sunY));
   const gloom = clamp01(Math.max(s.rain, Math.max(s.snow * 0.5, s.wind * 0.7)));
