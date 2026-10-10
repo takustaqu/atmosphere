@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>atmosphere — bench</title>
+<style>
+  body { margin: 0; padding: 16px; background: #111417; color: #aab; font: 12px/1.5 system-ui, sans-serif; }
+  canvas { width: 320px; display: block; margin: 0 0 10px; border-radius: 6px; background: #000; }
+  table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td, th { padding: 3px 10px; border-bottom: 1px solid #222; text-align: right; }
+  td:first-child, th:first-child { text-align: left; }
+  #note { color: #667; max-width: 60em; }
+</style>
+</head>
+<body>
+  <p id="note">GPU ms per frame at 1600×900, the median of 40 frames, the best of three
+  rounds, with the two renderers on the same context's clock interleaved per
+  scene. <b>variants</b> compiles only the features a scene needs; <b>one program</b>
+  compiles everything in (the renderer before 0.4). Keep this tab visible: the
+  frames are driven by requestAnimationFrame.</p>
+  <div id="out">running…</div>
+  <script type="module" src="../../build/bench/main.js"></script>
+</body>
+</html>

@@ -92,6 +92,21 @@
 
 ### Changed
 
+- **The shader is compiled per combination of features in use.** The sea,
+  the aurora, the halos, the rainbow, the bolt, the contrails, the rays, the
+  dark-sky grids and the polarizer are each a block the shader only runs
+  when its state is on — and yet each cost every frame by being compiled in:
+  a branch never taken still holds registers, and a bigger program runs
+  fewer pixels at once. Measured against 0.3.2 with everything compiled in,
+  a clear noon paid 10–30% for features it was not drawing. The renderer
+  now compiles a variant per feature set a frame actually needs, on demand,
+  draws with the last linked one while the next links (so a feature coming
+  on is drawn from the frame its variant lands, a fraction of a second
+  later, never a blank), keeps the eight most recently drawn, and `prepare()`
+  starts the one a target will need as soon as `set()` is called. The bare
+  sky is back to the program it was. `variants: false` compiles everything
+  into one program, as before, for comparison; `featureKey()` and `FEATURE`
+  are exported. `examples/bench/` measures the two against each other.
 - **The polarizer's ring is aimed for you.** It was held at a fixed angle in
   the frame, and in whole ranges of framings — the sun mid-high and off to
   one side, the common case — that put it at 45° to the sky's polarization,

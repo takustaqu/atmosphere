@@ -101,6 +101,11 @@ export interface AtmosphereOptions extends Conditions {
    */
   rays?: boolean | number;
   /**
+   * Compile the shader per combination of features in use (the default), or
+   * everything into one program (`false`) — see {@link RendererOptions.variants}.
+   */
+  variants?: boolean;
+  /**
    * Hold each frame inside a GPU time budget by lowering the resolution when
    * it would run over, and raising it back when there is room — for large
    * canvases (1080p, 2160p) and busy skies, where a frame that sometimes
@@ -196,8 +201,11 @@ export class Atmosphere {
       onReady: this.onRendererReady,
       cloudScale: options.cloudScale,
       rays: options.rays === true ? 1 : options.rays === false ? 0 : options.rays,
+      variants: options.variants,
       timing: !!adaptive,
     });
+    // start the shader variant this sky needs linking now, not at the first frame
+    this.renderer.prepare(this.target);
     this.animator = new StateAnimator(this.target, options.animator);
 
     this.resize();
@@ -355,6 +363,9 @@ export class Atmosphere {
     this.conditions = { ...this.conditions, ...c };
     this.target = resolveConditions(this.conditions);
     if (c.camera) this.cam = resolveCamera({ ...this.cam, ...c.camera });
+    // a feature the new target brings in gets its variant compiling now,
+    // ahead of the transition that will cross its threshold
+    this.renderer.prepare(this.target);
   }
 
   /** recompute internal resolution from the canvas's displayed size */

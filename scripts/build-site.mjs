@@ -27,7 +27,7 @@ await mkdir('_site', { recursive: true });
 // against the deployed site, and minify keeps the shader-heavy bundles small.
 const common = { bundle: true, format: 'esm', target: 'es2022', minify: true };
 
-for (const name of ['playground', 'controller']) {
+for (const name of ['playground', 'controller', 'bench']) {
   await build({
     ...common,
     entryPoints: [`examples/${name}/main.ts`],

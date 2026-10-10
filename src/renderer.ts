@@ -354,6 +354,7 @@ vec3 dirFromAngles(float elevation, float azimuth) {
  * now: a faint band over a near-black sky is exactly the case where adding in
  * gamma-encoded values goes wrong.
  */
+#ifdef FEAT_DARKSKY
 float milkyWayBand(vec3 rd, float amt, out float bulgeOut, out float riftOut,
                    out float glowOut, out float baseOut) {
   bulgeOut = 0.0;
@@ -439,6 +440,7 @@ float milkyWayBand(vec3 rd, float amt, out float bulgeOut, out float riftOut,
 
   return max(band, 0.0) * amt;
 }
+#endif
 
 
 /**
@@ -562,6 +564,7 @@ vec3 meteorStreak(vec3 rd, float t, float zhr, float hasRadiant, vec2 radiant) {
 
 
 
+#ifdef FEAT_AURORA
 // ── Aurora ──
 // Curtains of light standing in the upper air toward the north, folding along
 // wavy lines that run east to west and shimmering in vertical rays. A curtain
@@ -625,7 +628,9 @@ vec3 aurora(vec3 rd, float amt) {
   return sum * (1.0 / float(STEPS)) * amt * (0.35 + 0.65 * amt)
        * min(1.0 / max(rd.y, 0.15), 3.0) * 0.35;
 }
+#endif
 
+#ifdef FEAT_HALOS
 // ── Ice halos ──
 // What the ice crystals of a cirrostratus do with the sun and the moon: the
 // 22° halo (refraction through the crystals, red on its inner edge), the
@@ -685,7 +690,9 @@ vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
   }
   return add * ice * veil;
 }
+#endif
 
+#ifdef FEAT_RAINBOW
 // a rainbow's colors across its width: 0 the inner edge (violet), 1 the outer (red)
 vec3 spectrum(float t) {
   return clamp(vec3(
@@ -694,6 +701,7 @@ vec3 spectrum(float t) {
     smoothstep(0.45, 0.0, t)
   ), 0.0, 1.0);
 }
+#endif
 
 // ── Clouds ──────────────────────────────────────────────
 // cloud field density and lit-ness (x=density 0..1, y=lit-ness -1..1, z=raw density value)
@@ -992,6 +1000,7 @@ vec3 skyWeather(vec3 disp, float dayF, float gloom) {
   return disp;
 }
 
+#ifdef FEAT_SEA
 // ── Waves ──
 // The slope of one travelling sine across the water, height a·sin(k·p − ωt):
 // its gradient, a·k·cos(k·p − ωt). Slopes are all the sea needs — they tilt
@@ -999,6 +1008,7 @@ vec3 skyWeather(vec3 disp, float dayF, float gloom) {
 vec2 waveSlope(vec2 p, vec2 k, float a, float w, float t) {
   return a * k * cos(dot(k, p) - w * t);
 }
+#endif
 
 // One layer of the cloud stack: a display-space wash, disp = mix(disp, col, a).
 //
@@ -1099,6 +1109,7 @@ void main() {
   // Both are read again below: the aim by the sea, the cut by the haze
   float polAim = 0.0;
   float polCut = 0.0;
+#ifdef FEAT_POLARIZER
   if (u_pol.x > 0.001) {
     vec3 sky = L(disp);
     // The e-vector is perpendicular to the scattering plane, so it already lies
@@ -1141,6 +1152,7 @@ void main() {
     }
     disp = encodeSrgb(sky);
   }
+#endif
 
   // overcast and severe weather
   disp = skyWeather(disp, dayF, gloom);
@@ -1179,7 +1191,12 @@ void main() {
     // always drawn
     float deep = clamp((6.0 - u_sky.x) / 5.0, 0.0, 1.0);
     float mwBulge; float mwRift; float mwGlow; float mwBase;
+#ifdef FEAT_DARKSKY
     float mwHere = milkyWayBand(rd, u_sky.y, mwBulge, mwRift, mwGlow, mwBase);
+#else
+    float mwHere = 0.0;
+    mwBulge = 0.0; mwRift = 0.0; mwGlow = 0.0; mwBase = 0.0;
+#endif
 
     // Intrinsic brightness, power-law distributed: a handful of bright stars, a
     // great many faint ones. This is what carries the variation — deriving
@@ -1251,6 +1268,7 @@ void main() {
     // sky as the site darkens. Scaled by deep so it is *exactly* zero at Bortle
     // 6 and up — the default sky never pays for it or shows it — and fades in
     // continuously below.
+#ifdef FEAT_DARKSKY
     if (deep > 0.0) {
       vec2 sg2 = starGrid(rd) * 158.0;
       vec2 cell2 = floor(sg2);
@@ -1315,7 +1333,9 @@ void main() {
         wide = max(wide, star3 * mwGate * 0.4);
       }
     }
+#endif
 
+#ifdef FEAT_DARKSKY
     if (mw > 0.0001) {
       // Colour follows the band's own structure: lavender through the body of
       // the band, pink-magenta where the bulge swells (reddened by its own
@@ -1340,7 +1360,9 @@ void main() {
       sky += L(mix(core, vec3(0.74, 0.75, 0.70), wash * 0.8)) * mwGlow * mwGate * 0.047;
       wide = max(wide, mw * 0.22);
     }
+#endif
 
+#ifdef FEAT_AURORA
     // ── Aurora ──
     // Light in the upper air, so it shares the stars' night and cloud — and
     // is drawn after them: the curtains hang in front of the star field
@@ -1350,6 +1372,7 @@ void main() {
       // its green and its red are both well outside sRGB
       wide = max(wide, min(max(max(au.r, au.g), au.b), 1.0) * 0.8);
     }
+#endif
   }
 
   // ── Moon ──
@@ -1499,6 +1522,7 @@ void main() {
   // scale height reads as haze and swallows the lowest stars. Shares the second
   // star layer's gate, so it is exactly absent at Bortle 6 and up.
   float agDeep = clamp((6.0 - u_sky.x) / 5.0, 0.0, 1.0);
+#ifdef FEAT_DARKSKY
   if (agDeep * nightF > 0.0 && skyLight) {
     // rippled around the compass — real airglow hangs in uneven waves, and a
     // uniform rim reads as a printed strip. Seeded off the horizontal ray
@@ -1529,6 +1553,7 @@ void main() {
            * smoothstep(0.0, 0.03, h) * clamp(1.0 - u_cover * 1.2, 0.0, 1.0) * (1.0 - gloom);
     }
   }
+#endif
 
   // ── Lightning (computed before the clouds so it lights them too) ──
   float flash = 0.0;
@@ -1593,6 +1618,7 @@ void main() {
     col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
     OVER(col, f * u_high.x * 0.62 * horizonFade * (1.0 - gloom * 0.8));
   }
+#ifdef FEAT_CONTRAILS
   // ── Contrails ──
   // A jet's trail: a line drawn across the high sky from a point, lengthening
   // at the plane's speed — thin and sharp just behind it, spreading into a
@@ -1631,6 +1657,7 @@ void main() {
       }
     }
   }
+#endif
   // Cirrostratus Cs (veil cloud) — a thin veil across the whole sky. Haloes the sun
   if (u_high.y > 0.001 && stack) {
     // the halo below is sky-side and still shows under the horizon; the veil does not
@@ -1643,7 +1670,11 @@ void main() {
     // the 22° halo (refraction through ice crystals). Added light, so it is the
     // one term in this stretch that has to leave display space — and only on
     // the ring itself, where there is something to add
+#ifdef FEAT_HALOS
     vec3 halo = iceHalo(rd, el, sunDir, sunAng, sunVis, moonDir, moonAng, moonVis, nightF);
+#else
+    vec3 halo = vec3(0.0);
+#endif
     float haloAmt = halo.r + halo.g + halo.b;
 #ifdef CLOUD_SPLIT
     // Mode 0 only: it sits between layers, so the washes so far are applied
@@ -2197,8 +2228,10 @@ void main() {
     // Composite: the stack was drawn at its own resolution in mode 1. The 22°
     // halo goes beneath all of it here rather than between the cirrostratus
     // and the layers above — the one place the split departs from one pass
+#ifdef FEAT_HALOS
     vec3 halo = iceHalo(rd, el, sunDir, sunAng, sunVis, moonDir, moonAng, moonVis, nightF);
     if (halo.r + halo.g + halo.b > 0.0) disp = encodeSrgb(L(disp) + halo);
+#endif
     // sampled where this pixel's ray was cast — after any lens droplet bent
     // it — since mode 1 drew the stack for the undistorted rays over the same
     // 0..1 frame
@@ -2211,6 +2244,7 @@ void main() {
   }
   disp = disp * cT + cC;
 
+#ifdef FEAT_RAYS
   // ── Crepuscular rays ──
   // Sunlight through the gaps in a cloud deck lights the air it crosses, and
   // the lit air between the shadows reads as shafts fanning out from the
@@ -2248,6 +2282,7 @@ void main() {
     }
   }
 #endif
+#endif
 
   // ── Below the horizon ──
   // Out of frame with the default framing; there when looking down and for the
@@ -2259,6 +2294,7 @@ void main() {
     disp = mix(disp, ground, smoothstep(0.0, -0.05, rd.y) * (1.0 - u_sea.x));
   }
 
+#ifdef FEAT_SEA
   // ── Sea ──
   // Water is a mirror laid flat. What reaches the eye off it is mostly the
   // sky, reflected — nearly all of it at a grazing look, next to none looking
@@ -2354,11 +2390,13 @@ void main() {
     // the city's glow along the horizon, as the sky carries it
     mir += L(vec3(0.26, 0.16, 0.09)) * exp(-rh * 8.0) * nightF
          * (0.4 * (u_sky.x - 1.0) / 5.0) * (1.0 - gloom * 0.6);
+#ifdef FEAT_AURORA
     // the aurora, under the same night and cloud as in the sky
     if (u_aurora > 0.001) {
       mir += aurora(r, u_aurora) * AURORA_LUM * clear * nightF
            * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
     }
+#endif
 
     // ── the water itself ──
     // Fresnel: how much of the mirror is seen, against how much of the water
@@ -2371,7 +2409,9 @@ void main() {
     // turned to darken the sky cuts. Cutting the glare off water is the other
     // half of why one is carried
     float brewster = 1.0 - clamp(abs(cosT - 0.60) / 0.60, 0.0, 1.0);
+#ifdef FEAT_POLARIZER
     if (u_pol.x > 0.001) mir *= polarizerTransmission(brewster * 0.9, 0.0, polAim);
+#endif
     // the body of the water: dark, green-blue, lit by the day; grey under an
     // overcast, murkier in a storm
     vec3 deep = L(mix(vec3(0.010, 0.016, 0.022), vec3(0.030, 0.105, 0.145), dayF));
@@ -2383,6 +2423,7 @@ void main() {
     //
     disp = mix(disp, encodeSrgb(seaLin), smoothstep(0.0, -0.012, rd.y) * u_sea.x);
   }
+#endif
 
   // ── Rain (thin threads slanting with the wind) ──
   // Laid out along the view ray, not the screen: columns stand at fixed
@@ -2502,6 +2543,7 @@ void main() {
   // during a flash and nothing between flashes
   wide = max(wide, clamp(flash * (0.18 + 0.3 * (1.0 - h)), 0.0, 1.0) * 0.7);
 
+#ifdef FEAT_BOLT
   // ── The bolt ──
   // The flash lights the clouds from inside; now and then the channel itself
   // shows beneath the base — a crooked line down to the horizon with a fork
@@ -2536,7 +2578,9 @@ void main() {
     sky += bolt;
     wide = max(wide, min(core + fork, 1.0) * 0.5);
   }
+#endif
 
+#ifdef FEAT_RAINBOW
   // ── Rainbow ──
   // Sunlight sent back by the raindrops: a ring 42° from the point opposite
   // the sun, red on the outside, and a fainter second ring outside it with
@@ -2560,6 +2604,7 @@ void main() {
     sky += L(bows) * amt * 0.55;
     wide = max(wide, min(bow1 + bow2, 1.0) * amt * 0.6);
   }
+#endif
 
   // ── Haze/mist (the shorter the visibility, the further out — toward the horizon — it crushes white) ──
   if (u_haze > 0.001) {
@@ -2668,7 +2713,9 @@ void main() {
  * right picture — it just pays the flattened cost, the way it would have with
  * the arithmetic hash this replaced.
  */
-function fragSource(explicitLod: boolean, split = false): string {
+function fragSource(explicitLod: boolean, split: boolean, key: number): string {
+  let defines = '';
+  for (const [bit, name] of FEATURE_DEFINES) if (key & bit) defines += `#define ${name}\n`;
   // an #extension directive has to precede every non-preprocessor token
   return (explicitLod
     ? '#extension GL_EXT_shader_texture_lod : enable\n'
@@ -2678,7 +2725,84 @@ function fragSource(explicitLod: boolean, split = false): string {
     // the composite's read of the cloud stack sits in a branch too; same reason
     ? '#define CLOUD_FETCH(uv) texture2DLodEXT(u_clouds, (uv), 0.0)\n'
     : '#define CLOUD_FETCH(uv) texture2D(u_clouds, (uv))\n'
-  ) + (split ? '#define CLOUD_SPLIT\n' : '') + FRAG;
+  ) + (split ? '#define CLOUD_SPLIT\n' : '') + defines + FRAG;
+}
+
+/**
+ * The optional parts of the shader, as bits of a key. Each is a block that
+ * only runs when its state is on — the sea, the aurora, the halos — and yet
+ * costs every frame by being compiled in: a branch never taken still holds
+ * registers, and a bigger program runs fewer pixels at once. Measured against
+ * 0.3.2 with everything compiled in, a clear noon paid 10–30% for features it
+ * was not drawing. So the renderer compiles a variant per combination a
+ * frame actually needs, on demand, and draws with the last one while the
+ * next links.
+ */
+export const FEATURE = {
+  SEA: 1,
+  AURORA: 2,
+  CONTRAILS: 4,
+  RAYS: 8,
+  HALOS: 16,
+  RAINBOW: 32,
+  BOLT: 64,
+  /** a dark site: the deeper star grids, the Milky Way, airglow, zodiacal light */
+  DARKSKY: 128,
+  POLARIZER: 256,
+} as const;
+
+const FEATURE_DEFINES: [number, string][] = [
+  [FEATURE.SEA, 'FEAT_SEA'],
+  [FEATURE.AURORA, 'FEAT_AURORA'],
+  [FEATURE.CONTRAILS, 'FEAT_CONTRAILS'],
+  [FEATURE.RAYS, 'FEAT_RAYS'],
+  [FEATURE.HALOS, 'FEAT_HALOS'],
+  [FEATURE.RAINBOW, 'FEAT_RAINBOW'],
+  [FEATURE.BOLT, 'FEAT_BOLT'],
+  [FEATURE.DARKSKY, 'FEAT_DARKSKY'],
+  [FEATURE.POLARIZER, 'FEAT_POLARIZER'],
+];
+
+/** every feature compiled in: the one program the renderer used to be */
+export const ALL_FEATURES = 511;
+
+/**
+ * Which features a state needs drawn — the key of the shader variant that
+ * draws it. Each test is the same threshold the shader's own gate uses, so a
+ * feature is compiled in exactly when it would be drawn.
+ */
+export function featureKey(s: AtmosphereState, rays = 0): number {
+  let k = 0;
+  if (s.ground.sea > 0.001) k |= FEATURE.SEA;
+  if (s.celestial.aurora > 0.001) k |= FEATURE.AURORA;
+  if (s.particles.contrails > 0.001) k |= FEATURE.CONTRAILS;
+  if (rays > 0) k |= FEATURE.RAYS;
+  if (s.clouds.cirrostratus > 0.001) k |= FEATURE.HALOS;
+  if (s.rain > 0.01) k |= FEATURE.RAINBOW;
+  if (s.thunder > 0.001) k |= FEATURE.BOLT;
+  if (s.celestial.bortle < 6 || s.celestial.milkyWay > 0.001) k |= FEATURE.DARKSKY;
+  if (s.polarizer.strength > 0.001) k |= FEATURE.POLARIZER;
+  return k;
+}
+
+/** how many variants to keep linked at once; the least recently drawn goes first */
+const MAX_VARIANTS = 8;
+
+function popcount(k: number): number {
+  let n = 0;
+  for (let b = k; b; b >>= 1) n += b & 1;
+  return n;
+}
+
+/** one compiled program: a combination of features, and where it is in linking */
+interface Variant {
+  key: number;
+  program: WebGLProgram;
+  u: Uniforms;
+  linked: boolean;
+  failed: boolean;
+  /** the frame counter when it last drew, for eviction */
+  used: number;
 }
 
 /**
@@ -2820,6 +2944,14 @@ export interface RendererOptions {
    */
   rays?: number;
   /**
+   * Compile the shader per combination of features a frame needs (the
+   * default), or everything into one program (`false`). See {@link FEATURE}:
+   * the one program is what the renderer used to be, and it is slower on
+   * every frame for the features it is not drawing — kept as a switch for
+   * measuring that, and for a driver that chokes on a second compile.
+   */
+  variants?: boolean;
+  /**
    * Measure how long each frame takes on the GPU (`EXT_disjoint_timer_query`),
    * for {@link AtmosphereRenderer.takeGpuTimes}. Off by default; the
    * measurement is asynchronous and does not stall, but there is no reason to
@@ -2869,7 +3001,16 @@ export class AtmosphereRenderer {
   private canvas: HTMLCanvasElement;
   private readonly opts: RendererOptions;
   private gl: WebGLRenderingContext | null = null;
-  private program: WebGLProgram | null = null;
+  // the compiled variants by feature key (see FEATURE), the one that drew the
+  // last frame, and the key the last frame asked for
+  private variants = new Map<number, Variant>();
+  private current: Variant | null = null;
+  private wanted = 0;
+  private frame = 0;
+  // whether the first drawable variant has been reported through onReady
+  private reported = false;
+  private parallel: { COMPLETION_STATUS_KHR: number } | null = null;
+  private explicitLod = false;
   private buffer: WebGLBuffer | null = null;
   private noise: WebGLTexture | null = null;
   // the light probe's offscreen target, made on first use and resized to the layout
@@ -2893,7 +3034,6 @@ export class AtmosphereRenderer {
   private u: Uniforms = {};
   private lost = false;
   private p3 = false;
-  private linked = false;
   // Timer for the parallel-compile poll. The renderer polls itself rather than
   // leaning on render() being called: under reduced motion the caller draws
   // exactly one frame, and nothing would ever ask again.
@@ -2930,11 +3070,18 @@ export class AtmosphereRenderer {
   get available(): boolean { return this.gl !== null; }
 
   /**
-   * true once the program is linked and `render()` will actually draw.
+   * true once a program is linked and `render()` will actually draw: the
+   * variant the last frame asked for, or — once anything has been drawn —
+   * whatever drew it, which stands in while a newly needed variant links.
    *
-   * Always true by the time the constructor returns under `compile: 'sync'`.
+   * Always true by the time the constructor returns under `compile: 'sync'`,
+   * where each variant is compiled on the spot when first needed.
    */
-  get ready(): boolean { return this.linked; }
+  get ready(): boolean {
+    if (!this.gl) return false;
+    if (!this.parallel) return true;
+    return !!this.variants.get(this.wanted)?.linked || this.current !== null;
+  }
 
   /**
    * The space actually being rendered into — `'display-p3'` only where the
@@ -2983,7 +3130,10 @@ export class AtmosphereRenderer {
   }
 
   private init(): void {
-    this.linked = false;
+    this.variants = new Map();
+    this.current = null;
+    this.reported = false;
+    this.u = {};
     this.stopPolling();
     // handles from a lost context are dead; the probe and cloud targets are
     // rebuilt on demand, and the new context is asked about half floats again
@@ -3011,6 +3161,54 @@ export class AtmosphereRenderer {
       this.p3 = gl.drawingBufferColorSpace === 'display-p3';
     }
 
+    this.explicitLod = gl.getExtension('EXT_shader_texture_lod') !== null;
+    // On Windows, linkProgram is where ANGLE hands the whole shader to the
+    // D3D compiler, and reading LINK_STATUS is what waits for it. Asking the
+    // driver whether it's finished instead keeps the page alive through it.
+    this.parallel = this.opts.compile === 'sync'
+      ? null
+      : gl.getExtension('KHR_parallel_shader_compile');
+
+    this.noise = this.createNoise(gl);
+
+    // a fullscreen triangle. Every variant binds a_pos to attribute 0 before
+    // it links, so this is set up once for all of them
+    this.buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    this.timer = this.opts.timing
+      ? gl.getExtension('EXT_disjoint_timer_query') as TimerQueryExt | null
+      : null;
+
+    // Nothing is compiled until a frame (or prepare()) says which variant it
+    // needs: compiling the bare one first would only delay the right one.
+    // Under 'sync' the first render() compiles on the spot, so the renderer
+    // is usable the moment the constructor returns, as before
+    if (!this.parallel) this.notifyReady(true);
+  }
+
+  /**
+   * Start compiling the variant this state will need, without drawing, so
+   * it is linked by the time the first frame asks. `Atmosphere` calls this
+   * with its target on construction and on every `set()`, well ahead of the
+   * transition that crosses a feature's threshold.
+   */
+  prepare(s: AtmosphereState): void {
+    if (!this.gl || this.lost) return;
+    const key = this.opts.variants === false ? ALL_FEATURES : featureKey(s, this.rays);
+    if (this.current === null) this.wanted = key;
+    this.ensure(key);
+  }
+
+  /** the variant for a key, compiling it if this is the first ask */
+  private ensure(key: number): Variant | null {
+    const have = this.variants.get(key);
+    if (have) return have;
+    const gl = this.gl;
+    if (!gl) return null;
     const compile = (type: number, src: string): WebGLShader | null => {
       const sh = gl.createShader(type);
       if (!sh) return null;
@@ -3023,40 +3221,87 @@ export class AtmosphereRenderer {
       }
       return sh;
     };
-
     const vs = compile(gl.VERTEX_SHADER, VERT);
-    const fs = compile(gl.FRAGMENT_SHADER,
-      fragSource(gl.getExtension('EXT_shader_texture_lod') !== null, this.split));
-    if (!vs || !fs) { this.gl = null; this.notifyReady(false); return; }
-
-    const prog = gl.createProgram();
-    if (!prog) { this.gl = null; this.notifyReady(false); return; }
+    const fs = compile(gl.FRAGMENT_SHADER, fragSource(this.explicitLod, this.split, key));
+    const prog = vs && fs ? gl.createProgram() : null;
+    if (!vs || !fs || !prog) {
+      if (vs) gl.deleteShader(vs);
+      if (fs) gl.deleteShader(fs);
+      const dead: Variant = { key, program: null as unknown as WebGLProgram, u: {}, linked: false, failed: true, used: this.frame };
+      this.variants.set(key, dead);
+      this.onVariantFailed(dead);
+      return dead;
+    }
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
+    gl.bindAttribLocation(prog, 0, 'a_pos');
     gl.linkProgram(prog);
     gl.deleteShader(vs);
     gl.deleteShader(fs);
-    this.program = prog;
+    const v: Variant = { key, program: prog, u: {}, linked: false, failed: false, used: this.frame };
+    this.variants.set(key, v);
+    this.evict();
+    if (!this.parallel) this.finishLink(v);
+    else this.startPolling();
+    return v;
+  }
 
-    this.noise = this.createNoise(gl);
+  /**
+   * The variant to draw this frame with: the one the key names once it is
+   * linked, and until then whatever can stand in — a linked variant with
+   * every feature this one needs, else the one that drew the last frame
+   * (missing the new feature for the fraction of a second it takes). Before
+   * anything has been drawn there is nothing to stand in, and the first
+   * frame waits for the right one.
+   */
+  private pick(key: number): Variant | null {
+    this.wanted = key;
+    const exact = this.ensure(key);
+    if (!exact) return null;
+    if (exact.linked) return exact;
+    if (exact.failed) {
+      // a feature's variant the driver refused: draw without it rather than nothing
+      if (key === 0) return null;
+      const base = this.ensure(0);
+      return base?.linked ? base : null;
+    }
+    if (!this.current) return null;
+    let best: Variant | null = null;
+    for (const v of this.variants.values()) {
+      if (v.linked && (v.key & key) === key && (!best || popcount(v.key) < popcount(best.key))) best = v;
+    }
+    return best ?? (this.current.linked ? this.current : null);
+  }
 
-    // On Windows, linkProgram is where ANGLE hands the whole shader to the
-    // D3D compiler, and reading LINK_STATUS is what waits for it. Asking the
-    // driver whether it's finished instead keeps the page alive through it.
-    const parallel = this.opts.compile === 'sync'
-      ? null
-      : gl.getExtension('KHR_parallel_shader_compile');
-    if (!parallel) { this.finishLink(); return; }
+  /** drop the least recently drawn variants past the cap, never the one in use */
+  private evict(): void {
+    const gl = this.gl;
+    if (!gl) return;
+    while (this.variants.size > MAX_VARIANTS) {
+      let victim: Variant | null = null;
+      for (const v of this.variants.values()) {
+        if (v === this.current || v.key === this.wanted || !(v.linked || v.failed)) continue;
+        if (!victim || v.used < victim.used) victim = v;
+      }
+      if (!victim) return;
+      if (!victim.failed) gl.deleteProgram(victim.program);
+      this.variants.delete(victim.key);
+    }
+  }
 
+  private startPolling(): void {
+    if (this.poll) return;
     const step = (): void => {
       this.poll = 0;
-      const g = this.gl;
-      if (!g || !this.program) return;
-      if (!g.getProgramParameter(this.program, parallel.COMPLETION_STATUS_KHR)) {
-        this.poll = setTimeout(step, POLL_MS);
-        return;
+      const gl = this.gl, parallel = this.parallel;
+      if (!gl || !parallel) return;
+      let pending = false;
+      for (const v of this.variants.values()) {
+        if (v.linked || v.failed) continue;
+        if (gl.getProgramParameter(v.program, parallel.COMPLETION_STATUS_KHR)) this.finishLink(v);
+        else pending = true;
       }
-      this.finishLink();
+      if (pending) this.poll = setTimeout(step, POLL_MS);
     };
     // a turn of the event loop before the first ask, so the caller gets to
     // finish constructing and paint its fallback first
@@ -3082,44 +3327,50 @@ export class AtmosphereRenderer {
     return tex;
   }
 
-  /** collect the link result and finish the one-time GL setup that depends on it */
-  private finishLink(): void {
+  /** collect a variant's link result and the per-program setup that depends on it */
+  private finishLink(v: Variant): void {
     const gl = this.gl;
-    const prog = this.program;
-    if (!gl || !prog) return;
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      console.error('atmosphere shader link error:', gl.getProgramInfoLog(prog));
-      gl.deleteProgram(prog);
-      if (this.noise) gl.deleteTexture(this.noise);
-      this.noise = null;
-      this.program = null;
-      this.gl = null;
-      this.notifyReady(false);
+    if (!gl) return;
+    if (!gl.getProgramParameter(v.program, gl.LINK_STATUS)) {
+      console.error('atmosphere shader link error:', gl.getProgramInfoLog(v.program));
+      gl.deleteProgram(v.program);
+      v.failed = true;
+      this.onVariantFailed(v);
       return;
     }
-    gl.useProgram(prog);
+    gl.useProgram(v.program);
+    for (const name of UNIFORM_NAMES) v.u[name] = gl.getUniformLocation(v.program, name);
+    // the sampler bindings live in the program, so once per program; which
+    // texture each unit holds is context state, and render() re-establishes that
+    gl.uniform1i(v.u.u_noise, 0);
+    gl.uniform1i(v.u.u_clouds, 1);
+    v.linked = true;
+    if (!this.reported && v.key === this.wanted) {
+      this.reported = true;
+      this.notifyReady(true);
+    }
+  }
 
-    // a fullscreen triangle
-    this.buffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'a_pos');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
-    this.u = {};
-    for (const name of UNIFORM_NAMES) this.u[name] = gl.getUniformLocation(prog, name);
-    // the sampler binding lives in the program, so once is enough; which
-    // texture unit 0 holds is context state, and render() re-establishes that
-    gl.uniform1i(this.u.u_noise, 0);
-    gl.uniform1i(this.u.u_clouds, 1);
-
-    this.timer = this.opts.timing
-      ? gl.getExtension('EXT_disjoint_timer_query') as TimerQueryExt | null
-      : null;
-
-    this.linked = true;
-    this.notifyReady(true);
+  /**
+   * A variant the driver refused. The bare one failing means the device
+   * cannot run this shader at all; a feature's variant failing only means
+   * that feature is drawn without, from the bare variant
+   */
+  private onVariantFailed(v: Variant): void {
+    if (v.key !== 0) {
+      if (v.key === this.wanted && !this.reported) this.ensure(0);
+      return;
+    }
+    const gl = this.gl;
+    if (gl) {
+      for (const o of this.variants.values()) if (o.linked) gl.deleteProgram(o.program);
+      if (this.noise) gl.deleteTexture(this.noise);
+    }
+    this.variants = new Map();
+    this.current = null;
+    this.noise = null;
+    this.gl = null;
+    this.notifyReady(false);
   }
 
   private notifyReady(available: boolean): void {
@@ -3368,10 +3619,15 @@ export class AtmosphereRenderer {
    */
   private bind(timeSec: number, s: AtmosphereState, windOff: number, evo: number): WebGLRenderingContext | null {
     const gl = this.gl;
-    if (!gl || this.lost || !this.program || !this.linked) return null;
+    if (!gl || this.lost) return null;
+    const v = this.pick(this.opts.variants === false ? ALL_FEATURES : featureKey(s, this.rays));
+    if (!v) return null;
+    this.current = v;
+    v.used = ++this.frame;
+    this.u = v.u;
     // bind every frame rather than only at init: another renderer sharing this
     // canvas (or anything else touching the context) may have swapped programs
-    gl.useProgram(this.program);
+    gl.useProgram(v.program);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.noise);
     const u = this.u;
@@ -3468,7 +3724,7 @@ export class AtmosphereRenderer {
     this.canvas.removeEventListener('webglcontextlost', this.onLost);
     this.canvas.removeEventListener('webglcontextrestored', this.onRestored);
     if (gl) {
-      if (this.program) gl.deleteProgram(this.program);
+      for (const v of this.variants.values()) if (!v.failed) gl.deleteProgram(v.program);
       if (this.buffer) gl.deleteBuffer(this.buffer);
       if (this.noise) gl.deleteTexture(this.noise);
       this.freeProbe(gl);
@@ -3480,9 +3736,9 @@ export class AtmosphereRenderer {
       }
     }
     this.gl = null;
-    this.program = null;
+    this.variants = new Map();
+    this.current = null;
     this.buffer = null;
     this.noise = null;
-    this.linked = false;
   }
 }

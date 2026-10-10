@@ -735,6 +735,16 @@ Pass `compile: 'sync'` to `AtmosphereRenderer` to block until the program is
 linked instead. That is what `renderCubeFaces` does, because a bake has no
 loop to come back on; do not do it for anything on screen.
 
+The shader is compiled per combination of features a sky needs — the sea,
+the aurora, the halos, the rainbow and the rest are each compiled in only
+when their state is on, because a block that is never run still costs every
+frame by being there. A feature coming on later gets its variant compiled
+then, in the background; the frames in between are drawn with the previous
+variant, so the feature appears a fraction of a second after it is asked for
+rather than the picture blanking. `set()` starts that compile ahead of the
+transition. Pass `variants: false` to compile everything into one program
+instead; `examples/bench/` measures the two against each other.
+
 ## Internationalization
 
 The core's `label`/`alias` fields (`CLOUD_GENERA`, `WEATHER_PRESETS`,
