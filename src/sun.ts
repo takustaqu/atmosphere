@@ -1,4 +1,4 @@
-// sun.ts — solar position
+// sun.ts — solar and lunar position
 //
 // The renderer takes the sun as a **world-space direction (azimuth, elevation)**,
 // not a screen-space coordinate. That means computing the real solar position
@@ -44,6 +44,11 @@ export function solarPosition(date: Date, loc: GeoLocation): SolarPosition {
   const dec = Math.asin(Math.sin(OBLIQUITY) * Math.sin(L));  // declination
   const ra = Math.atan2(Math.sin(L) * Math.cos(OBLIQUITY), Math.cos(L));  // right ascension
 
+  return toHorizontal(ra, dec, d, loc);
+}
+
+/** equatorial coordinates → azimuth and elevation at a site, at `d` days since J2000 */
+function toHorizontal(ra: number, dec: number, d: number, loc: GeoLocation): SolarPosition {
   const lw = RAD * -loc.longitude;
   const phi = RAD * loc.latitude;
   const H = RAD * (280.16 + 360.9856235 * d) - lw - ra;      // hour angle
@@ -60,6 +65,68 @@ export function solarPosition(date: Date, loc: GeoLocation): SolarPosition {
   return { elevation, azimuth: ((azimuth % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) };
 }
 
+/** days since J2000, the epoch both ephemerides count from */
+function daysSinceJ2000(date: Date): number {
+  return date.getTime() / DAY_MS - 0.5 + J1970 - J2000;
+}
+
+export interface LunarPosition extends SolarPosition {
+  /**
+   * the illuminated fraction of the disc, 0..1 — 0 at new moon, 1 at full.
+   *
+   * The phase as a shape (which limb is lit, how the terminator curves) is
+   * not a number here: the renderer lights the disc as a sphere from the
+   * sun's own direction, so it follows from the two positions.
+   */
+  phase: number;
+}
+
+/**
+ * The moon's azimuth and elevation from a date and location, and how much
+ * of it is lit. The classic low-precision series (a few terms of the lunar
+ * longitude and latitude), good to about a degree — plenty for where it
+ * stands in a sky and which way its horns point. Geocentric: the parallax
+ * that would lower it up to a degree near the horizon is left out.
+ */
+export function lunarPosition(date: Date, loc: GeoLocation): LunarPosition {
+  const d = daysSinceJ2000(date);
+
+  const L = RAD * (218.316 + 13.176396 * d);               // mean longitude
+  const M = RAD * (134.963 + 13.064993 * d);               // mean anomaly
+  const F = RAD * (93.272 + 13.229350 * d);                // argument of latitude
+
+  const l = L + RAD * 6.289 * Math.sin(M);                 // ecliptic longitude
+  const b = RAD * 5.128 * Math.sin(F);                     // ecliptic latitude
+
+  const dec = Math.asin(
+    Math.sin(b) * Math.cos(OBLIQUITY) + Math.cos(b) * Math.sin(OBLIQUITY) * Math.sin(l),
+  );
+  const ra = Math.atan2(
+    Math.sin(l) * Math.cos(OBLIQUITY) - Math.tan(b) * Math.sin(OBLIQUITY),
+    Math.cos(l),
+  );
+
+  const { elevation, azimuth } = toHorizontal(ra, dec, d, loc);
+  const sun = solarPosition(date, loc);
+  return { elevation, azimuth, phase: illuminatedFraction(sun, { elevation, azimuth }) };
+}
+
+/**
+ * How much of the moon is lit, from where the sun and the moon stand in the
+ * sky: a disc lit by a distant sun shows (1 − cos e) / 2 of its face, e being
+ * the angle between the two. Opposite the sun it is full; beside it, new.
+ */
+export function illuminatedFraction(sun: SolarPosition, moon: SolarPosition): number {
+  const a = toVec(sun), b = toVec(moon);
+  const cosE = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  return (1 - cosE) / 2;
+}
+
+function toVec(p: SolarPosition): [number, number, number] {
+  const ce = Math.cos(p.elevation);
+  return [ce * Math.sin(p.azimuth), Math.sin(p.elevation), ce * Math.cos(p.azimuth)];
+}
+
 /**
  * Solar position for when no location is given.
  * Rises in the east at 6:00, souths at 12:00, sets in the west at 18:00 —
@@ -72,4 +139,15 @@ export function nominalSolarPosition(timeOfDay: number): SolarPosition {
     elevation: Math.asin(Math.sin(phase * Math.PI) * 0.72),
     azimuth: Math.PI / 2 + phase * Math.PI,                  // east → south → west
   };
+}
+
+/**
+ * Lunar position for when no date is given: a full moon, which is the one
+ * that stands opposite the sun — it rises at sunset, souths at midnight and
+ * sets at sunrise, on the sun's own nominal path shifted by twelve hours.
+ * Full because that is the moon the renderer has always drawn its nights by,
+ * and because without a date there is no phase to be right about.
+ */
+export function nominalLunarPosition(timeOfDay: number): LunarPosition {
+  return { ...nominalSolarPosition(timeOfDay + 12), phase: 1 };
 }

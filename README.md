@@ -30,8 +30,9 @@ be an easy way to get a sky that keeps changing procedurally.
   sunset/magic-hour mauve, city lights at night
 - **The night sky** — light pollution on the Bortle scale, a Milky Way made of
   resolved stars with its bulge and Great Rift, meteor showers at a ZHR
-- **The moon** — a crescent with earthshine and maria on the dark side;
-  the disc occludes the stars behind it
+- **The moon** — where the ephemeris puts it, lit by the sun from where the sun is, so
+  the phase and the tilt of the horns follow from the date; earthshine and maria;
+  the disc occludes the stars behind it; up by day too
 - **The aurora** — curtains toward the north that fold and shimmer, green with red tops,
   coming overhead as the activity rises
 - **The ten cloud genera** — cirrus, cirrostratus, cirrocumulus, altostratus,
@@ -131,6 +132,13 @@ using NOAA's formula. Latitude changes the peak elevation; season changes day le
 sky.set({ time: '2026-12-21T16:00Z', location: { latitude: 64.1, longitude: -21.9 } });
 // Reykjavik, winter solstice, 16:00 → already night
 ```
+
+The moon follows the same rule: with a location and a date it stands where the
+lunar ephemeris puts it (good to about a degree), lit by the sun from where the
+sun actually is — so the phase, which limb is bright and how the horns tilt all
+follow from the date, and its light on the clouds grows with the phase and
+goes when it sets. Without a date it is a full moon opposite the sun: rising
+at sunset, high at midnight, gone by day.
 
 Without `location`, the sun rises in the east at 6:00, souths at 12:00, and
 sets in the west at 18:00 — "nowhere in particular, mid-northern latitude" (peak elevation 46°).
@@ -646,6 +654,7 @@ sky.reducedMotion;   // true while the sky is being held still
 | `CLOUD_GENERA` | metadata for the ten genera (name, nickname, altitude, form) |
 | `resolveFilter(f)` | resolving a filter specification |
 | `solarPosition(date, loc)` | solar azimuth/elevation from latitude/longitude and datetime |
+| `lunarPosition(date, loc)` | the moon's azimuth/elevation and lit fraction, likewise |
 | `WEATHER_PRESETS` / `FILTER_PRESETS` | presets |
 | `DEFAULT_CAMERA` / `CUBE_FACE_CAMERAS` | cameras |
 | `renderCubeFaces(c, opts)` | bake the 6 skybox faces in one call, as 2D canvases |
@@ -841,7 +850,6 @@ single, smooth white sheet over the tower's flank.
 
 ## Not implemented
 
-- Moon orbit and phase from the date (currently a crescent fixed opposite the sun at 35° elevation)
 - Other variants (lenticular, fallstreak holes, mammatus, pileus, etc.)
 - A physical atmospheric-scattering model (colors are hand-tuned, not Rayleigh/Mie)
 - A path for temperature, humidity, and pressure themselves (visibility and cloud cover stand in for now)

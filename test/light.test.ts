@@ -34,7 +34,9 @@ describe('celestialLights', () => {
     const l = celestialLights(resolveConditions({ time: 23, weather: 'clear' }), DEFAULT_CAMERA, 16 / 9);
     expect(l.key).toBe('moon');
     expect(l.moon.intensity).toBeCloseTo(l.moon.visibility * MOON_RELATIVE, 12);
-    expect(l.moon.elevation).toBe(0.62);
+    // the nominal moon is full and opposite the sun: high in the south at this hour
+    expect(l.moon.elevation).toBeGreaterThan(0.5);
+    expect(l.moon.visibility).toBeGreaterThan(0.5);
   });
 
   it('directions are unit vectors in world axes (x east, y up, z north)', () => {

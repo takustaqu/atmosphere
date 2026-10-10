@@ -74,6 +74,7 @@ uniform float u_aspect;    // width / height of the picture this viewport stands
 uniform float u_time;      // seconds
 uniform vec3  u_cam;       // yaw, pitch, fov (radians)
 uniform vec2  u_sun;       // sun's elevation, azimuth (radians)
+uniform vec3  u_moon;      // moon's elevation, azimuth (radians), and the lit fraction of its disc
 uniform float u_cover;     // 0..1 total occlusion (accumulated from the cloud-genus mix)
 uniform vec3  u_high;      // amount of the ten cloud genera: cirrus Ci, cirrostratus Cs, cirrocumulus Cc
 uniform vec3  u_mid;       //                                 altostratus As, altocumulus Ac, nimbostratus Ns
@@ -1275,56 +1276,72 @@ void main() {
     }
   }
 
-  // ── Moon (night. Placed opposite the sun — the full-moon relationship) ──
-  // every contribution below carries vis, so a zero vis is an exact no-op
-  float moonVis = nightF * clamp(1.0 - u_cover * 0.9 - gloom, 0.0, 1.0);
+  // ── Moon ──
+  // Where the ephemeris puts it, lit by the sun from where the sun actually
+  // is: the disc is drawn as a sphere, so the terminator's curve and which
+  // limb is bright follow from the two positions — a thin crescent with its
+  // horns away from the sun, a gibbous moon, a full one. Up by day as well,
+  // where the lit face still shows against the blue and the dark face does
+  // not. Every contribution below carries vis, so a zero vis is an exact no-op
+  vec3 moonDir = dirFromAngles(u_moon.x, u_moon.y);
+  float moonUp = smoothstep(-0.03, 0.03, moonDir.y);
+  float moonVis = moonUp * clamp(1.0 - u_cover * 0.9 - gloom, 0.0, 1.0);
+  // how much moonlight there is for the clouds and the night: a full moon
+  // high up gives all of it, a crescent a sliver, a set moon none — with a
+  // floor for the starlight and airglow a night keeps regardless
+  float nightM = nightF * mix(0.3, 1.0, moonUp * u_moon.z);
   if (moonVis > 0.0 && skyLight) {
-    vec3 moonDir = dirFromAngles(0.62, u_sun.y + PI);
     float ang = acos(clamp(dot(rd, moonDir), -1.0, 1.0));
     float moon = smoothstep(0.048, 0.043, ang);
-    // the crescent bite: carve it out with a circle offset slightly from the moon's center
-    vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), moonDir));
+    vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), moonDir) + vec3(1e-6, 0.0, 0.0));
     vec3 up = cross(moonDir, right);
-    vec3 biteDir = normalize(moonDir - right * 0.013 + up * 0.013);
-    float bite = smoothstep(0.054, 0.048, acos(clamp(dot(rd, biteDir), -1.0, 1.0)));
     float vis = moonVis;
-    float cres = clamp(moon - bite, 0.0, 1.0);
 
     // Moon-fixed frame: the ray projected onto the disc plane, in units of the
     // disc radius. The mare pattern samples this, so it stays glued to the
     // surface however the camera swings.
     vec2 muv = vec2(dot(rd, right), dot(rd, up)) / 0.048;
+    // the surface normal under this ray, the disc being the near face of a
+    // sphere, and how much sun that surface gets: the terminator, soft over
+    // the sphere's own curvature
+    float rr = min(dot(muv, muv), 1.0);
+    vec3 nrm = right * muv.x + up * muv.y - moonDir * sqrt(1.0 - rr);
+    float litF = smoothstep(-0.06, 0.12, dot(nrm, sunDir));
+    float lit = moon * litF;
     // only ever read through the disc's own coverage, so off the disc it is skipped
     float mare = 0.0;
     if (moon > 0.0) mare = smoothstep(0.42, 0.72, fbm(muv * 2.3 + vec2(4.7, 9.2)));
 
     // Earthshine. The shadowed disc is rock, not glass: it occludes the stars
     // behind it (a replace, not an add) and holds a faint blue-grey glow of
-    // sunlight bounced off the Earth, an order of magnitude under the crescent.
-    // The occlusion saturates early so a clear-night vis of 0.9 does not leak
-    // 10% of every star through the rock, yet it still follows vis down under
-    // cloud so a heavy overcast dims the disc away instead of punching a dark
-    // hole in the cloud glow (and vis=0 keeps the mix an identity by day).
+    // sunlight bounced off the Earth, an order of magnitude under the lit
+    // face. The occlusion saturates early so a clear-night vis of 0.9 does
+    // not leak 10% of every star through the rock, yet it still follows vis
+    // down under cloud so a heavy overcast dims the disc away instead of
+    // punching a dark hole in the cloud glow. By day the sky in front of it
+    // outshines it and the dark face is not there at all.
     vec3 shine = L(vec3(0.62, 0.68, 0.78)) * (1.0 - 0.5 * mare) * 0.016 * MOON_LUM;
-    sky = mix(sky, shine, moon * smoothstep(0.0, 0.55, vis));
+    sky = mix(sky, shine, moon * smoothstep(0.0, 0.55, vis) * nightF);
 
-    // The lit crescent: overexposed warm white, linear-light emission
-    sky += L(vec3(1.0, 0.96, 0.88)) * cres * vis * MOON_LUM;
+    // The lit face: overexposed warm white, linear-light emission, the maria
+    // a shade darker on it; by day the daylit sky takes the edge off it
+    float dayDim = mix(0.45, 1.0, nightF);
+    sky += L(vec3(1.0, 0.96, 0.88)) * (1.0 - 0.35 * mare) * lit * vis * MOON_LUM * dayDim;
 
-    // Bloom leans toward the crescent (away from the bite offset), warm like
-    // the light that causes it; the shadowed limb keeps only a trace. Kept
+    // Bloom leans toward the lit limb, warm like the light that causes it,
+    // and grows with the phase; the shadowed limb keeps only a trace. Kept
     // tight so it does not wash the Milky Way band nearby.
-    vec2 biteOff = normalize(vec2(-0.013, 0.013));
-    float sideW = 0.5 - 0.5 * dot(muv, biteOff) / max(length(muv), 1e-3);
+    vec2 litDir = normalize(vec2(dot(sunDir, right), dot(sunDir, up)) + vec2(1e-5, 0.0));
+    float sideW = 0.5 + 0.5 * dot(muv, litDir) / max(length(muv), 1e-3);
     sideW = 0.12 + 0.88 * sideW;
-    float rim = exp(-max(ang - 0.045, 0.0) * 30.0) * (1.0 - moon);
+    float rim = exp(-max(ang - 0.045, 0.0) * 30.0) * (1.0 - moon) * (0.15 + 0.85 * u_moon.z);
     // near-white with only a hint of warmth: a stronger yellow muddied to
     // brown against the lavender of the Milky Way band
-    sky += L(vec3(1.0, 0.95, 0.87)) * rim * sideW * 0.30 * vis;
+    sky += L(vec3(1.0, 0.95, 0.87)) * rim * sideW * 0.30 * vis * nightF;
     // a whisper of scattered moonlight haze just past the limb, all around
     sky += L(vec3(0.45, 0.55, 0.75)) * exp(-max(ang - 0.045, 0.0) * 11.0)
-         * (1.0 - moon) * 0.035 * vis;
-    wide = max(wide, max(cres, rim * sideW * 0.30) * vis * 0.7);
+         * (1.0 - moon) * 0.035 * vis * u_moon.z * nightF;
+    wide = max(wide, max(lit, rim * sideW * 0.30) * vis * 0.7);
   }
 
   // ── Meteors ──
@@ -1471,7 +1488,7 @@ void main() {
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
   if (u_high.z > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir);
-    vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightF, sunsetF, flash, gloom, 0.5, cloudSun);
+    vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun);
     OVER(col, g.x * u_high.z * 0.85 * horizonFade);
   }
 
@@ -1505,7 +1522,7 @@ void main() {
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
   if (u_mid.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir);
-    vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightF, sunsetF, flash, gloom, 0.9, cloudSun);
+    vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun);
     OVER(col, g.x * u_mid.y * 0.95 * horizonFade);
   }
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
@@ -1789,7 +1806,7 @@ void main() {
         // head, and is 1 at night, where nothing is overexposed.
         vec3 ambient, glow, sunL, shade, moon, leaden;
         float diffuse;
-        cloudLight(dayF, nightF, sunsetF, cloudSun, ambient, glow, sunL, shade, moon, leaden, diffuse);
+        cloudLight(dayF, nightM, sunsetF, cloudSun, ambient, glow, sunL, shade, moon, leaden, diffuse);
         float gain = mix(1.0, 0.82, dayF);
         vec3 face = ambient + glow + sunL * 0.42;
         vec3 hi = (face + moon * 0.7) * gain;
@@ -1922,7 +1939,7 @@ void main() {
   // Stratocumulus Sc (roll cloud) — large mottled masses, arranged as rolls
   if (u_low.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
-    vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightF, sunsetF, flash, gloom, 1.05, cloudSun);
+    vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightM, sunsetF, flash, gloom, 1.05, cloudSun);
     OVER(col, g.x * u_low.y * 0.95 * horizonFade);
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
@@ -1951,7 +1968,7 @@ void main() {
     alpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, dl.x)) * 0.92;
     // shade from continuous thickness across the wide ramp, not from the saturated density (den)
     float thick = smoothstep(edge, edge + 0.35, dl.z);
-    vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightF, sunsetF, flash, gloom, 1.0, cloudSun);
+    vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun);
     OVER(c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
@@ -1960,14 +1977,14 @@ void main() {
     vec3 fl = cloudField(fuv, churn * 1.2, ldir, fedge, ramp, fedge - 0.01);
     float falpha = fl.x * u_low.z * horizonFade * (1.0 - cbMask * 0.6);
     float fthick = smoothstep(fedge, fedge + 0.35, fl.z);
-    vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightF, sunsetF, flash, gloom, 1.25, cloudSun);
+    vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightM, sunsetF, flash, gloom, 1.25, cloudSun);
     OVER(fc, falpha * 0.95);
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
   if (u_low.x > 0.001 && above && stack) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_LOW * 0.5, u_windOff * 1.2), 0.45, 0.45);
     vec3 col = cloudColor(0.95, -0.25, 0.60,
-                          dayF, nightF, sunsetF, flash, gloom, 1.2, cloudSun) * 0.86;
+                          dayF, nightM, sunsetF, flash, gloom, 1.2, cloudSun) * 0.86;
     float lowBias = mix(1.0, 0.40, smoothstep(0.05, 0.55, rd.y));
     OVER(col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
   }
@@ -2119,10 +2136,9 @@ void main() {
     }
     // the moon's, at night
     if (moonVis > 0.0) {
-      vec3 moonDir = dirFromAngles(0.62, u_sun.y + PI);
       float ang = acos(clamp(dot(r, moonDir), -1.0, 1.0));
       mir += L(vec3(1.0, 0.96, 0.88)) * (smoothstep(0.075, 0.035, ang) * 0.55 + exp(-ang * 18.0) * 0.12)
-           * moonVis * MOON_LUM * clear;
+           * moonVis * u_moon.z * MOON_LUM * clear;
     }
     // the city's glow along the horizon, as the sky carries it
     mir += L(vec3(0.26, 0.16, 0.09)) * exp(-rh * 8.0) * nightF
@@ -2438,7 +2454,7 @@ type Uniforms = Record<string, WebGLUniformLocation | null>;
 
 const UNIFORM_NAMES = [
   'u_noise',
-  'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun',
+  'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun', 'u_moon',
   'u_cover', 'u_high', 'u_mid', 'u_low',
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
   'u_windOff', 'u_evo',
@@ -3068,6 +3084,7 @@ export class AtmosphereRenderer {
     const u = this.u;
     gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
     gl.uniform2f(u.u_sun, s.sunElevation, s.sunAzimuth);
+    gl.uniform3f(u.u_moon, s.moonElevation, s.moonAzimuth, s.moonPhase);
     const c = s.clouds;
     gl.uniform1f(u.u_cover, s.cloudCover);
     gl.uniform3f(u.u_high, c.cirrus, c.cirrostratus, c.cirrocumulus);

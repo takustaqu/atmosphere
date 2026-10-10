@@ -9,7 +9,9 @@ import { resolveGround, type Ground, type GroundInput } from './ground.js';
 import { resolveLens, type Lens, type LensInput } from './lens.js';
 import { resolveParticles, type Particles, type ParticlesInput } from './particles.js';
 import { resolvePolarizer, type Polarizer, type PolarizerInput } from './polarizer.js';
-import { nominalSolarPosition, solarPosition, type GeoLocation } from './sun.js';
+import {
+  lunarPosition, nominalLunarPosition, nominalSolarPosition, solarPosition, type GeoLocation,
+} from './sun.js';
 import { toDate, toTimeOfDay, type TimeInput } from './time.js';
 import { resolveTone, type ToneCurve, type ToneInput } from './tone.js';
 import { resolveWeather, type WeatherInput, type WeatherState } from './weather.js';
@@ -80,6 +82,12 @@ export interface AtmosphereState extends WeatherState {
   sunElevation: number;
   /** solar azimuth in radians. north=0, east=π/2 */
   sunAzimuth: number;
+  /** lunar elevation in radians. horizon=0, negative when set */
+  moonElevation: number;
+  /** lunar azimuth in radians. north=0, east=π/2 */
+  moonAzimuth: number;
+  /** the illuminated fraction of the moon's disc, 0..1 (0 new, 1 full) */
+  moonPhase: number;
   filter: ColorFilter;
   tone: ToneCurve;
   polarizer: Polarizer;
@@ -105,11 +113,19 @@ export function resolveConditions(c: Conditions): AtmosphereState {
   const sun = c.location && date
     ? solarPosition(date, c.location)
     : nominalSolarPosition(timeOfDay);
+  // the moon follows the same rule: real when it can be, a full moon
+  // opposite the sun otherwise
+  const moon = c.location && date
+    ? lunarPosition(date, c.location)
+    : nominalLunarPosition(timeOfDay);
 
   return {
     timeOfDay,
     sunElevation: sun.elevation,
     sunAzimuth: sun.azimuth,
+    moonElevation: moon.elevation,
+    moonAzimuth: moon.azimuth,
+    moonPhase: moon.phase,
     ...resolveWeather(c.weather ?? DEFAULT_CONDITIONS.weather),
     filter: resolveFilter(c.filter),
     tone: resolveTone(c.tone),

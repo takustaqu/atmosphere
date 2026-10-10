@@ -227,10 +227,13 @@ export function celestialLights(
   const sun = celestial(s.sunElevation, s.sunAzimuth, camera, aspect,
     normalizedColor(sunDisplay), sunVis, 1);
 
-  // the moon sits opposite the sun at a fixed height (the full-moon relationship)
-  const moonVis = nightF * clamp01(1 - s.cloudCover * 0.9 - gloom);
-  const moon = celestial(0.62, s.sunAzimuth + Math.PI, camera, aspect,
-    normalizedColor([1.0, 0.96, 0.88]), moonVis, MOON_RELATIVE);
+  // the moon where it stands, as bright as its phase: a thin crescent gives
+  // a sliver of a full moon's light. Up by day too, but outshone there
+  const moonUp = smoothstep(-0.03, 0.03, Math.sin(s.moonElevation));
+  const moonVis = moonUp * clamp01(1 - s.cloudCover * 0.9 - gloom);
+  const moon = celestial(s.moonElevation, s.moonAzimuth, camera, aspect,
+    normalizedColor([1.0, 0.96, 0.88]), moonVis,
+    MOON_RELATIVE * s.moonPhase * (0.4 + 0.6 * nightF));
 
   const key = sun.intensity <= 0 && moon.intensity <= 0 ? null
     : sun.intensity >= moon.intensity ? 'sun' : 'moon';

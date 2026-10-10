@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { nominalSolarPosition, solarPosition } from '../src/sun';
+import {
+  illuminatedFraction, lunarPosition, nominalLunarPosition, nominalSolarPosition, solarPosition,
+} from '../src/sun';
 
 const DEG = 180 / Math.PI;
 const TOKYO = { latitude: 35.68, longitude: 139.77 };
@@ -67,5 +69,45 @@ describe('nominalSolarPosition', () => {
 
   it('night: negative elevation', () => {
     expect(nominalSolarPosition(0).elevation).toBeLessThan(0);
+  });
+});
+
+describe('lunarPosition', () => {
+  it('is full on the night of a full moon, and new on a new moon', () => {
+    // 2026-01-03 10:03 UTC and 2026-01-18 19:52 UTC, from the almanac
+    expect(lunarPosition(new Date('2026-01-03T10:03Z'), TOKYO).phase).toBeGreaterThan(0.97);
+    expect(lunarPosition(new Date('2026-01-18T19:52Z'), TOKYO).phase).toBeLessThan(0.03);
+  });
+
+  it('a January full moon stands high in the south of Tokyo around midnight', () => {
+    // a January full moon rides the summer sun's path: it culminates near 78°,
+    // where the azimuth swings through the south quickly, so only the height
+    // is pinned down here
+    const { elevation, azimuth } = lunarPosition(new Date('2026-01-03T23:30+09:00'), TOKYO);
+    expect(elevation * DEG).toBeGreaterThan(70);
+    expect(azimuth * DEG).toBeGreaterThan(90);
+    expect(azimuth * DEG).toBeLessThan(270);
+  });
+
+  it('is half lit a week after new', () => {
+    // first quarter 2026-01-26 04:48 UTC
+    const { phase } = lunarPosition(new Date('2026-01-26T04:48Z'), TOKYO);
+    expect(phase).toBeGreaterThan(0.42);
+    expect(phase).toBeLessThan(0.58);
+  });
+
+  it('illuminatedFraction: opposite the sun is full, beside it is new', () => {
+    const sun = { elevation: 0.3, azimuth: Math.PI };
+    expect(illuminatedFraction(sun, { elevation: -0.3, azimuth: 0 })).toBeCloseTo(1, 6);
+    expect(illuminatedFraction(sun, sun)).toBeCloseTo(0, 6);
+  });
+});
+
+describe('nominalLunarPosition', () => {
+  it('is a full moon opposite the nominal sun: rises at sunset, souths at midnight', () => {
+    expect(nominalLunarPosition(0).phase).toBe(1);
+    expect(nominalLunarPosition(0).elevation).toBeCloseTo(nominalSolarPosition(12).elevation, 9);
+    expect(nominalLunarPosition(12).elevation).toBeLessThan(0);
+    expect(nominalLunarPosition(18).elevation).toBeCloseTo(0, 6);
   });
 });
