@@ -712,33 +712,58 @@ float ghost(vec2 p, vec2 pos, float r, float aspect) {
   return smoothstep(r, r * 0.4, d);
 }
 
-// cloud color (lighting shared by every layer)
+// ── The light the clouds are lit by ──
+// Every cloud — the plane layers through cloudColor, and the cumulonimbus with
+// its own lobe shading — takes its palette from these, so an hour, an overcast
+// or a storm reaches them all through one door and two clouds side by side
+// can never disagree about the color of the light. (The tower used to carry a
+// hand-authored palette of its own, and read as a cream or a blue-grey mass
+// against the cotton beside it.) Display-encoded, like the palette they feed.
+//   ambient  the sky's own light on every face — all there is at night
+//   glow     the afterglow on top of it: the pink of magic hour
+//   sun      direct sunlight on top of both, already scaled by how much there is
+//   shade    what reaches a face thick enough that only sky light gets in
+//   moon     the faint silver on a night cloud
+//   leaden   where severe weather drags everything
+//   diffuse  0..1 how much of the sun the overcast has taken away
+void cloudLight(float dayF, float nightF, float sunsetF, vec3 cloudSun,
+                out vec3 ambient, out vec3 glow, out vec3 sun, out vec3 shade,
+                out vec3 moon, out vec3 leaden, out float diffuse) {
+  // under full overcast there's no direct sunlight, only diffuse light
+  diffuse = smoothstep(0.55, 0.95, u_cover);
+  ambient = mix(vec3(0.035, 0.045, 0.07), vec3(0.68, 0.73, 0.82), dayF);
+  // magic hour: the sky's afterglow tints clouds a faint pink even after sunset
+  glow = vec3(0.30, 0.17, 0.13) * sunsetF * (1.0 - dayF);
+  // sunset colors linger on clouds right after sundown too
+  sun = cloudSun * max(dayF, sunsetF * 0.55);
+  // not a flat grey: a blue-tinted shadow color (ambient light from the sky)
+  shade = (ambient + glow) * vec3(0.50, 0.54, 0.64) + vec3(0.02, 0.03, 0.05);
+  moon = vec3(0.10, 0.12, 0.18) * nightF;
+  leaden = vec3(0.09, 0.10, 0.12) + vec3(0.10) * dayF;
+}
+
+// cloud color (lighting shared by every plane layer)
 vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, float sunsetF,
                 float flash, float gloom, float darkMul, vec3 cloudSun) {
-  // under full overcast there's no direct sunlight, only diffuse light:
-  // weaken the lit/shadow contrast, the base shadow, and the silver lining together
-  float diffuse = smoothstep(0.55, 0.95, u_cover);
+  vec3 ambient, glow, sun, shade, moon, leaden;
+  float diffuse;
+  cloudLight(dayF, nightF, sunsetF, cloudSun, ambient, glow, sun, shade, moon, leaden, diffuse);
+  // under overcast, weaken the lit/shadow contrast, the base shadow, and the
+  // silver lining together
   float litE = lit * (1.0 - diffuse * 0.75);
-  vec3 ambient = mix(vec3(0.035, 0.045, 0.07), vec3(0.68, 0.73, 0.82), dayF);
-  // magic hour: the sky's afterglow tints clouds a faint pink even after sunset
-  ambient += vec3(0.30, 0.17, 0.13) * sunsetF * (1.0 - dayF);
-  // sunset colors linger on clouds right after sundown too
-  float sunAmt = max(dayF, sunsetF * 0.55);
   // the lit face
-  vec3 c = ambient + cloudSun * sunAmt * (0.42 + 0.45 * litE);
-  // shadow from thickness: instead of a flat grey, sink smoothly into a
-  // blue-tinted shadow color (ambient light from the sky) as thickness increases
+  vec3 c = ambient + glow + sun * (0.42 + 0.45 * litE);
+  // shadow from thickness: sink smoothly into the shade as thickness increases
   float sh = thick * (0.62 - diffuse * 0.28) * darkMul;
   sh *= 0.75 + 0.25 * (1.0 - litE);   // the sun-facing side has a shallower shadow
-  vec3 shadowCol = ambient * vec3(0.50, 0.54, 0.64) + vec3(0.02, 0.03, 0.05);
-  c = mix(c, shadowCol, clamp(sh, 0.0, 0.85));
+  c = mix(c, shade, clamp(sh, 0.0, 0.85));
   // night: a faint glow from moonlight
-  c += vec3(0.10, 0.12, 0.18) * nightF * (0.3 + 0.4 * litE);
+  c += moon * (0.3 + 0.4 * litE);
   // silver lining (the edge glows on the sun side — only with direct light)
   float rim = den * (1.0 - den) * 4.0 * max(litE, 0.0) * (1.0 - diffuse);
   c += cloudSun * rim * 0.35 * max(dayF, sunsetF * 0.5);
   // severe-weather clouds: a torn, leaden grey
-  c = mix(c, vec3(0.09, 0.10, 0.12) + vec3(0.10) * dayF, gloom * 0.85);
+  c = mix(c, leaden, gloom * 0.85);
   // lightning flickers inside the cloud
   c += flash * vec3(0.75, 0.8, 1.0) * (0.35 + den * 0.65);
   return c;
@@ -1587,35 +1612,36 @@ void main() {
         float depth = 1.0 - smoothstep(0.0, max(anvilTop * 0.8, 0.3), rd.y);
 
         // walk across three points — white, mid, shadow — keeping the value continuous.
-        // measured against real photos, a sunlit cumulus sits near 0.93, and
-        // even its shadow only sinks to about 0.55.
-        // placing hi at 1.0 leaves no room to lay grain on top and produces a solid-white patch
-        // the shadow points sit clearly on the blue side: a cloud's shade is
-        // lit by the sky, so letting it fall to a neutral grey reads as dirt
-        // (measured on photos: shadow ≈ (0.55, 0.63, 0.75), never colorless)
-        // the shade is lit almost entirely by the blue sky dome, so under a
-        // clear sky it takes on a clear blue cast — deeper than a photo's
-        // "neutral" reading suggests. The overcast pull below neutralizes it
-        // again when there's no blue sky to reflect
-        // daytime hi was authored warm of white (R > B) while every other
-        // layer's lit face leans blue (cloudColor: cool ambient + cloudSun),
-        // so the tower read as a cream mass in a neutral sky. Match the other
-        // clouds' color temperature; sunset warmth is layered on below and
-        // keeps its own tint
-        vec3 hi  = mix(vec3(0.13, 0.14, 0.18), vec3(0.918, 0.948, 0.985), dayF);
-        vec3 mid = mix(vec3(0.09, 0.10, 0.13), vec3(0.765, 0.825, 0.920), dayF);
-        vec3 lo  = mix(vec3(0.05, 0.06, 0.08), vec3(0.415, 0.545, 0.775), dayF);
-        hi  = mix(hi,  hi  * vec3(1.10, 0.84, 0.62), sunsetF * 0.85);
-        mid = mix(mid, mid * vec3(1.06, 0.82, 0.66), sunsetF * 0.85);
-        lo  = mix(lo,  lo  * vec3(0.96, 0.86, 0.86), sunsetF * 0.6);
-        // under overcast the other layers drop to diffuse sky light (see
-        // cloudColor); if the tower keeps its sunny warm-white palette it
-        // floats above them as a cream-yellow mass. Pull it to the same
-        // blue-grey ambient as the deck it's embedded in
-        float diffuse = smoothstep(0.55, 0.95, u_cover);
-        hi  = mix(hi,  mix(vec3(0.115, 0.125, 0.16), vec3(0.800, 0.835, 0.900), dayF), diffuse * 0.85);
-        mid = mix(mid, mix(vec3(0.085, 0.095, 0.12), vec3(0.680, 0.720, 0.805), dayF), diffuse * 0.85);
-        lo  = mix(lo,  mix(vec3(0.050, 0.058, 0.08), vec3(0.520, 0.570, 0.680), dayF), diffuse * 0.85);
+        //
+        // The three are the plane layers' own light (cloudLight), so the tower
+        // is lit by exactly what lights the cotton beside it: the same cool
+        // ambient under the same warm sun by day, the same pink afterglow, the
+        // same silver at night, the same diffuse grey under an overcast. It
+        // used to carry a palette of its own, with its own sunset tint and its
+        // own overcast pull, and the two never agreed on the color of the
+        // light: a cream tower in a mauve sky at magic hour, a blue-grey one
+        // among white cotton at noon.
+        //
+        // The luminance is the tower's, not the cotton's. A plane layer's lit
+        // face runs well past 1.0 by day and the tone shoulder flattens it to
+        // white — that is where its cotton look comes from — but a mass this
+        // size needs its lobes modelled, and measured against real photos a
+        // sunlit head sits near 0.92 with the shade sinking to about 0.55. So
+        // the tower takes the cotton's color at its own authored level: the
+        // gain brings a face lit at the cotton's typical lit-ness down to that
+        // head, and is 1 at night, where nothing is overexposed.
+        vec3 ambient, glow, sunL, shade, moon, leaden;
+        float diffuse;
+        cloudLight(dayF, nightF, sunsetF, cloudSun, ambient, glow, sunL, shade, moon, leaden, diffuse);
+        float gain = mix(1.0, 0.82, dayF);
+        vec3 face = ambient + glow + sunL * 0.42;
+        vec3 hi = (face + moon * 0.7) * gain;
+        // the shade is the cotton's thickest shadow — and, as there, an
+        // overcast's diffuse light fills it in part way
+        vec3 lo = (mix(face, shade, 0.85 * (1.0 - diffuse * 0.45)) + moon * 0.3) * gain;
+        // the middle sits toward the light: a lobe's flank is mostly lit, and
+        // only its valley reaches the shade
+        vec3 mid = mix(lo, hi, 0.70);
 
         // weight the scales so the coarse lobes carry the shading — letting
         // the fine scales compete washes the big forms out into an even
@@ -1647,23 +1673,44 @@ void main() {
         // so it adds "skin" without raising overall contrast
         tcol *= 1.0 + micro * 0.13 + (wisp - 0.5) * 0.09;
         // sink continuously toward the cloud base (never in discrete steps).
-        // the base is in the tower's own shadow but lit by the sky, so it
-        // sinks toward blue-grey, not plain grey
-        tcol *= mix(vec3(1.0), vec3(0.55, 0.645, 0.845), depth * depth);
+        // The base is in the tower's own shadow: no sun reaches it, and no
+        // afterglow either — that comes from the sun's side of the sky — so
+        // it is lit by the sky's own light alone, halfway into the shade. A
+        // replace, not a tint: multiplying the sunlit face down by a cool
+        // factor cancels pink against blue and lands on a mud grey, which is
+        // exactly what the base turned into at magic hour. The sky-lit color
+        // stays clean — blue-grey by day, lavender under the afterglow. Most
+        // of the way, not all: the base still catches some light off the
+        // ground and the clouds around it
+        vec3 base = (mix(ambient, shade, 0.5) + moon * 0.3) * gain;
+        tcol = mix(tcol, base, depth * depth * 0.8);
         // the edge is thin, so light passes through it (silver lining — only with direct sun)
         tcol += cloudSun * m * (1.0 - m) * 4.0 * 0.22
               * max(t - 0.45, 0.0) * max(dayF, sunsetF * 0.6) * (1.0 - diffuse);
         // in severe weather the cumulonimbus itself sits inside the storm.
         // leaving it bright here makes a pure-white cloud float in a leaden
         // sky. Pull it toward the same leaden grey as the other layers.
-        tcol = mix(tcol, vec3(0.19, 0.20, 0.23) * (0.25 + 0.75 * dayF), gloom * 0.85);
+        tcol = mix(tcol, leaden, gloom * 0.85);
         tcol += flash * vec3(0.75, 0.80, 1.0) * 0.55;
 
+        // ── Aerial perspective ──
+        // The base of a tower stands tens of kilometres off, behind that much
+        // air, and the air scatters the sky's light into the line of sight:
+        // the base loses contrast and takes on the horizon's color, while the
+        // head, seen through thinner air, stays crisp. That is what lets a
+        // real cumulonimbus sit *in* its sky rather than in front of it.
+        // Against a backdrop that is the sky, mixing toward the backdrop is
+        // the same as letting it through — so this is a cut in the alpha,
+        // which the split variant can carry without knowing the sky's color.
+        // The path length grows as 1/sin(elevation); haze thickens it only a
+        // little, since the haze wash at the end already paints the air's own
+        // color over everything.
+        float air = 1.0 - exp(-(0.35 + 0.40 * u_haze) * 0.06 / max(rd.y, 0.02));
         // cumulonimbus isn't a cloud-plane projection, so high frequency
         // doesn't blow up near the horizon. Applying the same strong fade as
         // the other layers would dissolve the cloud base into haze and make it vanish.
         float cbFade = smoothstep(-0.02, 0.06, rd.y);
-        cbMask = clamp(m, 0.0, 1.0) * 0.97 * cbFade;
+        cbMask = clamp(m, 0.0, 1.0) * 0.97 * cbFade * (1.0 - air);
         OVER(tcol, cbMask);
       }
     }

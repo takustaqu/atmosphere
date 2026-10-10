@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The cumulonimbus is lit by the same light as every other cloud.** It
+  carried a hand-authored palette of its own — its own white, its own shade,
+  its own sunset tint and its own overcast pull — and no two of those agreed
+  with `cloudColor`'s cool ambient under a warm sun. Side by side with the
+  cotton, the tower read as a blue-grey mass at noon and a cream one at magic
+  hour, with a base bluer than anything else in the sky. The light every
+  layer is lit by now lives in one place (`cloudLight`: ambient, sun, shade,
+  moonlight, storm grey and how diffuse the overcast has made it), and the
+  tower's three tonal points are derived from it rather than written out.
+  Its luminance is unchanged — a sunlit head still sits near 0.92, measured
+  on photos, so the lobes stay modelled where a plane layer's face would
+  blow out to white — but its *color* is the cotton's at that level, in
+  every hour and every weather, by construction. Its base is lit by the
+  sky's own light alone, halfway into the shade — no sun and no afterglow
+  reach it — and is reached by a replace rather than a cool tint over the
+  sunlit face, which cancelled pink against blue into a mud grey at magic
+  hour; it is blue-grey by day and lavender under the afterglow now. The
+  plane layers are bit-identical: the refactor only moves their arithmetic.
+- **The tower melts into the sky toward its base.** Aerial perspective: the
+  base of a cumulonimbus stands tens of kilometres off behind that much air,
+  which scatters the sky's light into the line of sight, so the base loses
+  contrast and takes the horizon's color while the head stays crisp. Drawn
+  as a cut in the tower's alpha that grows as 1/sin(elevation), a little
+  deeper in haze — against a backdrop that is the sky, letting it through is
+  the same as mixing toward it, and the split variant can carry that without
+  knowing the sky's color.
+
 ## 0.3.2 — 2026-10-01
 
 Steadier animation on large canvases.
