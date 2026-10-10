@@ -92,6 +92,30 @@
 
 ### Changed
 
+- **The sunset has its gradient.** Measured against photographs (the
+  pakutaso 空・雲 set, now the playground's `pakutaso` sheet), every sunset
+  came out the same salmon: daylight was a quarter of noon by the time the
+  sun touched the horizon, one orange was laid over the whole lower sky, the
+  far side included, with a mauve over the rest, and the clouds took one
+  pink. Now daylight falls away slowly through twilight (three fifths at
+  sunset, a fifth at civil dusk, gone by nautical, with the stars keeping to
+  a deeper night of their own); toward the sun the horizon goes red, orange,
+  yellow up into a zenith that stays blue, the band climbing as the sun
+  sinks and collapsing to a rim once it is well under, while the far side
+  stays cool for the Earth's shadow; the clouds lose their direct sun layer
+  by layer — the low deck going grey while the high clouds still burn — and
+  what sun still reaches them is redder; and the disc at the horizon is an
+  orange you can look at rather than a white you cannot. Every hour from
+  golden hour to dusk moved; noon is untouched.
+- **Cumulus has a top and a base.** A cumulus is a column on a flat base,
+  and seen from below it is two things: a dark flat underside and a sunlit
+  crown showing past it. One plane could not be both, and the layer read as
+  a textured sheet. The same field is read on two planes now — the base,
+  and a plane a third higher where only the denser cores reach — and
+  composited top first, base last. Overhead the base covers the crown but
+  for a lit rim; toward the horizon the crown stands clear above a grey
+  bottom. The parallax between the planes is what gives a lump its side.
+  Costs the cumulus layer about two thirds more.
 - **The shader is compiled per combination of features in use.** The sea,
   the aurora, the halos, the rainbow, the bolt, the contrails, the rays, the
   dark-sky grids and the polarizer are each a block the shader only runs

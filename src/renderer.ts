@@ -2192,17 +2192,45 @@ void main() {
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
   if (u_low.z > 0.02 && above && stack) {
-    vec2 cuv = planeUV(rd, rdY, ALT_LOW * 2.5, u_windOff);
+    // ── Cumulus as a slab: a top and a base ──
+    // A cumulus is a column standing on a flat base, and seen from below it
+    // is two things: a dark flat underside, and a sunlit crown that shows
+    // past it. One plane cannot be both. So the same field is read on two
+    // planes — the base, and a plane a third higher where only the denser
+    // cores still reach — and the two are composited top first, base last
+    // (the base is the nearer). Overhead the two project to the same place
+    // and the dark base covers the crown but for a lit rim; toward the
+    // horizon the crown projects above the base and stands clear of it, a
+    // white top over a grey bottom, which is the cumulus of a photograph.
+    // The parallax between the planes is what gives the lump its side.
+    //
     // during high wind the whole sky wobbles slightly.
     // driven by u_windOff (which only advances in wind) so the phase is
     // continuous across u_time's wrap; at full gust its rate matches the
     // old u_time * 2.3 / 1.7 frequencies
-    cuv += u_wind * 0.01 * vec2(
+    vec2 wob = u_wind * 0.01 * vec2(
       sin(u_windOff * 10.0 + rd.y * 8.0),
       cos(u_windOff * 7.4 + rd.x * 6.0)
     );
     // the smaller the amount, the higher the threshold — sparse clouds only sprout here and there
     float edge = 0.88 - u_low.z * 0.52;
+
+    // the crown: the plane above, a narrower threshold so the lumps taper
+    // into domes, lit from above and shaded shallowly
+    {
+      vec2 tuv = planeUV(rd, rdY, ALT_LOW * 2.5 * 1.32, u_windOff) + wob;
+      float tedge = edge + 0.07;
+      vec3 tl = cloudField(tuv, churn, ldir, tedge, ramp, tedge - 0.01);
+      float talpha = tl.x * u_low.z * horizonFade;
+      talpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, tl.x)) * 0.92;
+      float tthick = smoothstep(tedge, tedge + 0.35, tl.z);
+      vec3 tc = cloudColor(tl.x, tl.y + 0.35, tthick * 0.45, dayF, nightM, sunsetF, flash, gloom, 0.7, cloudSun, 0.0);
+      OVER(tc, talpha * 0.97);
+    }
+
+    // the base: the whole footprint, flat, in the lump's own shadow and lit
+    // by the sky — and from the side, by a sun low enough to get under it
+    vec2 cuv = planeUV(rd, rdY, ALT_LOW * 2.5, u_windOff) + wob;
     // the veil's skirt reaches lower than the density's, so it sets the floor
     vec3 dl = cloudField(cuv, churn, ldir, edge, ramp, edge - 0.26);
     // a thin, translucent veil cloud: give the density threshold a wide skirt below it
@@ -2216,7 +2244,14 @@ void main() {
     alpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, dl.x)) * 0.92;
     // shade from continuous thickness across the wide ramp, not from the saturated density (den)
     float thick = smoothstep(edge, edge + 0.35, dl.z);
-    vec3 c = cloudColor(dl.x, dl.y, thick, dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun, 0.0);
+    // the underside takes the sun only when the sun is low enough to reach
+    // under it; the rest of the day it is the shade, darkest at the core
+    // the rest of the day it is the shade — a soft grey, not a dark one: a
+    // cumulus base is lit by the whole sky and by the ground, and photographs
+    // of one read as white with grey beneath, not grey with white above
+    float under = smoothstep(0.30, 0.02, sunEl);
+    float baseLit = mix(-0.30, dl.y, under);
+    vec3 c = cloudColor(dl.x, baseLit, max(thick * 0.9, 0.30 * dl.x), dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun, 0.0);
     OVER(c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)

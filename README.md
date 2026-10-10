@@ -800,6 +800,11 @@ pnpm playground   # → http://localhost:8791/examples/playground/
 
 A contact sheet of conditions laid out side by side. Switch which axis is laid
 out with `?sheet=time | weather | genus | sparse | tower | filter | location | camera`;
+`?sheet=pakutaso` is the photo benchmark: the sixteen kinds of sky in
+[pakutaso's 空・雲 category](https://www.pakutaso.com/weather/sky/), each
+tile standing for the photos it names. When a tile and its photos disagree,
+the tile is what moves.
+
 `?sheet=grow` is an animated demo (a cumulonimbus grows, spreads an anvil, and
 collapses over 40 seconds); `?sheet=nimbostratus | altostratus | cumulonimbus`
 are benchmarks meant to be compared against real photos. This is the fastest
