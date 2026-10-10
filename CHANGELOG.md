@@ -92,9 +92,8 @@
 
 ### Changed
 
-- **The sunset has its gradient.** Measured against photographs (the
-  pakutaso 空・雲 set, now the playground's `pakutaso` sheet), every sunset
-  came out the same salmon: daylight was a quarter of noon by the time the
+- **The sunset has its gradient.** Measured against photographs of real
+  skies, every sunset came out the same salmon: daylight was a quarter of noon by the time the
   sun touched the horizon, one orange was laid over the whole lower sky, the
   far side included, with a mauve over the rest, and the clouds took one
   pink. Now daylight falls away slowly through twilight (three fifths at

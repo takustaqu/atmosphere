@@ -180,51 +180,6 @@ const SHEETS: Record<string, () => Tile[]> = {
       } as Conditions,
     }))),
 
-  // the photo benchmark: the sixteen kinds of sky in pakutaso's 空・雲 category
-  // (https://www.pakutaso.com/weather/sky/), each with the numbers of the
-  // photos it stands for in that listing. The target is the photograph, not
-  // the previous render: when a tile and its photos disagree, the tile is
-  // what moves. Terrain, buildings and anything seen from above the clouds
-  // are out of scope and left out
-  pakutaso: () => {
-    const S = Math.PI, E = Math.PI / 2, W = 3 * Math.PI / 2;
-    const t = (cap: string, c: Conditions): Tile => ({ caption: cap, conditions: c });
-    return [
-      t('A1 夏空に浮かぶ白い雲・快晴 #1,7,8,21,24,26',
-        { time: 13, weather: { cloudCover: 0.15, windSpeed: 2, visibility: 45 }, camera: { yaw: S, pitch: 0.65, fov: 1.0 } }),
-      t('A2 真夏の積乱雲・入道雲 #4,6,15,25,37,40',
-        { time: 14, weather: { clouds: { cumulonimbus: 0.95, cumulus: 0.35 }, windSpeed: 3, visibility: 35 }, camera: { yaw: 1.1, pitch: 0.42, fov: 1.0 } }),
-      t('A3 見上げた積雲のグラデーション #5,10,12,31',
-        { time: 14, weather: { cloudCover: 0.4, windSpeed: 3, visibility: 40 }, camera: { yaw: S, pitch: 0.95, fov: 1.15 } }),
-      t('A4 薄雲に隠された太陽と筋状の雲 #11',
-        { time: 15.5, weather: { clouds: { cirrostratus: 0.85, cirrus: 0.6 }, windSpeed: 4, visibility: 30 }, camera: { yaw: W - 0.5, pitch: 0.55, fov: 1.0 } }),
-      t('A5 光芒と青空 #14,32 (needs ?cloudScale=1&rays=1)',
-        { time: 16, weather: { cloudCover: 0.55, windSpeed: 3, visibility: 30 }, camera: { yaw: W - 0.5, pitch: 0.5, fov: 1.1 } }),
-      t('A6 うろこ雲・ひつじ雲 #22,30,35',
-        { time: 14, weather: { clouds: { cirrocumulus: 0.8, altocumulus: 0.25 }, windSpeed: 3, visibility: 40 }, camera: { yaw: S, pitch: 0.75, fov: 1.1 } }),
-      t('A7 飛行機雲 #17,33,38',
-        { time: 14, weather: { cloudCover: 0.08, visibility: 45 }, particles: { contrails: 1 }, camera: { yaw: S, pitch: 1.0, fov: 1.2 } }),
-      t('A8 空を覆い隠そうとする雨雲 #41',
-        { time: 14, weather: { clouds: { nimbostratus: 0.9, stratus: 0.4, stratocumulus: 0.5 }, precipitation: 1, windSpeed: 6, visibility: 10 }, camera: { yaw: S, pitch: 0.4, fov: 1.1 } }),
-      t('B1 パステルの夕焼けと白い雲 #9,13',
-        { time: 17.9, weather: { cloudCover: 0.3, windSpeed: 3, visibility: 30 }, camera: { yaw: W, pitch: 0.35, fov: 1.1 } }),
-      t('B2 黒い雲から覗く青空と夕焼け #19',
-        { time: 18.05, weather: { clouds: { stratocumulus: 0.75, cumulus: 0.3 }, windSpeed: 4, visibility: 25 }, camera: { yaw: W, pitch: 0.3, fov: 1.1 } }),
-      t('B3 波模様の雲と夕焼け #20',
-        { time: 17.95, weather: { clouds: { altocumulus: 0.85 }, windSpeed: 3, visibility: 30 }, camera: { yaw: W, pitch: 0.45, fov: 1.1 } }),
-      t('B4 朝焼けのオレンジの雲 #23',
-        { time: 5.9, weather: { cloudCover: 0.45, windSpeed: 3, visibility: 30 }, camera: { yaw: E, pitch: 0.3, fov: 1.1 } }),
-      t('B5 夕日と青空の入り混じる空 #27',
-        { time: 17.7, weather: { cloudCover: 0.3, windSpeed: 3, visibility: 30 }, camera: { yaw: W + 0.3, pitch: 0.12, fov: 1.1 } }),
-      t('B6 ダイナミックな雲と焼ける地平線 #34',
-        { time: 18.0, weather: { clouds: { altostratus: 0.45, cumulus: 0.55, cirrus: 0.3 }, windSpeed: 7, visibility: 25 }, camera: { yaw: W, pitch: 0.25, fov: 1.2 } }),
-      t('B7 夕暮れと飛行機雲 #33,38',
-        { time: 18.0, weather: { cloudCover: 0.1, visibility: 35 }, particles: { contrails: 1 }, camera: { yaw: W, pitch: 0.5, fov: 1.1 } }),
-      t('B8 日没後の東の空 #2 の空の部分',
-        { time: 18.2, weather: 'clear', ground: 'sea', camera: { yaw: E, pitch: 0.05, fov: 1.1 } }),
-    ];
-  },
-
   // color filters
   filter: () => FILTER_IDS.map((id) => ({
     caption: FILTER_PRESETS[id].label,
