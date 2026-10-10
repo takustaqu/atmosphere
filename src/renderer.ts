@@ -976,7 +976,11 @@ vec3 skyBase(vec3 rd, float el, float h, vec3 sunDir, float sunEl,
   // every sunset came out the same salmon.)
   float towardSun = clamp(dot(normalize(vec3(rd.x, 0.0, rd.z) + 1e-5),
                               normalize(vec3(sunDir.x, 0.0, sunDir.z) + 1e-5)), -1.0, 1.0);
-  float side = smoothstep(-0.55, 0.85, towardSun);
+  // not zero on the far side: at magic hour the whole lower air is lit by
+  // the reddened sun and takes a cast of its own, fainter and pinker than
+  // the band — the glow the hour is named for, which a far side left cold
+  // lost
+  float side = 0.22 + 0.78 * smoothstep(-0.55, 0.85, towardSun);
   // how much of the sun's warmth there is: golden hour in from 14° up, full
   // from the horizon to 3° under, gone by 9° under
   float warmth = smoothstep(0.25, 0.03, sunEl) * smoothstep(-0.16, -0.05, sunEl);
@@ -988,11 +992,15 @@ vec3 skyBase(vec3 rd, float el, float h, vec3 sunDir, float sunEl,
     vec3 warmCol = y < 0.35 ? mix(red, orange, y / 0.35) : mix(orange, yellow, min((y - 0.35) / 0.65, 1.0));
     // redder the lower the sun: the light has farther to come
     warmCol = mix(warmCol, warmCol * vec3(1.0, 0.72, 0.55), smoothstep(0.03, -0.08, sunEl) * 0.6);
+    // the far side's share is pinker: it is lit light, not the sun's own
+    warmCol = mix(mix(warmCol, vec3(0.95, 0.62, 0.62), 0.5), warmCol, smoothstep(-0.3, 0.6, towardSun));
     float wedge = (1.0 - smoothstep(0.45, 1.0, y)) * side * warmth;
     disp = mix(disp, warmCol, wedge * 0.85);
-    // a lavender wash where the band meets the blue, on the sun's side only
+    // a lavender wash where the band meets the blue: faint all round, more
+    // on the sun's side
     vec3 mauve = vec3(0.60, 0.42, 0.62);
-    disp = mix(disp, mauve, smoothstep(0.6, 1.05, y) * (1.0 - smoothstep(1.3, 2.0, y)) * side * warmth * 0.28);
+    float band = smoothstep(0.6, 1.05, y) * (1.0 - smoothstep(1.3, 2.0, y)) * warmth;
+    disp = mix(disp, mauve, band * (0.12 + 0.18 * side));
     wide = max(wide, wedge * 0.5);
   }
 
