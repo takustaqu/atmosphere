@@ -27,6 +27,10 @@
 
 ### Fixed
 
+- After a dark-site sky, the dark-sky shader variant was kept for good: the
+  light pollution eases back toward 6 and only ever approaches it, so a
+  plain suburban sky went on paying for the Milky Way's grids.
+
 - **A fair sky's cumulus is white again, not a camouflage print.** Since
   cumulus got a top and a base (0.4.0), its shaded base read the whole
   footprint — wider than the sunlit crown — and a skirt of translucent veil

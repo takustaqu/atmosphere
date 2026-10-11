@@ -3003,7 +3003,9 @@ export function featureKey(s: AtmosphereState, rays = 0): number {
   if (s.clouds.cirrostratus > 0.001) k |= FEATURE.HALOS;
   if (s.rain > 0.01) k |= FEATURE.RAINBOW;
   if (s.thunder > 0.001) k |= FEATURE.BOLT;
-  if (s.celestial.bortle < 6 || s.celestial.milkyWay > 0.001) k |= FEATURE.DARKSKY;
+  // an eased bortle only approaches 6 on its way back from a dark site, so
+  // `< 6` would keep the dark-sky variant (and its cost) for good after one
+  if (s.celestial.bortle < 5.95 || s.celestial.milkyWay > 0.001) k |= FEATURE.DARKSKY;
   if (s.polarizer.strength > 0.001) k |= FEATURE.POLARIZER;
   return k;
 }

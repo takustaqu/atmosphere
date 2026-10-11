@@ -30,4 +30,10 @@ describe('featureKey', () => {
     for (const v of Object.values(FEATURE)) all |= v;
     expect(all).toBe(ALL_FEATURES);
   });
+
+  it('lets go of the dark sky once an eased bortle is all but back at 6', () => {
+    const s = resolveConditions({ time: 22, weather: 'clear', celestial: 'suburban' });
+    s.celestial.bortle = 5.9999;
+    expect(featureKey(s) & FEATURE.DARKSKY).toBe(0);
+  });
 });

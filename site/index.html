@@ -288,6 +288,22 @@
   .demo:hover { border-color: rgba(255,255,255,0.26); background: rgba(255,255,255,0.05); }
   .demo strong { display: block; font-size: 15px; color: var(--ink-bright); margin-bottom: 5px; }
   .demo span { font-size: 13.5px; color: var(--ink-dim); }
+  /* ── FAQ ── one question per row, the answer folded under it */
+  .faq details { border-top: 1px solid var(--line); }
+  .faq details:last-child { border-bottom: 1px solid var(--line); }
+  .faq summary {
+    list-style: none; cursor: pointer; padding: 15px 2px;
+    display: flex; align-items: baseline; gap: 12px;
+    font-size: 15px; color: var(--ink-bright);
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::before {
+    content: '+'; flex: none; width: 12px; color: var(--ink-dim);
+    font-family: var(--mono); font-size: 13px;
+  }
+  .faq details[open] summary::before { content: '\2212'; }
+  .faq summary:hover { color: #fff; }
+  .faq p { margin: 0 0 16px 24px; font-size: 13.5px; line-height: 1.75; color: var(--ink-dim); }
   footer {
     max-width: 860px; margin: 0 auto; padding: 40px 24px 64px;
     border-top: 1px solid var(--line); margin-top: 76px;
@@ -457,6 +473,47 @@ sky.<span class="n">set</span>({ weather: <span class="s">'clear'</span> });</co
         <span class="ja">プリセットや雲形ごとの空を一覧で見比べられる開発用のシート。</span>
         <span class="en">A contact sheet comparing the presets and each cloud genus side by side.</span>
       </a>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="ja">よくある質問</span><span class="en">FAQ</span></h2>
+    <div class="faq">
+      <details>
+        <summary><span class="ja">入道雲が不自然です</span><span class="en">The cumulonimbus looks unnatural</span></summary>
+        <p>
+          <span class="ja">永遠のテーマとして向き合っています。</span>
+          <span class="en">It is an eternal theme, and we keep working on it.</span>
+        </p>
+      </details>
+      <details>
+        <summary><span class="ja">逆光になっているべき雲がなっていないことが多々あります</span><span class="en">Clouds that should be backlit often aren't</span></summary>
+        <p>
+          <span class="ja">atmosphere は物理現象のシミュレーションをしているわけではないので、現実を正しく反映していない場合があります。</span>
+          <span class="en">atmosphere does not simulate the physics, so there are times it does not reflect reality correctly.</span>
+        </p>
+      </details>
+      <details>
+        <summary><span class="ja">重いです</span><span class="en">It's heavy</span></summary>
+        <p>
+          <span class="ja">私たちもこのテーマと向き合っていますが、空全体をシェーダー1枚で描くというコンセプト上、特にシェーダーのコンパイル時にはどうしても重くなりがちです。</span>
+          <span class="en">We are working on that too, but drawing the whole sky in one shader is the concept, and it tends to be heavy — above all while the shader compiles.</span>
+        </p>
+      </details>
+      <details>
+        <summary><span class="ja">音が出ません</span><span class="en">There's no sound</span></summary>
+        <p>
+          <span class="ja">音はサポートの予定がありません。</span>
+          <span class="en">Sound is not planned.</span>
+        </p>
+      </details>
+      <details>
+        <summary><span class="ja">HDR に対応していますか？</span><span class="en">Does it support HDR?</span></summary>
+        <p>
+          <span class="ja">内部的には Yes、ブラウザの Canvas / WebGL の出力としてはまだ No、というところです。</span>
+          <span class="en">Internally, yes; as output from a browser's Canvas / WebGL, not yet.</span>
+        </p>
+      </details>
     </div>
   </section>
 
