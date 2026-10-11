@@ -13,6 +13,12 @@
   only the denser cores inside it, the veil's skirt is short, the amount
   sets how much of the sky the lumps cover rather than how solid each is,
   and the base is a light grey only under a thick core.
+- **Cloud cover means cover again for cumulus.** Derived from `cloudCover`,
+  cumulus reached its ceiling by a cover of 0.35, and a full cumulus field
+  covers about 80% of the sky: the `summer` preset, reported at 0.38, came
+  out nine tenths cloud. Cumulus now follows the cover — a cumulus amount
+  covers about itself less a fifth of the sky — so `fair` (0.22) is drawn
+  about 23% cloudy and `summer` shows its blue between the lumps.
 
 ## 0.4.1 — 2026-10-11
 

@@ -92,6 +92,17 @@ describe('defaultCloudMix', () => {
     expect(mix.nimbostratus).toBe(0);
   });
 
+  it('cumulus follows the cover instead of reaching its ceiling early', () => {
+    // a third cloudy must not be drawn as a full cumulus field (about 80% of the sky)
+    expect(defaultCloudMix(0.38, 0, 0, 0).cumulus).toBeLessThan(0.7);
+    let last = 0;
+    for (const c of [0.05, 0.1, 0.2, 0.3, 0.4, 0.5]) {
+      const cu = defaultCloudMix(c, 0, 0, 0).cumulus;
+      expect(cu).toBeGreaterThan(last);
+      last = cu;
+    }
+  });
+
   it('convection is capped by cloud cover: no thunderhead in a reported clear sky', () => {
     expect(defaultCloudMix(0, 0, 1, 0).cumulonimbus).toBe(0);
     expect(defaultCloudMix(0.5, 0, 1, 0).cumulonimbus).toBeGreaterThan(0);

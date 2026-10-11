@@ -34,10 +34,9 @@ export const SCENES: readonly Scene[] = [
   {
     ja: 'セミの鳴き声を聴いたあの時',
     en: 'When the cicadas were singing',
-    // High summer, early afternoon. The 'summer' preset puts cumulus at its
-    // ceiling and leaves almost no blue, so cover is dialled back and the
-    // convection kept high — scattered cotton clouds with a thunderhead
-    // standing off in the distance is the sky this line is about
+    // High summer, early afternoon: scattered cotton clouds with a
+    // thunderhead standing off in the distance is the sky this line is
+    // about, so the cover is light and the convection high
     conditions: {
       time: 13,
       weather: { cloudCover: 0.18, convection: 0.85, windSpeed: 3, visibility: 30 },

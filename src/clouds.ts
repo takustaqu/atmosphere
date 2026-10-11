@@ -141,7 +141,10 @@ export function defaultCloudMix(
     nimbostratus:  wet * ramp(c, 0.50, 0.85),
     stratus:       ramp(c, 0.50, 0.90) * haze * 0.90,
     stratocumulus: ramp(c, 0.30, 0.75) * 0.85 * (1 - wet * 0.7),
-    cumulus:       ramp(c, 0.03, 0.35) * stillLumpy * dry,
+    // Cumulus covers about its amount less a fifth of the sky (0.6 → 40%,
+    // 1 → 80%), so it follows the cover rather than reaching its ceiling
+    // by 0.35 — where a sky reported a third cloudy came out nine tenths
+    cumulus:       ramp(c, 0.02, 0.10) * Math.min(1, 0.22 + c * 0.95) * stillLumpy * dry,
     // Cap convection by cloud cover. Cumulonimbus is itself a cloud, so a
     // towering cumulonimbus in a sky reported as zero cloud cover is a
     // contradiction.
