@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A fair sky's cumulus is white again, not a camouflage print.** Since
+  cumulus got a top and a base (0.4.0), its shaded base read the whole
+  footprint — wider than the sunlit crown — and a skirt of translucent veil
+  beyond that, and every lump's opacity was scaled by the amount of cumulus,
+  so a fair sky's bases came out 60% opaque: muddy grey-blue patches among
+  small white tops. The crown now takes the full footprint and the base
+  only the denser cores inside it, the veil's skirt is short, the amount
+  sets how much of the sky the lumps cover rather than how solid each is,
+  and the base is a light grey only under a thick core.
+
 ## 0.4.1 — 2026-10-11
 
 A renderer used on its own draws again, and the snow falls.

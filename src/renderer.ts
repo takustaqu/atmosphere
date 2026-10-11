@@ -2226,10 +2226,11 @@ void main() {
     // A cumulus is a column standing on a flat base, and seen from below it
     // is two things: a dark flat underside, and a sunlit crown that shows
     // past it. One plane cannot be both. So the same field is read on two
-    // planes — the base, and a plane a third higher where only the denser
-    // cores still reach — and the two are composited top first, base last
-    // (the base is the nearer). Overhead the two project to the same place
-    // and the dark base covers the crown but for a lit rim; toward the
+    // planes — a plane a third higher for the crown, which billows out wider
+    // than the flat base beneath it, and the base, only the denser cores —
+    // and the two are composited top first, base last (the base is the
+    // nearer). Overhead the two project to the same place and the shaded
+    // base sits inside the crown's lit margin; toward the
     // horizon the crown projects above the base and stands clear of it, a
     // white top over a grey bottom, which is the cumulus of a photograph.
     // The parallax between the planes is what gives the lump its side.
@@ -2244,6 +2245,11 @@ void main() {
     );
     // the smaller the amount, the higher the threshold — sparse clouds only sprout here and there
     float edge = 0.88 - u_low.z * 0.52;
+    // The amount sets how much of the sky the lumps cover (the threshold
+    // above), not how solid each one is: scaled by it as well, a fair sky's
+    // grey bases came out at 60% and the blue showed through them in muddy
+    // patches. A lump is opaque; only a trace of cumulus fades in
+    float solid = smoothstep(0.02, 0.30, u_low.z);
     // Locality: a real sky's clouds gather — a flock here, a bare stretch
     // there, a street downwind — where a noise field cut at one threshold
     // is evenly peppered everywhere. A much coarser field moves the
@@ -2255,29 +2261,33 @@ void main() {
       edge += patch * 0.34 * (1.0 - smoothstep(0.55, 0.9, u_low.z));
     }
 
-    // the crown: the plane above, a narrower threshold so the lumps taper
-    // into domes, lit from above and shaded shallowly
+    // the crown: the plane above, the full footprint, lit from above and
+    // shaded shallowly
     {
       vec2 tuv = planeUV(rd, rdY, ALT_LOW * 2.5 * 1.32, u_windOff) + wob;
-      float tedge = edge + 0.07;
+      float tedge = edge;
       vec3 tl = cloudField(tuv, churn, ldir, tedge, ramp, tedge - 0.01);
-      float talpha = tl.x * u_low.z * horizonFade;
+      float talpha = tl.x * solid * horizonFade;
       talpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, tl.x)) * 0.92;
       float tthick = smoothstep(tedge, tedge + 0.35, tl.z);
       vec3 tc = cloudColor(tl.x, tl.y + 0.35, tthick * 0.45, dayF, nightM, sunsetF, flash, gloom, 0.7, cloudSun, 0.0);
       OVER(tc, talpha * 0.97);
     }
 
-    // the base: the whole footprint, flat, in the lump's own shadow and lit
-    // by the sky — and from the side, by a sun low enough to get under it
+    // the base: flat, narrower than the crown, in the lump's own shadow and
+    // lit by the sky — and from the side, by a sun low enough to get under
+    // it. Its footprint as wide as the crown's, the grey of it ringed every
+    // small white top in a fair sky
     vec2 cuv = planeUV(rd, rdY, ALT_LOW * 2.5, u_windOff) + wob;
     // the veil's skirt reaches lower than the density's, so it sets the floor
-    vec3 dl = cloudField(cuv, churn, ldir, edge, ramp, edge - 0.26);
-    // a thin, translucent veil cloud: give the density threshold a wide skirt below it
-    // (it drifts as a bright haze around the lumps, and in places that never formed one)
-    // must scale with the amount, or a residual haze is all that's left in an otherwise cloudless sky
-    float veil = smoothstep(edge - 0.26, edge + 0.02, dl.z) * 0.42 * u_low.z;
-    float alpha = max(dl.x, veil) * u_low.z * horizonFade;
+    float bedge = edge + 0.15;
+    vec3 dl = cloudField(cuv, churn, ldir, bedge, ramp, bedge - 0.08);
+    // a thin, translucent veil cloud: a short skirt below the density threshold
+    // (a little haze at the lumps' feet; a wide one spread translucent grey
+    // across the blue). Scaled with the amount, or a residual haze is all
+    // that's left in an otherwise cloudless sky
+    float veil = smoothstep(bedge - 0.08, bedge + 0.02, dl.z) * 0.22 * u_low.z;
+    float alpha = max(dl.x * solid, veil) * horizonFade;
     // over a cumulonimbus tower, a translucent fringe reads as a dirty
     // smudge stamped onto the bright mass — let only near-opaque cores
     // cross it (a half-dense patch is the worst case: neither cloud nor sky)
@@ -2290,8 +2300,13 @@ void main() {
     // cumulus base is lit by the whole sky and by the ground, and photographs
     // of one read as white with grey beneath, not grey with white above
     float under = smoothstep(0.30, 0.02, sunEl);
-    float baseLit = mix(-0.30, dl.y, under);
-    vec3 c = cloudColor(dl.x, baseLit, max(thick * 0.9, 0.30 * dl.x), dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun, 0.0);
+    // Only under a thick core, though, and a light grey: shaded throughout,
+    // the base laid broad grey patches among the white tops of a fair sky, a
+    // camouflage print. Where the base is thin it is the lump's sunlit flank
+    // and takes the lump's own light
+    float core = smoothstep(0.20, 1.0, thick);
+    float baseLit = mix(dl.y, mix(-0.30, dl.y, under), core);
+    vec3 c = cloudColor(dl.x, baseLit, max(thick * 0.9, 0.30 * dl.x), dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 0.0);
     OVER(c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
