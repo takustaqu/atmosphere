@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-11
+
+The rest of the sky. The moon stands where it is and shows its phase; the sea
+can lie below the horizon; aurora, halos, rainbows, the bolt, fireballs, the
+zodiacal light, contrails and crepuscular rays join the weather. Measured
+against photographs, the sunset gets its gradient and a dial for how hard it
+burns, cumulus gets a top and a base, and the shader is compiled per
+combination of features in use, so a clear noon costs less than before.
 
 ### Added
 

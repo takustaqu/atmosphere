@@ -1,6 +1,6 @@
 {
   "name": "@takustaqu/atmosphere",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "A WebGL renderer that reproduces the sky from time and weather",
   "type": "module",
   "license": "MIT",
