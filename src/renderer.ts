@@ -724,12 +724,12 @@ vec3 bowLight(float a) {
   vec3 c = vec3(0.0);
   for (int i = 0; i < 7; i++) {
     float f = float(i) / 6.0;                     // 0 violet .. 1 red
-    float a1 = 40.6 + f * 1.8;                    // primary: 40.6° violet .. 42.4° red
+    float a1 = 40.4 + f * 2.0;                    // primary: 40.4° violet .. 42.4° red
     float d1 = a - a1;
-    float p = exp(-d1 * d1 / 0.18) + (d1 < 0.0 ? 0.30 * exp(d1 / 1.6) : 0.0);
+    float p = exp(-d1 * d1 / 0.36) + (d1 < 0.0 ? 0.40 * exp(d1 / 2.5) : 0.0);
     float a2 = 53.6 - f * 3.2;                    // secondary: 50.4° red .. 53.6° violet
     float d2 = a - a2;
-    float q = exp(-d2 * d2 / 0.30) + (d2 > 0.0 ? 0.25 * exp(-d2 / 2.0) : 0.0);
+    float q = exp(-d2 * d2 / 0.50) + (d2 > 0.0 ? 0.25 * exp(-d2 / 2.5) : 0.0);
     c += waveColor(i) * (p + q * 0.40);
   }
   return c;
@@ -2806,12 +2806,22 @@ void main() {
     // it takes from the bow only in part — a bow stands against dark rain
     float amt = smoothstep(0.03, 0.25, u_rain) * sqrt(sunVis) * smoothstep(-0.02, 0.06, rd.y);
     float deg = ang * 57.2958;
-    if (deg > 30.0 && deg < 64.0) {
+    if (deg > 25.0 && deg < 64.0) {
+      // A bow is only where there are drops in the sunlight, and a shower is
+      // never an even curtain: it comes and goes along the arc, and is most
+      // often strongest low down, in front of the rain, fading as the arc
+      // climbs into the drier air above
+      float along = fbm2(rd.xz * 2.2 + vec2(rd.y * 3.1, 7.3) + u_evo * 0.04);
+      amt *= smoothstep(0.25, 0.65, along) * mix(1.0, 0.35, smoothstep(0.05, 0.65, rd.y));
       vec3 bows = bowLight(deg);
+      // the colors are light added to the sky, and never pure: the drops
+      // span sizes, and the sun is half a degree across
+      float lum = dot(bows, vec3(0.2126, 0.7152, 0.0722));
+      bows = mix(vec3(lum), bows, 0.72);
       float dark = smoothstep(0.73, 0.76, ang) * smoothstep(0.90, 0.87, ang);
       sky *= 1.0 - dark * amt * 0.12;
       // already linear: the colors are mixed as light, not as paint
-      sky += bows * amt * 0.9;
+      sky += bows * amt * 0.8;
       // how far the light strays from white is what needs the wide gamut
       float chroma = max(bows.r, max(bows.g, bows.b)) - min(bows.r, min(bows.g, bows.b));
       wide = max(wide, min(chroma * 3.0, 1.0) * amt * 0.6);

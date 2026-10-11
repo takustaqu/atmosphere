@@ -17,6 +17,10 @@
   overlap: a continuous run from red outside through yellow and green to
   violet, a whitish glow inside the primary where they add back up to
   sunlight, and a secondary turned the other way, wider and fainter.
+  Measured against photographs, it is also fainter against the blue, a
+  little wider and less saturated (drops span sizes), and uneven along its
+  arc: a shower is never an even curtain, and the bow is most often
+  strongest low down, fading as it climbs into drier air.
 - Controller example: a "Sky phenomena" drawer — rainbow, 22° halo and
   aurora buttons that set the weather each needs and turn the camera to it,
   and "face the sun" / "face away from the sun".
