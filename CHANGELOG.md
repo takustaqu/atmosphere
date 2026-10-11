@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-10-12
+
+Clouds and a rainbow measured against photographs. Cumulus follows the
+reported cloud cover, is white rather than a grey camouflage print, and has
+soft edges; the rainbow is light added to the sky rather than three stripes.
+The controller can call up a rainbow, a halo or the aurora by name.
 
 ### Changed
 
