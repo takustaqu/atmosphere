@@ -7,6 +7,7 @@ import { resolveCelestial, type Celestial, type CelestialInput } from './celesti
 import { resolveFilter, type ColorFilter, type FilterInput } from './filter.js';
 import { resolveGround, type Ground, type GroundInput } from './ground.js';
 import { resolveLens, type Lens, type LensInput } from './lens.js';
+import { resolveSunset, type Sunset, type SunsetInput } from './sunset.js';
 import { resolveParticles, type Particles, type ParticlesInput } from './particles.js';
 import { resolvePolarizer, type Polarizer, type PolarizerInput } from './polarizer.js';
 import {
@@ -70,6 +71,8 @@ export interface Conditions {
   particles?: ParticlesInput;
   /** what lies below the horizon: the plain ground, or a sea that mirrors the sky */
   ground?: GroundInput;
+  /** how hard the sky burns at sunset and magic hour */
+  sunset?: SunsetInput;
   /** camera (partial is fine) */
   camera?: Partial<Camera>;
 }
@@ -95,6 +98,7 @@ export interface AtmosphereState extends WeatherState {
   lens: Lens;
   particles: Particles;
   ground: Ground;
+  sunset: Sunset;
 }
 
 export const DEFAULT_CONDITIONS: Required<Pick<Conditions, 'time' | 'weather'>> = {
@@ -134,6 +138,7 @@ export function resolveConditions(c: Conditions): AtmosphereState {
     lens: resolveLens(c.lens),
     particles: resolveParticles(c.particles),
     ground: resolveGround(c.ground),
+    sunset: resolveSunset(c.sunset),
   };
 }
 

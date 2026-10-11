@@ -101,6 +101,7 @@ uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the 
 uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky (environment probes)
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
+uniform vec2  u_sunset;    // sunset: the warmth of the band on the sun's side, the glow all round
 uniform float u_aurora;    // 0..1 how much aurora is in the sky
 uniform float u_contrails; // 0..1 how often a jet draws a trail
 uniform float u_rays;      // 0..1 crepuscular rays, in the split variant's composite
@@ -980,27 +981,30 @@ vec3 skyBase(vec3 rd, float el, float h, vec3 sunDir, float sunEl,
   // the reddened sun and takes a cast of its own, fainter and pinker than
   // the band — the glow the hour is named for, which a far side left cold
   // lost
-  float side = 0.22 + 0.78 * smoothstep(-0.55, 0.85, towardSun);
+  float side = 0.22 * u_sunset.y + (1.0 - 0.22 * u_sunset.y) * smoothstep(-0.55, 0.85, towardSun);
   // how much of the sun's warmth there is: golden hour in from 14° up, full
   // from the horizon to 3° under, gone by 9° under
   float warmth = smoothstep(0.25, 0.03, sunEl) * smoothstep(-0.16, -0.05, sunEl);
   if (warmth > 0.001) {
     // the band's height in h: climbs as the sun goes down, then collapses
     float bandTop = 0.22 + 0.30 * smoothstep(0.10, -0.03, sunEl) - 0.34 * smoothstep(-0.05, -0.15, sunEl);
+    // a harder sunset climbs higher and goes redder
+    bandTop *= 0.75 + 0.25 * u_sunset.x;
     float y = h / max(bandTop, 0.05);
     vec3 red = vec3(1.0, 0.36, 0.14), orange = vec3(1.0, 0.58, 0.22), yellow = vec3(1.0, 0.86, 0.50);
     vec3 warmCol = y < 0.35 ? mix(red, orange, y / 0.35) : mix(orange, yellow, min((y - 0.35) / 0.65, 1.0));
     // redder the lower the sun: the light has farther to come
     warmCol = mix(warmCol, warmCol * vec3(1.0, 0.72, 0.55), smoothstep(0.03, -0.08, sunEl) * 0.6);
+    warmCol = mix(warmCol, warmCol * vec3(1.0, 0.70, 0.55), clamp(u_sunset.x - 1.0, 0.0, 1.0) * 0.6);
     // the far side's share is pinker: it is lit light, not the sun's own
     warmCol = mix(mix(warmCol, vec3(0.95, 0.62, 0.62), 0.5), warmCol, smoothstep(-0.3, 0.6, towardSun));
     float wedge = (1.0 - smoothstep(0.45, 1.0, y)) * side * warmth;
-    disp = mix(disp, warmCol, wedge * 0.85);
+    disp = mix(disp, warmCol, min(wedge * 0.85 * u_sunset.x, 1.0));
     // a lavender wash where the band meets the blue: faint all round, more
     // on the sun's side
     vec3 mauve = vec3(0.60, 0.42, 0.62);
     float band = smoothstep(0.6, 1.05, y) * (1.0 - smoothstep(1.3, 2.0, y)) * warmth;
-    disp = mix(disp, mauve, band * (0.12 + 0.18 * side));
+    disp = mix(disp, mauve, min(band * (0.12 * u_sunset.y + 0.18 * side), 1.0));
     wide = max(wide, wedge * 0.5);
   }
 
@@ -1645,7 +1649,8 @@ void main() {
   // the cloud plane's coordinate system is world xz; fold the sun direction onto the same plane
   vec2 ldir = normalize(sunDir.xz + vec2(1e-4, 1e-4));
   // display-encoded: this tints the cloud palette, which is authored there
-  vec3 cloudSun = mix(vec3(1.05, 1.0, 0.95), vec3(1.15, 0.50, 0.22), sunsetF);
+  vec3 cloudSun = mix(vec3(1.05, 1.0, 0.95), vec3(1.15, 0.50, 0.22), sunsetF * min(u_sunset.x, 1.0));
+  cloudSun = mix(cloudSun, cloudSun * vec3(1.0, 0.78, 0.62), sunsetF * clamp(u_sunset.x - 1.0, 0.0, 1.0) * 0.6);
   // and redder still once the sun is under: what still reaches the high clouds has come the long way
   cloudSun *= mix(vec3(1.0), vec3(1.0, 0.72, 0.58), smoothstep(0.02, -0.06, sunEl));
 
@@ -2960,7 +2965,7 @@ const UNIFORM_NAMES = [
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
-  'u_sea', 'u_aurora', 'u_contrails', 'u_rays',
+  'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset',
   'u_cloudMode', 'u_clouds',
 ] as const;
 
@@ -3749,6 +3754,7 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_snow, s.snow);
     gl.uniform1f(u.u_fall, s.particles.precipitation);
     gl.uniform2f(u.u_sea, s.ground.sea, s.ground.swell);
+    gl.uniform2f(u.u_sunset, s.sunset.warmth, s.sunset.glow);
     gl.uniform1f(u.u_wind, s.wind);
     gl.uniform1f(u.u_thunder, s.thunder);
     gl.uniform1f(u.u_haze, s.haze);

@@ -131,6 +131,13 @@ export {
 } from './lens.js';
 
 export {
+  resolveSunset,
+  DEFAULT_SUNSET,
+  type Sunset,
+  type SunsetInput,
+} from './sunset.js';
+
+export {
   resolveGround,
   DEFAULT_GROUND,
   GROUND_PRESETS,

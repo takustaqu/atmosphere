@@ -50,6 +50,11 @@
   thin sharp line lengthening behind the plane that spreads into a soft band
   and dissolves over the minutes after, uneven where the air was drier. A
   slider in the controller.
+- **`sunset`** — how hard the sky burns: `warmth` for the band on the
+  sun's side (its strength, its red, how high it climbs, and the color of
+  the sun's light on the clouds) and `glow` for what the rest of the sky
+  takes at magic hour (the pink of the far side and the lavender above the
+  band). Both 0..2, both 1 by default. Sliders in the controller.
 - **`rays`** — crepuscular rays: shafts of sunlit air fanning out from the
   sun through the gaps in a cloud deck, read off the split's cloud stack as
   the shadow-volume integral in screen space. Needs `cloudScale` given;

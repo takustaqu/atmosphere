@@ -38,7 +38,7 @@ const TAU_2PI = Math.PI * 2;
  * array). `current` is mutated in place every frame, so sharing any of these
  * with the caller's target would make the target drift along with it.
  */
-function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone' | 'polarizer' | 'celestial' | 'lens' | 'particles' | 'ground' | 'clouds' | 'features'> {
+function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone' | 'polarizer' | 'celestial' | 'lens' | 'particles' | 'ground' | 'sunset' | 'clouds' | 'features'> {
   return {
     filter: { ...s.filter, tint: [s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]] },
     tone: { ...s.tone },
@@ -47,6 +47,7 @@ function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone'
     lens: { ...s.lens },
     particles: { ...s.particles },
     ground: { ...s.ground },
+    sunset: { ...s.sunset },
     clouds: { ...s.clouds },
     features: { ...s.features },
   };
@@ -160,6 +161,8 @@ export class StateAnimator {
     // the sea rises or drains over the same seconds, and the swell settles
     c.ground.sea += (target.ground.sea - c.ground.sea) * k;
     c.ground.swell += (target.ground.swell - c.ground.swell) * k;
+    c.sunset.warmth += (target.sunset.warmth - c.sunset.warmth) * k;
+    c.sunset.glow += (target.sunset.glow - c.sunset.glow) * k;
 
     // real elapsed time, plus however much the time of day moved
     // (clouds should have drifted by however much time passed)

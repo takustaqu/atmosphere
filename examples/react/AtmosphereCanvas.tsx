@@ -88,7 +88,7 @@ export interface AtmosphereCanvasProps extends Conditions {
 
 export function AtmosphereCanvas({
   time: timeProp, location: locationProp, weather: weatherProp,
-  filter: filterProp, lens: lensProp, particles: particlesProp, ground: groundProp, camera: cameraProp,
+  filter: filterProp, lens: lensProp, particles: particlesProp, ground: groundProp, sunset: sunsetProp, camera: cameraProp,
   enabled = true,
   fps = 30,
   resolutionScale,
@@ -110,6 +110,7 @@ export function AtmosphereCanvas({
   const lens = useStableValue(lensProp);
   const particles = useStableValue(particlesProp);
   const ground = useStableValue(groundProp);
+  const sunset = useStableValue(sunsetProp);
   const camera = useStableValue(cameraProp);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -122,7 +123,7 @@ export function AtmosphereCanvas({
   const [ready, setReady] = useState(false);
   // read the initial values via a ref so they aren't re-read on remount
   const initRef = useRef({
-    time, location, weather, filter, lens, particles, ground, camera,
+    time, location, weather, filter, lens, particles, ground, sunset, camera,
     fps, resolutionScale, animator, lightProbe, cloudScale, rays, adaptiveResolution,
   });
   // read through a ref, so a new callback each render never rebuilds the sky
@@ -145,8 +146,8 @@ export function AtmosphereCanvas({
   }, []);
 
   useEffect(() => {
-    skyRef.current?.set({ time, location, weather, filter, lens, particles, ground, camera });
-  }, [time, location, weather, filter, lens, particles, ground, camera]);
+    skyRef.current?.set({ time, location, weather, filter, lens, particles, ground, sunset, camera });
+  }, [time, location, weather, filter, lens, particles, ground, sunset, camera]);
 
   // leave the fade to CSS, and stop drawing once it's no longer visible
   useEffect(() => {

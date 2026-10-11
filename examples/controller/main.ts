@@ -66,6 +66,7 @@ const ui = {
   lens: { droplets: 1 },
   particles: { precipitation: 1, contrails: 0 },
   ground: { sea: 0, swell: 0.4 },
+  sunset: { warmth: 1, glow: 1 },
 };
 
 // the camera (for looking around). Defaults to a background-friendly, south-facing framing
@@ -118,6 +119,7 @@ function apply(): void {
     lens: ui.lens,
     particles: ui.particles,
     ground: ui.ground,
+    sunset: ui.sunset,
   };
   sky.set(conditions);
   readout(conditions);
@@ -323,6 +325,15 @@ syncers.push(slider('Anvil', 0, 1, 0.01,
   () => ui.features.anvil, (v) => { ui.features.anvil = v; ui.featureMode = 'manual'; }, (v) => v.toFixed(2)));
 syncers.push(slider('Veil', 0, 1, 0.01,
   () => ui.features.velum, (v) => { ui.features.velum = v; ui.featureMode = 'manual'; }, (v) => v.toFixed(2)));
+
+section('Sunset');
+note('How hard the sky burns. Warmth is the band on the sun\'s side — its strength, '
+  + 'its red, how high it climbs; glow is what the rest of the sky takes at magic '
+  + 'hour, the pink of the far side and the lavender above the band.');
+syncers.push(slider('Warmth', 0, 2, 0.01,
+  () => ui.sunset.warmth, (v) => { ui.sunset.warmth = v; }, (v) => v.toFixed(2)));
+syncers.push(slider('Glow', 0, 2, 0.01,
+  () => ui.sunset.glow, (v) => { ui.sunset.glow = v; }, (v) => v.toFixed(2)));
 
 section('Tone curve');
 note('Scene-referred: these act on linear light before it becomes display values, '

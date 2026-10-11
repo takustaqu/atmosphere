@@ -260,6 +260,25 @@ sky.set({ celestial: { bortle: 2, meteors: 40 } });
 > 引っかき傷として残るだけなので。`AtmosphereRenderer` を自分で回す場合は
 > 呼び出し側の判断になります。
 
+## 夕焼け
+
+空がどれだけ焼けるか。夕焼けの色は、大気のエアロゾル、光が来た距離、何に散乱されたか、
+という物理の連鎖で決まり、同じ時刻でも日によって大きく違います。それを計算するふりを
+せず、この軸は「どれだけ」を直接言います。
+
+```ts
+sky.set({ sunset: { warmth: 1.4 } });        // 赤く強い夕焼け
+sky.set({ sunset: { glow: 0.3 } });          // 太陽の反対側が青いままのマジックアワー
+sky.set({ sunset: { warmth: 1, glow: 1 } });  // 既定
+```
+
+| フィールド | 効果 |
+|:---|:---|
+| `warmth` | 0..2 太陽側の帯の強さ・赤み・高さ。0 で色が抜け、2 で赤く霞んだ強い夕焼け。雲に当たる太陽光の色にも効きます。既定 1 |
+| `glow` | 0..2 マジックアワーに空の残りが受ける光。反対側の桃色と帯の上の藤色。0 で反対側は冷たいまま、2 で全天が染まります。既定 1 |
+
+どちらもほかの指定と同じく数秒かけて移り変わります。
+
 ## トーンカーブ
 
 下のカラーフィルターと違い scene-referred です。表示値になる前の線形なシーン光に
@@ -631,6 +650,7 @@ sky.reducedMotion;   // 静止させている間は true
 | `resolveLens(l)` | レンズ指定の解決 |
 | `resolveParticles(p)` | 降る粒の指定の解決 |
 | `resolveGround(g)` | 地面（海）の指定の解決 |
+| `resolveSunset(s)` | 夕焼け（warmth, glow）の指定の解決 |
 | `celestialLights(s, cam, aspect)` | 太陽と月を平行光源として（計測なしで） |
 | `ResolutionGovernor` | 解像度の自動調整の制御部。独自ループ用（`timing: true` で `renderer.takeGpuTimes()` を渡す） |
 | `sampleLightGrid(g, x, y)` / `sampleEnvironment(env, n)` | 計測値を画面上の点で / 面の法線方向で読む |

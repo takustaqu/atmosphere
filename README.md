@@ -291,6 +291,26 @@ swings rather than being glued to the frame.
 > would sit on the sky as a scratch. Driving `AtmosphereRenderer` yourself, that
 > is your call to make.
 
+## Sunset
+
+How hard the sky burns. The colors of a sunset are a chain of physics the
+renderer only sketches — the aerosol in the air, how far the light has come,
+what it has scattered off — and two skies at the same hour differ by a lot.
+Rather than pretend to compute that, this axis says how much.
+
+```ts
+sky.set({ sunset: { warmth: 1.4 } });        // a redder, harder sunset
+sky.set({ sunset: { glow: 0.3 } });          // a magic hour that stays blue away from the sun
+sky.set({ sunset: { warmth: 1, glow: 1 } });  // the defaults
+```
+
+| field | what it does |
+|:---|:---|
+| `warmth` | 0..2 the band on the sun's side: its strength, its red, how high it climbs. 0 drains the color out, 2 is a hard red haze. Also tints the sun's light on the clouds. Defaults to 1 |
+| `glow` | 0..2 what the rest of the sky takes at magic hour: the pink of the far side and the lavender above the band. 0 leaves the far side cold, 2 lights the whole sky. Defaults to 1 |
+
+Both ease like everything else.
+
 ## Tone curve
 
 Scene-referred, unlike the color filters below: these act on linear scene light
@@ -685,6 +705,7 @@ sky.reducedMotion;   // true while the sky is being held still
 | `resolveLens(l)` | resolving a lens specification |
 | `resolveParticles(p)` | resolving a falling-particle specification |
 | `resolveGround(g)` | resolving a ground specification (the sea) |
+| `resolveSunset(s)` | resolving a sunset specification (warmth, glow) |
 | `celestialLights(s, cam, aspect)` | the sun and moon as directional lights, without a probe |
 | `ResolutionGovernor` | the adaptive resolution's control loop, for a custom render loop (feed it `renderer.takeGpuTimes()` with `timing: true`) |
 | `sampleLightGrid(g, x, y)` / `sampleEnvironment(env, n)` | reading a light measurement at a screen point / for a surface normal |

@@ -183,6 +183,7 @@ export class Atmosphere {
       lens: options.lens,
       particles: options.particles,
       ground: options.ground,
+      sunset: options.sunset,
       camera: options.camera,
     };
     this.target = resolveConditions(this.conditions);
@@ -282,6 +283,7 @@ export class Atmosphere {
       lens: { ...c.lens },
       particles: { ...c.particles },
       ground: { ...c.ground },
+      sunset: { ...c.sunset },
     };
   }
 
