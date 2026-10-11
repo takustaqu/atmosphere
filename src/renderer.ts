@@ -100,6 +100,7 @@ uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
 uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the lens
 uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky (environment probes)
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
+uniform vec3 u_snowDrift;  // how far the snow has fallen, integrated on the CPU (see snowFallDir)
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
 uniform vec2  u_sunset;    // sunset: the warmth of the band on the sun's side, the glow all round
 uniform float u_aurora;    // 0..1 how much aurora is in the sky
@@ -259,6 +260,12 @@ float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
   return fract((p3.x + p3.y) * p3.z);
+}
+// three at once, for one hash where three were taken (the snowflakes)
+vec3 hash32(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+  p3 += dot(p3, p3.yxz + 33.33);
+  return fract((p3.xxy + p3.yzz) * p3.zyx);
 }
 /**
  * Value noise — the four lattice corners and their bilinear blend, read out of
@@ -2589,51 +2596,97 @@ void main() {
   // The flakes live in a lattice of view directions — the ray scaled out to a
   // sphere and cut into cubic cells — rather than on the screen, so they turn
   // with the sky and there is no pole or seam anywhere to look at. They fall
-  // in world y: across the view near the horizon, and straight at the camera
+  // down: across the view near the horizon, and straight at the camera
   // looking up. The layer scales are the old screen-space ones per radian (see
   // FALL_REF at the rain), so the default framing looks as it did.
+  //
+  // Only a shell of the lattice around that sphere is drawn, though, so a
+  // flake moving along the ray leaves it: falling straight down while the
+  // view looks up, the far flakes crossed it in a fifth of a second and
+  // the snow blinked rather than fell. So they fall down the screen instead
+  // — u_snowDrift is integrated along a direction leaned toward the view's
+  // own down (snowFallDir), which keeps them in the shell across the middle
+  // of the frame, and turning the camera only changes where they go next.
   if (u_snow > 0.001) {
     float flakes = 0.0;
     if (u_fall > 0.001) {
       for (int i = 0; i < 5; i++) {
         float fi = float(i);
         float k = fi * 0.25;                    // 0=near, 1=far
-        // apply with a square so it gets rapidly finer with distance (linear reads as uniform size)
-        float sc = mix(8.0, 160.0, k * k);
-        float fall = u_time * mix(0.30, 0.035, k);
+        // Big and blurred up close, fine far off. A flake is drawn by every
+        // pixel whose ray passes near it, from whichever cell that pixel's
+        // ray is in — so a disc that reached past its own cell was cut off
+        // square at the cell's face. The pixel searches the 2x2x2 block of
+        // cells nearest it instead, and that block reaches at least half a
+        // cell each way: a flake's radius plus the shell it is drawn from
+        // (the gate below, 0.5 less the radius) keeps every flake inside it. The near layers, whose flakes were
+        // wider than that, get bigger cells instead, so they look as large
+        // as they did; fewer cells, so more of them are switched on
+        float rad0 = mix(0.40, 0.10, k);
+        float fit = min(1.0, 0.2 / rad0);
+        float rad = rad0 * fit;
+        float sc = mix(8.0, 160.0, k * k) * fit;
+        // How fast a layer crosses the view goes with how near it is, as its
+        // size does: parallax. Faster than that, a far flake moves through the
+        // lattice — and out of the drawn shell, wherever the view is not
+        // square to its fall — in a fraction of a second, and the fine snow
+        // twinkled. Not fully in proportion: the far snow would stand still
+        float speed = 0.30 * pow((rad0 / mix(8.0, 160.0, k * k)) / 0.05, 0.75);
+        float fall = u_time * speed;
 
         // a per-layer offset keeps the five lattices from lining up
         vec3 g = rd * (sc / FALL_REF) + fi * vec3(0.37, 0.61, 0.23);
-        g.y += fall * sc;
+        g -= u_snowDrift * (speed * sc);
         // drift with the wind, and tumble side to side while falling
         g.x += (u_wind * fall * 2.6 + sin(g.y * 0.22 + fi * 2.7) * 0.35) * sc * 0.06;
-        // shift each horizontal slab of cells. Without this the lattice
-        // shows straight through as "flakes falling at even spacing"
-        g.x += hash11(floor(g.y) * 1.37 + fi * 13.0) * 4.0;
-        g.z += hash11(floor(g.y) * 2.71 + fi * 7.0) * 4.0;
 
-        vec3 cell = floor(g);
-        vec2 ch = cell.xz + cell.y * vec2(37.1, 91.7);
-        float r = hash12(ch + fi * 37.0);
-        // only flakes near the sphere are drawn (see the gate below), so
-        // more cells are switched on to keep the old density on screen
-        float active = step(1.0 - min(1.0, (1.0 - mix(0.94, 0.40, u_snow)) * 2.4), r);
-        // scatter position across the whole cell (centering it makes the grid stand out)
-        vec3 off = vec3(hash12(ch + 5.1), hash12(ch + 9.7), hash12(ch + 13.3)) * 0.9 + 0.05;
-        vec3 dv = fract(g) - off;
-        // Size is the distance across the view alone. How far the flake sits
-        // off the sphere along the ray instead decides whether it is drawn:
-        // a flake far off it belongs to a cell the sphere only grazes, and
-        // would show as the cell's cut edge — a shard — rather than a disc.
-        // Heavy snow has every cell on already, so there the gate widens to
-        // keep the density, at the price of a few shards in the whiteout
-        float dr = dot(dv, rd);
-        float d = length(dv - rd * dr);
-        float gate = smoothstep(0.30, 0.15, abs(dr) / mix(1.0, 1.6, smoothstep(0.7, 1.0, u_snow)));
-        // bigger, blurrier-edged and fainter up close (out of focus)
-        float rad = mix(0.40, 0.10, k);
+        // how many cells hold a flake: the old density on screen, across
+        // fewer, bigger cells for the near layers
+        float on = min(1.0, (1.0 - mix(0.94, 0.40, u_snow)) * 2.4 / (fit * fit));
         float edge = mix(0.10, 0.72, k);
-        flakes += active * gate * smoothstep(rad, rad * edge, d) * mix(0.55, 1.0, k);
+        float wt = mix(0.55, 1.0, k);
+        float shell = 0.5 - rad;
+        // a flake this pixel draws is within this of its sample point, so a
+        // neighbouring cell whose nearest face is further off holds none:
+        // skipped before any hashing, which leaves about half the block
+        float reach2 = rad * rad + shell * shell;
+        // the two far layers' flakes are a few pixels across, too small for
+        // a cut edge to show: their own cell only
+        if (i >= 3) reach2 = -1.0;
+        float cy0 = floor(g.y);
+        float sy = fract(g.y) < 0.5 ? -1.0 : 1.0;
+        float fy = min(fract(g.y), 1.0 - fract(g.y));
+        for (int jy = 0; jy < 2; jy++) {
+          float dy2 = float(jy) * fy * fy;
+          if (jy > 0 && dy2 > reach2) continue;
+          float cy = cy0 + float(jy) * sy;
+          // shift each horizontal slab of cells. Without this the lattice
+          // shows straight through as "flakes falling at even spacing"
+          vec3 gs = g;
+          gs.x += hash11(cy * 1.37 + fi * 13.0) * 4.0;
+          gs.z += hash11(cy * 2.71 + fi * 7.0) * 4.0;
+          vec2 c0 = floor(gs.xz);
+          vec2 fg = fract(gs.xz);
+          vec2 s2 = vec2(fg.x < 0.5 ? -1.0 : 1.0, fg.y < 0.5 ? -1.0 : 1.0);
+          vec2 fn = min(fg, 1.0 - fg);
+          for (int jx = 0; jx < 2; jx++) {
+            for (int jz = 0; jz < 2; jz++) {
+              if (jx + jy + jz > 0 && dy2 + float(jx) * fn.x * fn.x + float(jz) * fn.y * fn.y > reach2) continue;
+              vec3 cell = vec3(c0.x + float(jx) * s2.x, cy, c0.y + float(jz) * s2.y);
+              vec2 ch = cell.xz + cell.y * vec2(37.1, 91.7);
+              if (hash12(ch + fi * 37.0) < 1.0 - on) continue;
+              // anywhere in its cell: the block search means no margin is needed
+              vec3 off = hash32(ch + fi * 11.0);
+              vec3 dv = gs - (cell + off);
+              // size is the distance across the view; how far the flake sits
+              // off the sphere along the ray decides whether it is drawn at all
+              float dr = dot(dv, rd);
+              float d = length(dv - rd * dr);
+              float gate = smoothstep(shell, shell * 0.5, abs(dr));
+              flakes += gate * smoothstep(rad, rad * edge, d) * wt;
+            }
+          }
+        }
       }
     }
     disp = mix(disp, vec3(0.95, 0.96, 1.0), clamp(flakes, 0.0, 1.0) * u_snow * 0.85 * u_fall);
@@ -2929,6 +2982,27 @@ interface Variant {
  */
 const TIME_WRAP_SEC = 4096;
 
+/**
+ * The direction the snow falls in, for a camera: straight down, leaned toward
+ * the view's own down by how far the view is tilted. The snowflakes are drawn
+ * from a thin shell of a 3D lattice around the eye, so motion along the view
+ * ray carries them out of it — straight down while looking up, they blinked
+ * rather than fell. Leaning the fall to be square to the view keeps them in
+ * the shell across the middle of the frame. Level, the lean is nothing; looking
+ * straight up it fades again, and the flakes come at the camera.
+ */
+export function snowFallDir(camera: Pick<Camera, 'yaw' | 'pitch'>): [number, number, number] {
+  const sp = Math.sin(camera.pitch), cp = Math.cos(camera.pitch);
+  // forward is dirFromAngles(pitch, yaw); minus Y plus forward × (forward·Y)
+  // would be exactly square to it, and 0.85 of that leaves the zenith defined
+  const lean = 0.85 * sp;
+  const x = lean * cp * Math.sin(camera.yaw);
+  const y = -1 + lean * sp;
+  const z = lean * cp * Math.cos(camera.yaw);
+  const n = Math.hypot(x, y, z);
+  return [x / n, y / n, z / n];
+}
+
 /** a cloud scale worth splitting for: past 0.95 the split costs more than it saves */
 function clampCloudScale(v: number): number {
   return Number.isFinite(v) && v < 0.95 ? Math.max(0.25, v) : 1;
@@ -2964,7 +3038,7 @@ const UNIFORM_NAMES = [
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
-  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall',
+  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift',
   'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset',
   'u_cloudMode', 'u_clouds',
 ] as const;
@@ -3118,6 +3192,9 @@ export class AtmosphereRenderer {
   private current: Variant | null = null;
   private wanted = 0;
   private frame = 0;
+  // the snow's fall, integrated along snowFallDir; and the clock it was at
+  private snowDrift: [number, number, number] = [0, 0, 0];
+  private snowAt = Number.NaN;
   // whether the first drawable variant has been reported through onReady
   private reported = false;
   private parallel: { COMPLETION_STATUS_KHR: number } | null = null;
@@ -3446,6 +3523,25 @@ export class AtmosphereRenderer {
     return tex;
   }
 
+  /**
+   * Carry the snow's fall forward to this frame. A frame that does not follow
+   * on from the last (the first, a jump in the clock, its wrap) starts the
+   * fall over as if it had always been in this direction, so a one-off frame
+   * at a given time is the same frame whatever was drawn before it
+   */
+  private advanceSnow(timeSec: number, camera: Camera): void {
+    const t = timeSec % TIME_WRAP_SEC;
+    const dir = snowFallDir(camera);
+    const dt = t - this.snowAt;
+    const d = this.snowDrift;
+    if (dt >= 0 && dt <= 1) {
+      d[0] += dir[0] * dt; d[1] += dir[1] * dt; d[2] += dir[2] * dt;
+    } else {
+      d[0] = dir[0] * t; d[1] = dir[1] * t; d[2] = dir[2] * t;
+    }
+    this.snowAt = t;
+  }
+
   /** collect a variant's link result and the per-program setup that depends on it */
   private finishLink(v: Variant): void {
     const gl = this.gl;
@@ -3528,6 +3624,7 @@ export class AtmosphereRenderer {
     windOff = 0,
     evo = 0,
   ): void {
+    this.advanceSnow(timeSec, camera);
     const gl = this.bind(timeSec, s, windOff, evo);
     if (!gl) return;
     const u = this.u;
@@ -3751,6 +3848,7 @@ export class AtmosphereRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.noise);
     const u = this.u;
     gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
+    gl.uniform3f(u.u_snowDrift, this.snowDrift[0], this.snowDrift[1], this.snowDrift[2]);
     gl.uniform2f(u.u_sun, s.sunElevation, s.sunAzimuth);
     gl.uniform3f(u.u_moon, s.moonElevation, s.moonAzimuth, s.moonPhase);
     const c = s.clouds;

@@ -12,6 +12,20 @@
   can draw any state. Until a frame's own variant is linked, a renderer that
   has drawn nothing yet also draws with any linked variant that covers it,
   instead of nothing. The site's gallery was blank because of this.
+- **Snow falls instead of blinking.** The flakes are drawn from a thin shell
+  of a 3D lattice around the eye, and falling straight down while the view
+  looked up carried them through it: the fine snow lived for a fifth of a
+  second and twinkled. They now fall square to the view across the middle
+  of the frame (integrated on the CPU, so turning the camera never jumps
+  them), and a far layer crosses the view at a speed that goes with its
+  size — parallax — rather than outrunning it. Measured as how much of the
+  snowfall is still there, moved, a tenth of a second later: 0.09–0.43
+  before, 0.45–0.54 now.
+- **Snowflakes are round.** A flake wider than its lattice cell was cut off
+  square where the cell ended. The near layers now search the 2×2×2 block of
+  cells around each pixel (skipping the ones too far to hold a flake it
+  could draw) and take bigger cells, so a flake is whole at the same size.
+  A snowy 1080p frame costs about 2 ms more on an M2 Max.
 
 ## 0.4.0 — 2026-10-11
 
