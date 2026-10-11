@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- **Cumulus edges are soft.** The edge ramp the other layers use cut each
+  lump out of the blue like paper overhead, where it is narrowest; cumulus
+  now ramps over about twice the width around the same threshold, so the
+  lumps keep their size and lose the outline. Their crowns carry more of
+  their own shading, too, rather than a flat white that read as hard
+  contrast against the blue.
+- **The rainbow is light, not three stripes.** Its colors were bands laid
+  side by side, and read as red, green and blue lines. Each of seven
+  wavelengths now has its own bow — a bright edge with a tail of light
+  toward the inside, smeared by the sun's half-degree disc — and the bows
+  overlap: a continuous run from red outside through yellow and green to
+  violet, a whitish glow inside the primary where they add back up to
+  sunlight, and a secondary turned the other way, wider and fainter.
+- Controller example: a "Sky phenomena" drawer — rainbow, 22° halo and
+  aurora buttons that set the weather each needs and turn the camera to it,
+  and "face the sun" / "face away from the sun".
+
 ### Fixed
 
 - **A fair sky's cumulus is white again, not a camouflage print.** Since

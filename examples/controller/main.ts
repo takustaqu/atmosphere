@@ -97,10 +97,10 @@ const sky = new Atmosphere(canvas, {
 // report visibility=hidden so rAF never fires; a script can jump() to draw)
 (globalThis as any).__sky = sky;
 
-/** build Conditions from the UI state and apply it */
-function apply(): void {
+/** the Conditions the UI state describes */
+function conditionsNow(): Conditions {
   const loc = CITIES[ui.city];
-  const conditions: Conditions = {
+  return {
     // only pass a Date when a location is set (computing the real solar position needs a date)
     time: loc
       ? `${ui.dateISO}T${formatTod(ui.timeOfDay).padStart(5, '0')}`
@@ -121,6 +121,11 @@ function apply(): void {
     ground: ui.ground,
     sunset: ui.sunset,
   };
+}
+
+/** build Conditions from the UI state and apply it */
+function apply(): void {
+  const conditions = conditionsNow();
   sky.set(conditions);
   readout(conditions);
 }
@@ -261,6 +266,69 @@ syncers.push(chips(
     ui.featureMode = 'auto';
   },
 ));
+
+section('Sky phenomena', true);
+note('Some of the sky only shows under the right conditions and in the right '
+  + 'direction. Each of these sets the weather it needs and turns the camera to it.');
+{
+  const DEG = Math.PI / 180;
+  const sunNow = () => resolveConditions(conditionsNow());
+  /** move the clock (without a location) to an hour whose sun suits the phenomenon */
+  const sunBetween = (lo: number, hi: number, hour: number) => {
+    const el = sunNow().sunElevation;
+    if (el < lo * DEG || el > hi * DEG) {
+      if (CITIES[ui.city]) ui.city = 'None';
+      ui.timeOfDay = hour;
+    }
+  };
+  const look = (yaw: number, pitch: number, fov: number) => {
+    cam.yaw = yaw; cam.pitch = pitch; cam.fov = fov;
+    sky.set({ camera: cam }); hud();
+  };
+  syncers.push(chips(
+    [
+      { id: 'rainbow', label: 'Rainbow' },
+      { id: 'halo', label: '22° halo' },
+      { id: 'aurora', label: 'Aurora' },
+      { id: 'away', label: 'Face away from the sun' },
+      { id: 'toward', label: 'Face the sun' },
+    ],
+    () => false,
+    (id) => {
+      if (id === 'rainbow') {
+        // rain falling with the sun out behind you, lower than 42°
+        sunBetween(4, 38, 16.5);
+        ui.weather = { ...ui.weather, cloudCover: 0.3, precipitation: 4, precipitationType: 'rain',
+          thunder: 0, visibility: 25, convection: 0.2 };
+        ui.cloudMode = 'auto';
+        ui.particles.precipitation = 1;
+        look(sunNow().sunAzimuth + Math.PI, 0.32, 1.25);
+      } else if (id === 'halo') {
+        // a veil of cirrostratus with the sun in it
+        sunBetween(28, 60, 11);
+        ui.weather = { ...ui.weather, precipitation: 0, thunder: 0, visibility: 30 };
+        ui.cloudMode = 'manual';
+        ui.clouds = { ...ui.clouds, ...Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])),
+          cirrostratus: 0.75, cumulus: 0.08 };
+        const s = sunNow();
+        look(s.sunAzimuth, s.sunElevation, 1.3);
+      } else if (id === 'aurora') {
+        // a dark night, looking north
+        if (sunNow().sunElevation > -18 * DEG) { ui.city = 'None'; ui.timeOfDay = 23; }
+        ui.weather = { ...ui.weather, cloudCover: 0, precipitation: 0, thunder: 0, visibility: 40 };
+        ui.cloudMode = 'auto';
+        ui.celestial = { ...CELESTIAL_PRESETS.aurora };
+        look(0, 0.3, 1.1);
+      } else {
+        const s = sunNow();
+        look(s.sunAzimuth + (id === 'away' ? Math.PI : 0), id === 'away' ? 0.32 : Math.max(0.1, s.sunElevation), cam.fov);
+      }
+    },
+  ));
+  note('Rainbow: rain falling while the sun is out and lower than 42°; the bow stands '
+    + '42° from the point straight away from the sun, so face away from it. '
+    + 'Halo: a cirrostratus veil, the ring 22° around the sun. Aurora: a dark sky, toward the north.');
+}
 
 section('Time and location');
 syncers.push(slider('Time', 0, 24, 0.25,

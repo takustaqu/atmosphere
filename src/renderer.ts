@@ -701,13 +701,38 @@ vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
 #endif
 
 #ifdef FEAT_RAINBOW
-// a rainbow's colors across its width: 0 the inner edge (violet), 1 the outer (red)
-vec3 spectrum(float t) {
-  return clamp(vec3(
-    smoothstep(0.55, 1.0, t) + smoothstep(0.25, 0.0, t) * 0.45,
-    smoothstep(0.15, 0.5, t) * smoothstep(0.95, 0.6, t),
-    smoothstep(0.45, 0.0, t)
-  ), 0.0, 1.0);
+// One wavelength's color, 400..700 nm in seven steps, each channel scaled so
+// the seven sum to white: light spread evenly across them adds back up to
+// the sunlight it came from
+vec3 waveColor(int i) {
+  if (i == 0) return vec3(0.30, 0.00, 0.55) / vec3(2.95, 2.10, 1.95);
+  if (i == 1) return vec3(0.05, 0.10, 0.90) / vec3(2.95, 2.10, 1.95);
+  if (i == 2) return vec3(0.00, 0.60, 0.45) / vec3(2.95, 2.10, 1.95);
+  if (i == 3) return vec3(0.35, 0.90, 0.05) / vec3(2.95, 2.10, 1.95);
+  if (i == 4) return vec3(1.00, 0.45, 0.00) / vec3(2.95, 2.10, 1.95);
+  if (i == 5) return vec3(0.90, 0.05, 0.00) / vec3(2.95, 2.10, 1.95);
+  return vec3(0.35, 0.00, 0.00) / vec3(2.95, 2.10, 1.95);
+}
+// The light the raindrops send back at angle a (degrees from the point
+// opposite the sun). Each wavelength has its own bow, a little further out
+// the redder it is, and every one of them is a bright edge with a tail of
+// light toward the inside — so the colors are not bands laid side by side
+// but bows overlapping, smeared by the half degree of the sun's disc, and
+// inside the primary they add back up to a whitish glow. The secondary is the
+// same turned over: wider, fainter, red on the inside, its tail outside
+vec3 bowLight(float a) {
+  vec3 c = vec3(0.0);
+  for (int i = 0; i < 7; i++) {
+    float f = float(i) / 6.0;                     // 0 violet .. 1 red
+    float a1 = 40.6 + f * 1.8;                    // primary: 40.6° violet .. 42.4° red
+    float d1 = a - a1;
+    float p = exp(-d1 * d1 / 0.18) + (d1 < 0.0 ? 0.30 * exp(d1 / 1.6) : 0.0);
+    float a2 = 53.6 - f * 3.2;                    // secondary: 50.4° red .. 53.6° violet
+    float d2 = a - a2;
+    float q = exp(-d2 * d2 / 0.30) + (d2 > 0.0 ? 0.25 * exp(-d2 / 2.0) : 0.0);
+    c += waveColor(i) * (p + q * 0.40);
+  }
+  return c;
 }
 #endif
 
@@ -2250,6 +2275,11 @@ void main() {
     // grey bases came out at 60% and the blue showed through them in muddy
     // patches. A lump is opaque; only a trace of cumulus fades in
     float solid = smoothstep(0.02, 0.30, u_low.z);
+    // A cumulus edge is soft: the ramp the other layers use cut each lump out
+    // of the blue like paper overhead, where it is narrowest. Widened about
+    // the same threshold, so the lumps keep their size and lose the outline
+    float cuRamp = ramp + 0.14;
+    float cuSoft = 0.07;
     // Locality: a real sky's clouds gather — a flock here, a bare stretch
     // there, a street downwind — where a noise field cut at one threshold
     // is evenly peppered everywhere. A much coarser field moves the
@@ -2266,11 +2296,13 @@ void main() {
     {
       vec2 tuv = planeUV(rd, rdY, ALT_LOW * 2.5 * 1.32, u_windOff) + wob;
       float tedge = edge;
-      vec3 tl = cloudField(tuv, churn, ldir, tedge, ramp, tedge - 0.01);
+      vec3 tl = cloudField(tuv, churn, ldir, tedge - cuSoft, cuRamp, tedge - cuSoft - 0.01);
       float talpha = tl.x * solid * horizonFade;
       talpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, tl.x)) * 0.92;
       float tthick = smoothstep(tedge, tedge + 0.35, tl.z);
-      vec3 tc = cloudColor(tl.x, tl.y + 0.35, tthick * 0.45, dayF, nightM, sunsetF, flash, gloom, 0.7, cloudSun, 0.0);
+      // shaded enough inside that a lump has a form rather than a flat white
+      // cut-out — the flat white is most of what read as hard contrast
+      vec3 tc = cloudColor(tl.x, tl.y + 0.20, tthick * 0.75, dayF, nightM, sunsetF, flash, gloom, 0.8, cloudSun, 0.0);
       OVER(tc, talpha * 0.97);
     }
 
@@ -2281,7 +2313,7 @@ void main() {
     vec2 cuv = planeUV(rd, rdY, ALT_LOW * 2.5, u_windOff) + wob;
     // the veil's skirt reaches lower than the density's, so it sets the floor
     float bedge = edge + 0.15;
-    vec3 dl = cloudField(cuv, churn, ldir, bedge, ramp, bedge - 0.08);
+    vec3 dl = cloudField(cuv, churn, ldir, bedge - cuSoft, cuRamp, bedge - 0.08);
     // a thin, translucent veil cloud: a short skirt below the density threshold
     // (a little haze at the lumps' feet; a wide one spread translucent grey
     // across the blue). Scaled with the amount, or a residual haze is all
@@ -2312,7 +2344,7 @@ void main() {
     // fast-moving ragged clouds nearby (fragments of cumulus)
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 1.2, u_windOff * 1.9) + 51.7;
     float fedge = 0.94 - u_low.z * 0.42;
-    vec3 fl = cloudField(fuv, churn * 1.2, ldir, fedge, ramp, fedge - 0.01);
+    vec3 fl = cloudField(fuv, churn * 1.2, ldir, fedge - cuSoft, cuRamp, fedge - cuSoft - 0.01);
     float falpha = fl.x * u_low.z * horizonFade * (1.0 - cbMask * 0.6);
     float fthick = smoothstep(fedge, fedge + 0.35, fl.z);
     vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightM, sunsetF, flash, gloom, 1.25, cloudSun, 0.0);
@@ -2773,15 +2805,17 @@ void main() {
     // a light shower is bow enough; what the gloom took from the sun's disc
     // it takes from the bow only in part — a bow stands against dark rain
     float amt = smoothstep(0.03, 0.25, u_rain) * sqrt(sunVis) * smoothstep(-0.02, 0.06, rd.y);
-    float t1 = (ang - 0.7086) / 0.0297;                // 40.6°..42.3°, violet to red
-    float t2 = 1.0 - (ang - 0.878) / 0.056;             // 50.3°..53.5°, red to violet
-    float bow1 = smoothstep(-0.2, 0.15, t1) * smoothstep(1.25, 0.95, t1);
-    float bow2 = smoothstep(-0.2, 0.15, t2) * smoothstep(1.25, 0.95, t2);
-    vec3 bows = spectrum(clamp(t1, 0.0, 1.0)) * bow1 + spectrum(clamp(t2, 0.0, 1.0)) * bow2 * 0.35;
-    float dark = smoothstep(0.73, 0.76, ang) * smoothstep(0.90, 0.87, ang);
-    sky *= 1.0 - dark * amt * 0.12;
-    sky += L(bows) * amt * 0.55;
-    wide = max(wide, min(bow1 + bow2, 1.0) * amt * 0.6);
+    float deg = ang * 57.2958;
+    if (deg > 30.0 && deg < 64.0) {
+      vec3 bows = bowLight(deg);
+      float dark = smoothstep(0.73, 0.76, ang) * smoothstep(0.90, 0.87, ang);
+      sky *= 1.0 - dark * amt * 0.12;
+      // already linear: the colors are mixed as light, not as paint
+      sky += bows * amt * 0.9;
+      // how far the light strays from white is what needs the wide gamut
+      float chroma = max(bows.r, max(bows.g, bows.b)) - min(bows.r, min(bows.g, bows.b));
+      wide = max(wide, min(chroma * 3.0, 1.0) * amt * 0.6);
+    }
   }
 #endif
 

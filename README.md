@@ -809,6 +809,12 @@ Because drawing is ray-basis, this isn't a flat background — it's the same as
 looking around the inside of a skybox draped over the scene. Press "Bake 6 faces"
 and that same sky gets baked into a cubemap on the spot.
 
+The "Sky phenomena" drawer has buttons for a rainbow, the 22° halo and the
+aurora. Each only shows under the right conditions and in the right direction
+(a rainbow needs rain falling while the sun is out and lower than 42°, and
+stands opposite the sun), so each sets the weather it needs and turns the
+camera to it.
+
 It also shows how the observation values resolved into the renderer's 0..1
 parameters at all times, so you can see exactly what `cloudCover` or
 `visibility` actually does as you move the sliders.
