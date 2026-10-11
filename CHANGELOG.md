@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 — 2026-10-11
+
+A renderer used on its own draws again, and the snow falls.
 
 ### Fixed
 
