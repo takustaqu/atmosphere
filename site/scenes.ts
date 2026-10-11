@@ -7,7 +7,8 @@
 //
 // Times are given without a location, so the nominal sun applies: it rises
 // at 6:00, souths at 12:00 and sets at 18:00. That keeps each number
-// readable as "roughly this hour of the day".
+// readable as "roughly this hour of the day". The one exception is the
+// night, which needs a real date for its moon (see below).
 
 import type { Conditions } from '../src/index.js';
 
@@ -49,6 +50,16 @@ export const SCENES: readonly Scene[] = [
     conditions: { time: 17.8, weather: 'fair' },
   },
   {
+    ja: '海に沈む夕日を見送った時',
+    en: 'When you watched the sun go down into the sea',
+    // the sun nearly down, the water below the horizon giving back the sky
+    conditions: {
+      time: 17.65,
+      weather: { cloudCover: 0.22, windSpeed: 4, visibility: 35 },
+      ground: 'sea',
+    },
+  },
+  {
     ja: '世界が灰色に染まる時',
     en: 'When the world turns grey',
     conditions: { time: 12, weather: 'overcast' },
@@ -70,8 +81,13 @@ export const SCENES: readonly Scene[] = [
     // a rate that could occur; it is what it takes for a visitor who is here for
     // seconds rather than hours to actually see one. Chosen to be watchable, not
     // to be real.
+    //
+    // Without a date the moon is full and up all night, right in the frame, so
+    // this night has a real one: the new moon of 12 August 2026 over Tokyo,
+    // which is also the Perseids' peak.
     conditions: {
-      time: 22.5,
+      time: new Date('2026-08-12T22:30:00+09:00'),
+      location: { latitude: 35.68, longitude: 139.77 },
       weather: 'clear',
       celestial: { bortle: 1, milkyWay: 1, meteors: 3000 },
     },

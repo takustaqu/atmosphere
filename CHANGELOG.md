@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`AtmosphereRenderer` used on its own got to `onReady` again.** Since
+  0.4.0 the shader is compiled per combination of features, and nothing is
+  compiled until a frame or `prepare()` says which one — so a renderer that
+  waited for `onReady` before its first `render()` waited for good. If a turn
+  passes with no word, it now compiles the program with every feature, which
+  can draw any state. Until a frame's own variant is linked, a renderer that
+  has drawn nothing yet also draws with any linked variant that covers it,
+  instead of nothing. The site's gallery was blank because of this.
+
 ## 0.4.0 — 2026-10-11
 
 The rest of the sky. The moon stands where it is and shows its phase; the sea

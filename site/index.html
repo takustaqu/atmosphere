@@ -222,8 +222,8 @@
     margin: 0 0 22px; font-size: 13px; font-weight: 600;
     letter-spacing: 0.19em; color: var(--ink-dim);
   }
-  /* six cards: 300px keeps it to two or three columns, so they land 2×3
-     or 3×2 instead of a row with a lone one */
+  /* eight cards: 300px keeps it to two columns at full width, so they land
+     2×4 instead of a row with a lone one */
   .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
   .card {
     padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius);
@@ -231,7 +231,7 @@
   }
   .card h3 { margin: 0 0 7px; font-size: 15px; font-weight: 600; color: var(--ink-bright); }
   .card p { margin: 0; font-size: 13.5px; color: var(--ink-dim); line-height: 1.7; }
-  /* twelve tiles, 3x4 at full width */
+  /* eighteen tiles, 3x6 at full width */
   .gallery { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
   .gallery figure { margin: 0; }
   .gallery canvas {
@@ -296,8 +296,8 @@
     <div id="lede">
       <h1>atmosphere</h1>
       <p id="tagline">
-        <span class="ja">天気、時間、場所、雲、星空 — 好きな空を作れます。</span>
-        <span class="en">Weather, time, place, clouds, stars — make any sky you like.</span>
+        <span class="ja">天気、時間、場所、雲、星空、海 — 好きな空を作れます。</span>
+        <span class="en">Weather, time, place, clouds, stars, the sea — make any sky you like.</span>
       </p>
       <div id="cta">
         <code class="pill">npm i @takustaqu/atmosphere</code>
@@ -344,8 +344,8 @@
       <div class="card">
         <h3><span class="ja">時刻と場所</span><span class="en">Time and place</span></h3>
         <p>
-          <span class="ja">緯度経度と日時から実際の太陽位置を計算します。空のグラデーション、夕焼け、星、月、夜の街明かり。</span>
-          <span class="en">The real solar position from latitude, longitude and date. The sky's gradient, sunset, stars, the moon, city lights along the night horizon.</span>
+          <span class="ja">緯度経度と日時から実際の太陽と月の位置を計算します。月の満ち欠けも日付どおり。空のグラデーション、夕焼けの赤みの強さ、地球の影とビーナスの帯。</span>
+          <span class="en">The real positions of the sun and the moon from latitude, longitude and date, the moon's phase included. The sky's gradient, how hard the sunset burns, the Earth's shadow and the Belt of Venus.</span>
         </p>
       </div>
       <div class="card">
@@ -365,8 +365,22 @@
       <div class="card">
         <h3><span class="ja">夜空</span><span class="en">The night sky</span></h3>
         <p>
-          <span class="ja">光害はボートルスケールで。暗い空では天の川が星の集まりとして現れ、流星群は ZHR で流せます。月は地球照と欠けまで。</span>
-          <span class="en">Light pollution on the Bortle scale. Under a dark sky the Milky Way appears as resolved stars, meteor showers run at a ZHR, and the moon carries its earthshine and phase.</span>
+          <span class="ja">光害はボートルスケールで。暗い空では天の川が星の集まりとして現れ、流星群は ZHR で流せます（たまに火球も）。オーロラと黄道光、地球照と月面の模様まで。</span>
+          <span class="en">Light pollution on the Bortle scale. Under a dark sky the Milky Way appears as resolved stars, meteor showers run at a ZHR (with the odd fireball), and there is the aurora, the zodiacal light, and the moon's earthshine and maria.</span>
+        </p>
+      </div>
+      <div class="card">
+        <h3><span class="ja">光学現象</span><span class="en">Optical phenomena</span></h3>
+        <p>
+          <span class="ja">巻層雲越しの 22° ハロと幻日、雨に日が差したときの虹（副虹つき）、雲の切れ間からの薄明光線、空を横切る飛行機雲。</span>
+          <span class="en">The 22° halo and sundogs through cirrostratus, a rainbow (and its secondary) when the sun shines on rain, crepuscular rays through gaps in the cloud, contrails crossing the sky.</span>
+        </p>
+      </div>
+      <div class="card">
+        <h3><span class="ja">海</span><span class="en">The sea</span></h3>
+        <p>
+          <span class="ja">水平線の下を、空を映す水面に。フレネル反射とゆるいうねり、太陽の光の道。CPL を回すと水面の反射も変わります。</span>
+          <span class="en">Open water below the horizon, mirroring the sky: a Fresnel reflection, a gentle swell and the sun's road of light. Turning the polarizer changes the reflection too.</span>
         </p>
       </div>
       <div class="card">

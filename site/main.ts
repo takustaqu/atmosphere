@@ -4,7 +4,7 @@
 // scenes.ts), and changing the line is just a `set()` — the transition you
 // see is the library's own, not a crossfade between two images.
 
-import { Atmosphere, DEFAULT_CAMERA } from '../src/index.js';
+import { Atmosphere, DEFAULT_CAMERA, type Conditions } from '../src/index.js';
 import { buildGallery, relabelGallery } from './gallery.js';
 import { sceneCycle, SCENES, type Scene } from './scenes.js';
 
@@ -103,9 +103,14 @@ const FADE_MS = 640;
 const HOLD_MS = 7800;
 let timer = 0;
 
+// set() merges into what is there, so what one scene brings in — a place
+// and a date, the sea, a night sky — is cleared before the next, unless that
+// one brings its own
+const BLANK: Conditions = { location: undefined, ground: undefined, celestial: undefined };
+
 function step(): void {
   const scene = nextScene();
-  sky.set(scene.conditions);
+  sky.set({ ...BLANK, ...scene.conditions });
   lineEl.classList.remove('on');
   timer = window.setTimeout(() => {
     show(scene);
@@ -163,8 +168,10 @@ canvas.addEventListener('pointermove', (e) => {
   yaw -= dx * (fov * (canvas.clientWidth / canvas.clientHeight)) / canvas.clientWidth;
   // touch keeps vertical for page scroll (see #sky's touch-action)
   if (!drag.touch) {
-    // stop short of straight up and of burying the view in the ground
-    pitch = Math.max(-0.30, Math.min(1.30, pitch - dy * fov / canvas.clientHeight));
+    // the sky is grabbed, as it is sideways and in the controller: drag down
+    // and it comes down with the cursor, so the view tilts up. Stop short of
+    // straight up and of burying the view in the ground
+    pitch = Math.max(-0.30, Math.min(1.30, pitch + dy * fov / canvas.clientHeight));
   }
   sky.set({ camera: { yaw, pitch } });
 });

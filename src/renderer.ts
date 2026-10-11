@@ -3299,6 +3299,15 @@ export class AtmosphereRenderer {
     // Under 'sync' the first render() compiles on the spot, so the renderer
     // is usable the moment the constructor returns, as before
     if (!this.parallel) this.notifyReady(true);
+    // A renderer driven directly may wait for onReady before its first
+    // render(), and then nothing ever says which variant to compile. If a
+    // turn passes without a prepare() or a frame, compile the one program
+    // that can draw anything, so onReady still comes
+    else setTimeout(() => {
+      if (!this.gl || this.lost || this.variants.size > 0) return;
+      this.wanted = ALL_FEATURES;
+      this.ensure(ALL_FEATURES);
+    }, 0);
   }
 
   /**
@@ -3376,12 +3385,11 @@ export class AtmosphereRenderer {
       const base = this.ensure(0);
       return base?.linked ? base : null;
     }
-    if (!this.current) return null;
     let best: Variant | null = null;
     for (const v of this.variants.values()) {
       if (v.linked && (v.key & key) === key && (!best || popcount(v.key) < popcount(best.key))) best = v;
     }
-    return best ?? (this.current.linked ? this.current : null);
+    return best ?? (this.current?.linked ? this.current : null);
   }
 
   /** drop the least recently drawn variants past the cap, never the one in use */

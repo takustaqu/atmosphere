@@ -1,6 +1,6 @@
 // gallery.ts — the weather presets and the night skies, side by side
 //
-// Twelve live canvases would mean twelve WebGL contexts on top of the hero's.
+// Eighteen live canvases would mean eighteen WebGL contexts on top of the hero's.
 // Browsers cap how many can exist at once (and evict the oldest, which would
 // kill the hero), so instead one renderer draws them all in turn, each frame
 // is copied into a plain 2D canvas, and the context is released. The tiles
@@ -8,15 +8,37 @@
 // single context no matter how far you scroll.
 
 import {
-  AtmosphereRenderer, resolveConditions, weatherLabel,
-  type Conditions, type Locale, type WeatherId,
+  AtmosphereRenderer, DEFAULT_CAMERA, resolveConditions, weatherLabel,
+  type Camera, type Conditions, type Locale, type WeatherId,
 } from '../src/index.js';
 
 interface Tile {
   conditions: Conditions;
   /** preset tiles take their caption from weatherLabel; night tiles bring their own */
   label: WeatherId | { ja: string; en: string };
+  /** where to look, for a sky whose subject is not to the south */
+  camera?: Partial<Camera>;
+  /** seconds into the sky's own clock, for something that has to have happened by then */
+  t?: number;
 }
+
+// azimuths for camera.yaw: north 0, east π/2
+const EAST = Math.PI / 2, WEST = Math.PI * 1.5;
+
+// Without a date the moon is a full one, opposite the sun — up all night, and
+// in the frame. A night that is about the stars gets a real one with no moon:
+// the new moon of 12 August 2026, which is also the Perseids' peak
+const NEW_MOON = {
+  time: new Date('2026-08-12T22:30:00+09:00'),
+  location: { latitude: 35.68, longitude: 139.77 },
+};
+
+/** the point opposite the sun, where a rainbow is centred */
+const antisolar = (c: Conditions): number => resolveConditions(c).sunAzimuth + Math.PI;
+const SHOWER: Conditions = {
+  time: 16.6,
+  weather: { cloudCover: 0.25, precipitation: 6, visibility: 25 },
+};
 
 /** each preset at the hour it reads best */
 const preset = (id: WeatherId, time: number): Tile =>
@@ -35,7 +57,7 @@ const TILES: readonly Tile[] = [
   // the celestial axis, shown across its range: the darkest sky there is,
   // a moonlit one, and the city sky most visitors actually live under
   {
-    conditions: { time: 22.5, weather: 'clear', celestial: { bortle: 1, milkyWay: 1 } },
+    conditions: { ...NEW_MOON, weather: 'clear', celestial: { bortle: 1, milkyWay: 1 } },
     label: { ja: '星空', en: 'Dark sky' },
   },
   {
@@ -44,8 +66,54 @@ const TILES: readonly Tile[] = [
     label: { ja: '月夜', en: 'Moonlit' },
   },
   {
-    conditions: { time: 22.5, weather: 'clear', celestial: 'city' },
+    conditions: { ...NEW_MOON, weather: 'clear', celestial: 'city' },
     label: { ja: '街明かり', en: 'City lights' },
+  },
+  // the phenomena: each one framed where it stands in the sky
+  {
+    // the sun low over the water, its road of light broken by the swell
+    conditions: { time: 17.75, weather: 'fair', ground: 'sea' },
+    camera: { yaw: WEST - 0.35, pitch: 0.2 },
+    label: { ja: '海に沈む夕日', en: 'Sunset at sea' },
+  },
+  {
+    // the dark segment rising in the east with the pink band above it
+    conditions: { time: 18.3, weather: 'clear' },
+    camera: { yaw: EAST, pitch: 0.16 },
+    label: { ja: '地球の影とビーナスの帯', en: "Earth's shadow, Belt of Venus" },
+  },
+  {
+    // a shower with the late sun behind the camera, and a lens wide enough
+    // for the whole 42° arch
+    conditions: SHOWER,
+    camera: { yaw: antisolar(SHOWER), pitch: 0.32, fov: 1.25 },
+    label: { ja: '虹', en: 'Rainbow' },
+  },
+  {
+    // a veil of cirrostratus, the sun in the middle of its ring
+    conditions: { time: 11, weather: { clouds: { cirrostratus: 0.75, cumulus: 0.08 } } },
+    camera: { yaw: Math.PI - 0.25, pitch: 0.75 },
+    label: { ja: '日暈', en: 'Halo' },
+  },
+  {
+    conditions: {
+      time: 9.5,
+      weather: { cloudCover: 0.08, visibility: 40 },
+      particles: { contrails: 1 },
+    },
+    camera: { pitch: 0.7 },
+    t: 240,
+    label: { ja: '飛行機雲', en: 'Contrails' },
+  },
+  {
+    // the curtains stand to the north
+    // opened up a stop, the way it would be photographed
+    conditions: {
+      ...NEW_MOON, weather: 'clear',
+      celestial: { bortle: 2, milkyWay: 0.5, aurora: 1 }, tone: { exposure: 1 },
+    },
+    camera: { yaw: 0, pitch: 0.3 },
+    label: { ja: 'オーロラ', en: 'Aurora' },
   },
 ];
 
@@ -61,7 +129,7 @@ export function relabelGallery(lang: Locale): void {
 
 /**
  * Fill `#gallery`. The section removes itself if WebGL is unavailable or the
- * shader never compiles, so it stays absent rather than showing twelve black
+ * shader never compiles, so it stays absent rather than showing eighteen black
  * rectangles.
  *
  * The shader compiles off the main thread, so this can't draw the moment the
@@ -96,6 +164,9 @@ export function buildGallery(lang: Locale): void {
   // synchronously, before the assignment below has happened
   let renderer: AtmosphereRenderer | null = null;
   renderer = new AtmosphereRenderer(source, {
+    // one program with every feature: the tiles are each drawn once, so a
+    // variant per tile would be a dozen compiles for a dozen frames
+    variants: false,
     onReady: (ok) => {
       if (!ok || !renderer) {
         renderer?.dispose({ loseContext: true });
@@ -105,10 +176,10 @@ export function buildGallery(lang: Locale): void {
       renderer.resize(w, h);
       try {
         TILES.forEach((tile, i) => {
-          // vary the evolution offset per tile so the skies aren't twelve
+          // vary the evolution offset per tile so the skies aren't eighteen
           // shots of one cloud field — the same weather, different afternoons
-          renderer!.render(0, resolveConditions(tile.conditions),
-            undefined, 41.7 + i * 5.7, 7.3 + i * 3.1);
+          renderer!.render(tile.t ?? 0, resolveConditions(tile.conditions),
+            { ...DEFAULT_CAMERA, ...tile.camera }, 41.7 + i * 5.7, 7.3 + i * 3.1);
           // copy synchronously: the drawing buffer is cleared once we yield.
           // Match the renderer's space or the wide-gamut pixels clip here
           outputs[i].getContext('2d', { colorSpace: renderer!.colorSpace })
