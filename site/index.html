@@ -205,6 +205,35 @@
     transition: opacity 0.6s ease; pointer-events: none;
   }
   #hint.gone { opacity: 0; }
+  /* the scene index: which sky is showing, and a way to any of them. The one
+     showing carries a hairline that fills over its hold */
+  #scenes {
+    position: absolute; left: 14px; bottom: 10px; z-index: 3;
+    display: flex; gap: 0;
+  }
+  #scenes button {
+    position: relative; padding: 9px 7px 12px; border: 0; background: none;
+    font: 11px/1 var(--mono); letter-spacing: 0.06em; cursor: pointer;
+    color: rgba(255, 255, 255, 0.42); text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7);
+    transition: color 0.3s ease;
+  }
+  #scenes button:hover, #scenes button:focus-visible { color: rgba(255, 255, 255, 0.85); }
+  #scenes button.on { color: #fff; }
+  #scenes button::after {
+    content: ''; position: absolute; left: 7px; right: 7px; bottom: 6px; height: 1px;
+    background: rgba(255, 255, 255, 0.75); transform-origin: left; transform: scaleX(0);
+  }
+  #scenes button.on::after { transform: scaleX(1); }
+  #scenes.run button.on::after { animation: hold var(--hold, 8s) linear both; }
+  @keyframes hold { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  @media (prefers-reduced-motion: reduce) {
+    #scenes.run button.on::after { animation: none; }
+  }
+  /* on a phone the row would run into the cue: centre it above instead */
+  @media (max-width: 560px) {
+    #scenes { left: 50%; transform: translateX(-50%); bottom: 30px; }
+    #stage { padding-bottom: 84px; }
+  }
   #hint svg { opacity: 0.8; }
   @media (max-width: 560px) { #hint { display: none; } }
   #fallback {
@@ -314,6 +343,7 @@
     <span class="ja">ドラッグで視点変更</span>
     <span class="en">Drag to look around</span>
   </div>
+  <nav id="scenes" aria-label="Scenes"></nav>
   <div id="cue">↓</div>
 </section>
 

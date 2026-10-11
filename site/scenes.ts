@@ -92,26 +92,3 @@ export const SCENES: readonly Scene[] = [
     },
   },
 ];
-
-/**
- * Order the scenes so the same one never comes round twice in a row, and so
- * a visitor who stays a while doesn't see the same sequence repeat.
- * Fisher–Yates per cycle, re-shuffled when the deck runs out.
- */
-export function sceneCycle(): () => Scene {
-  let deck: Scene[] = [];
-  let last: Scene | null = null;
-  return () => {
-    if (deck.length === 0) {
-      deck = [...SCENES];
-      for (let i = deck.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [deck[i], deck[j]] = [deck[j], deck[i]];
-      }
-      // a reshuffle can put the just-shown scene at the front again
-      if (deck[0] === last && deck.length > 1) [deck[0], deck[1]] = [deck[1], deck[0]];
-    }
-    last = deck.shift()!;
-    return last;
-  };
-}
