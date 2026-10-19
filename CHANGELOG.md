@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-10-19
+
+The moon as a light on the clouds. A moonlit cirrostratus glows round the
+moon with a soft, faintly colored 22° halo, and a thin water cloud in front
+of the moon is lit through, ringed by the corona.
 
 ### Changed
 
