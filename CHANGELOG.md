@@ -12,7 +12,15 @@
   itself; the ring is a soft band a shade brighter than the veil inside it,
   faintly colored as the sun's is — red on the inner edge, through yellow to
   white, and a trace of blue as it fades outward.
-- Controller example: a "Moon halo" button in the Sky phenomena drawer.
+- **A cloud in front of the moon glows.** The moonlight on night clouds
+  was one flat silver whatever the moon's direction. A thin cloud near the
+  moon is now lit through from behind — bright at its thin edges while thick
+  cores stand dark against it, so the moon reads as the lamp behind them —
+  and a water cloud (not an ice one) carries the corona: a bluish-white
+  aureole and a red-brown ring beyond the limb, then fainter blue-green and
+  red. Measured from the limb, since the disc is drawn larger than life.
+- Controller example: "Moon halo" and "Moon behind clouds" buttons in the
+  Sky phenomena drawer.
 
 ## 0.5.0 — 2026-10-12
 

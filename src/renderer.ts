@@ -957,6 +957,25 @@ void cloudLight(float dayF, float nightF, float sunsetF, vec3 cloudSun, float al
   leaden = vec3(0.09, 0.10, 0.12) + vec3(0.10) * dayF;
 }
 
+// The moon's light carried on forward through a thin cloud in front of it,
+// and the corona that light is colored with: set per pixel in main, before
+// the cloud layers, from how far this ray is from the moon
+float g_moonFwd = 0.0;
+vec3 g_corona = vec3(1.0);
+
+// The corona: light diffracted round the moon by a water cloud's droplets —
+// a bluish-white aureole, a red-brown ring a couple of degrees out, then
+// fainter blue-green and red again, fading as it goes. Its size goes with
+// the droplets; this is a middling one. Ice clouds give a halo instead
+vec3 corona(float a) {
+  float d = a * 57.2958;
+  vec3 c = vec3(0.86, 0.92, 1.0);
+  c = mix(c, vec3(1.10, 0.55, 0.32), smoothstep(1.3, 2.2, d) * (1.0 - smoothstep(2.6, 3.4, d)));
+  c = mix(c, vec3(0.50, 0.95, 0.95), smoothstep(2.8, 3.5, d) * (1.0 - smoothstep(3.8, 4.4, d)));
+  c = mix(c, vec3(1.05, 0.50, 0.60), smoothstep(4.0, 4.6, d) * (1.0 - smoothstep(5.0, 5.8, d)));
+  return mix(vec3(1.0), c, exp(-d / 6.0));
+}
+
 // cloud color (lighting shared by every plane layer)
 vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, float sunsetF,
                 float flash, float gloom, float darkMul, vec3 cloudSun, float alt) {
@@ -974,6 +993,12 @@ vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, flo
   c = mix(c, shade, clamp(sh, 0.0, 0.85));
   // night: a faint glow from moonlight
   c += moon * (0.3 + 0.4 * litE);
+  // and near the moon, a thin cloud lit through from behind: the moon turns
+  // the cloud in front of it into a lamp, bright at its thin edges while
+  // the thick cores stand dark against it — colored by the corona on a
+  // water cloud, plain on an ice one (alt 1)
+  float through = (1.0 - clamp(thick, 0.0, 1.0) * 0.85) * (1.0 - den * 0.45);
+  c += vec3(0.80, 0.84, 0.92) * mix(g_corona, vec3(1.0), alt) * g_moonFwd * through;
   // silver lining (the edge glows on the sun side — only with direct light)
   float rim = den * (1.0 - den) * 4.0 * max(litE, 0.0) * (1.0 - diffuse);
   c += cloudSun * rim * 0.35 * max(dayF, sunsetF * 0.5);
@@ -1492,6 +1517,16 @@ void main() {
   // floor for the starlight and airglow a night keeps regardless
   float nightM = nightF * mix(0.3, 1.0, moonUp * u_moon.z);
   float moonAng = acos(clamp(dot(rd, moonDir), -1.0, 1.0));
+  // for the clouds: how much of the moon's light a thin cloud this far from
+  // it carries on forward — not cut by the cover, since the cloud is the
+  // thing in front — and the corona it is colored with
+  // Measured from the limb, not the centre: the disc is drawn some ten times
+  // its real size, and a glow peaking at its centre put a hot spot inside a
+  // moon behind a cloud, with the corona's rings inside the disc
+  float moonLimb = max(moonAng - 0.046, 0.0);
+  g_moonFwd = moonUp * u_moon.z * nightF
+            * (exp(-moonLimb / 0.03) * 1.6 + exp(-moonLimb / 0.13) * 0.65 + exp(-moonLimb / 0.40) * 0.12);
+  g_corona = corona(moonLimb);
   if (moonVis > 0.0 && skyLight) {
     float ang = moonAng;
     float moon = smoothstep(0.048, 0.043, ang);

@@ -290,6 +290,7 @@ note('Some of the sky only shows under the right conditions and in the right '
       { id: 'rainbow', label: 'Rainbow' },
       { id: 'halo', label: '22° halo' },
       { id: 'moonhalo', label: 'Moon halo' },
+      { id: 'mooncloud', label: 'Moon behind clouds' },
       { id: 'aurora', label: 'Aurora' },
       { id: 'away', label: 'Face away from the sun' },
       { id: 'toward', label: 'Face the sun' },
@@ -322,6 +323,16 @@ note('Some of the sky only shows under the right conditions and in the right '
           cirrostratus: 0.75 };
         const s = sunNow();
         look(s.moonAzimuth, s.moonElevation, 1.25);
+      } else if (id === 'mooncloud') {
+        // broken water cloud passing in front of a high moon: the cloud
+        // round it glows, colored by the corona
+        if (CITIES[ui.city] || sunNow().moonElevation < 30 * DEG) { ui.city = 'None'; ui.timeOfDay = 0.5; }
+        ui.weather = { ...ui.weather, precipitation: 0, thunder: 0, visibility: 30, windSpeed: 4 };
+        ui.cloudMode = 'manual';
+        ui.clouds = { ...ui.clouds, ...Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])),
+          altocumulus: 0.8, stratocumulus: 0.3 };
+        const s = sunNow();
+        look(s.moonAzimuth + 0.3, s.moonElevation - 0.15, 0.9);
       } else if (id === 'aurora') {
         // a dark night, looking north
         if (sunNow().sunElevation > -18 * DEG) { ui.city = 'None'; ui.timeOfDay = 23; }
@@ -338,7 +349,8 @@ note('Some of the sky only shows under the right conditions and in the right '
   note('Rainbow: rain falling while the sun is out and lower than 42°; the bow stands '
     + '42° from the point straight away from the sun, so face away from it. '
     + 'Halo: a cirrostratus veil, the ring 22° around the sun — or the moon, at night, '
-    + 'where the moonlit veil glows round it. Aurora: a dark sky, toward the north.');
+    + 'where the moonlit veil glows round it. Moon behind clouds: a thin water cloud in '
+    + 'front of the moon glows, ringed by the corona. Aurora: a dark sky, toward the north.');
 }
 
 section('Time and location');
