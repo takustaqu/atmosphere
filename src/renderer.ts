@@ -692,9 +692,15 @@ vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
     }
   }
   if (moonVis > 0.0) {
+    // A moon's halo is soft: its light is a fraction of the sun's, and what
+    // shows is less an edge than a band where the veil is a shade brighter,
+    // over a veil already glowing round the moon itself (the aureole —
+    // light the crystals send on almost straight). The ring's inside is only
+    // a little darker than the ring; the glow keeps it from being a hole
     float d = moonAng - 0.379;
-    float ring = smoothstep(-0.014, 0.006, d) * exp(-max(d, 0.0) * 22.0);
-    add += L(vec3(0.95, 0.95, 1.0)) * ring * 0.07 * moonVis * u_moon.z * nightF;
+    float ring = smoothstep(-0.035, 0.012, d) * exp(-max(d, 0.0) * 11.0);
+    float aureole = exp(-moonAng / 0.045) * 0.45 + exp(-moonAng / 0.24) * 0.16;
+    add += L(vec3(0.92, 0.95, 1.0)) * (ring * 0.11 + aureole) * moonVis * u_moon.z * nightF;
   }
   return add * ice * veil;
 }
@@ -1762,8 +1768,14 @@ void main() {
     if (above) {
       vec2 s = stratiform(planeUV(rd, rdY, ALT_HIGH * 0.5, u_windOff * 0.3), 0.35, 0.0);
       vec3 col = mix(vec3(0.86, 0.89, 0.95), vec3(1.02, 0.80, 0.72), sunsetF);
-      col = mix(vec3(0.22, 0.26, 0.38), col, max(dayF, sunsetF * 0.8));
-      OVER(col, s.x * u_high.y * 0.45 * horizonFade);
+      // At night the veil is lit by the moon: a little everywhere, and far
+      // more toward it, where the crystals send its light on forward — the
+      // grey-blue glow a moonlit veil hangs across the whole sky. A dark veil
+      // under a moon only showed its halo as a ring round a hole
+      float moonLit = moonVis * u_moon.z * nightF;
+      vec3 nightCol = vec3(0.22, 0.26, 0.38) * (1.0 + moonLit * (0.9 + 2.4 * exp(-moonAng * 2.2)));
+      col = mix(nightCol, col, max(dayF, sunsetF * 0.8));
+      OVER(col, s.x * u_high.y * 0.45 * (1.0 + moonLit * 0.5) * horizonFade);
     }
     // the 22° halo (refraction through ice crystals). Added light, so it is the
     // one term in this stretch that has to leave display space — and only on

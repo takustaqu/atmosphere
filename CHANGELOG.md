@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **A moonlit veil glows, and its halo is soft.** At night the cirrostratus
+  was one dark blue whatever the moon did, and the moon's 22° halo was a
+  thin ring added on top — round a dark sky it read as a ring round a hole.
+  The veil is now lit by the moon, a little everywhere and far more toward
+  it (the crystals send its light on forward), with a glow round the moon
+  itself; the ring is a soft band a shade brighter than the veil inside it.
+- Controller example: a "Moon halo" button in the Sky phenomena drawer.
+
 ## 0.5.0 — 2026-10-12
 
 Clouds and a rainbow measured against photographs. Cumulus follows the
