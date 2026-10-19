@@ -9,7 +9,9 @@
   thin ring added on top — round a dark sky it read as a ring round a hole.
   The veil is now lit by the moon, a little everywhere and far more toward
   it (the crystals send its light on forward), with a glow round the moon
-  itself; the ring is a soft band a shade brighter than the veil inside it.
+  itself; the ring is a soft band a shade brighter than the veil inside it,
+  faintly colored as the sun's is — red on the inner edge, through yellow to
+  white, and a trace of blue as it fades outward.
 - Controller example: a "Moon halo" button in the Sky phenomena drawer.
 
 ## 0.5.0 — 2026-10-12

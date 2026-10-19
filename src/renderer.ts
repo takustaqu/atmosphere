@@ -700,7 +700,13 @@ vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
     float d = moonAng - 0.379;
     float ring = smoothstep(-0.035, 0.012, d) * exp(-max(d, 0.0) * 11.0);
     float aureole = exp(-moonAng / 0.045) * 0.45 + exp(-moonAng / 0.24) * 0.16;
-    add += L(vec3(0.92, 0.95, 1.0)) * (ring * 0.11 + aureole) * moonVis * u_moon.z * nightF;
+    // faintly colored, as the sun's is: red on the inner edge (red bends
+    // least, so it reaches the smallest angle), through yellow to white, and
+    // a trace of blue where the band fades outward
+    vec3 ringCol = mix(vec3(1.0, 0.50, 0.36), vec3(1.0, 0.86, 0.62), smoothstep(-0.025, 0.012, d));
+    ringCol = mix(ringCol, vec3(0.92, 0.95, 1.0), smoothstep(0.012, 0.05, d));
+    ringCol = mix(ringCol, vec3(0.70, 0.82, 1.0), smoothstep(0.05, 0.13, d));
+    add += (L(ringCol) * ring * 0.12 + L(vec3(0.92, 0.95, 1.0)) * aureole) * moonVis * u_moon.z * nightF;
   }
   return add * ice * veil;
 }
