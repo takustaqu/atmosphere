@@ -921,6 +921,39 @@ float fbm4HQ(vec2 p) {
        + 0.125 * vnoise(p2) + 0.0625 * vnoise(p3);
 }
 
+// How high a cumulonimbus's thrust carries it: the height y solving
+// rise − (y + 0.6y²) − 1 = 0, the thrust's own reach before anything shapes it
+float cbReach(float rise) {
+  return (sqrt(1.0 + 2.4 * max(rise - 1.0, 0.0)) - 1.0) / 1.2;
+}
+// ...and how high it stands on screen. The reach rises with the thrust as a
+// parabola does with its axis, so read straight off it a tower's skyline
+// across azimuth was a cone: every azimuth stood a little lower than the
+// one inside it, and the cloud tapered to a spire half again as tall as it
+// was wide — where a real cumulonimbus, seen from a few tens of kilometres,
+// is a mountain at least as wide as it is tall, its flanks standing steep
+// and bulging nearly to the top before they round over into a broad crown.
+// So the reach is bent through a curve that climbs twice as fast at the
+// foot and flattens as it nears the tropopause: low towers keep their
+// height, a big one's flanks steepen, and everything near the top is
+// gathered into one broad crown just under the ceiling (which still caps
+// it — see the tropopause in main). The towers stand lower for it, their
+// heads a quarter to a third of the way up the sky. What gets past the
+// bend climbs on slowly, so a strong tower still reaches the ceiling
+float cbShape(float y, float ceil) {
+  float hs = ceil * 1.1;
+  float x = y * 0.70;
+  float u = 1.0 - min(x / hs, 1.0);
+  return hs * (1.0 - u * u) + 0.25 * max(x - hs, 0.0);
+}
+// the inverse, for what still reasons in the bare reach (the tower's turn,
+// in the shading)
+float cbUnshape(float h, float ceil) {
+  float hs = ceil * 1.1;
+  float x = h < hs ? hs * (1.0 - sqrt(max(1.0 - h / hs, 0.0))) : hs + (h - hs) * 4.0;
+  return x / 0.70;
+}
+
 // The skyline of a row of turrets standing side by side round the horizon,
 // the way a cumulonimbus's head is a cluster of them: how high the cloud
 // reaches at azimuth a. Each turret is a column with a domed head, sized on
@@ -936,14 +969,15 @@ float fbm4HQ(vec2 p) {
 // turret is a constant across it, so it cannot step either: plain fbm4
 // will do, where an azimuth-only read per pixel needs the HQ one. kind 0
 // raises the thrust into a tower top as the thrust itself does (gain is
-// its gain), a quarter higher (see the turrets in main); kind 1, a
+// its gain, ceil the tropopause cbShape gathers the crown under), a
+// quarter higher (see the turrets in main); kind 1, a
 // congestus skirt, only needs the thrust's two coarse octaves to say
 // whether a tower is near (gain is the skirt's height).
 //   n      turrets round the whole sky (whole, so the row closes on itself)
 //   cosEl  how much screen a radian of azimuth spans at this elevation
 //   live   the clock the turrets grow and slump to
 float turretRow(float a, float n, float gain, float kind,
-                float cosEl, float live, float seed) {
+                float cosEl, float live, float seed, float ceil) {
   float c = a * n / 6.2831853;
   float ic = floor(c);
   float step = 6.2831853 / n;
@@ -961,21 +995,24 @@ float turretRow(float a, float n, float gain, float kind,
     float top;
     if (kind < 0.5) {
       float rk = pow(max(fbm4(q) - 0.42, 0.0) * 4.6, 1.5) * gain + 0.25;
-      top = (sqrt(1.0 + 2.4 * max(rk - 1.0, 0.0)) - 1.0) / 1.2;
+      top = cbShape(cbReach(rk), ceil);
     } else {
       float mk = 0.5 * vnoise(q) + 0.25 * vnoise(q * 2.03 + vec2(17.3, 9.1)) + 0.094;
       top = smoothstep(0.35, 0.47, mk) * gain;
     }
     float R = (0.80 + 0.25 * h2) * cell;
-    // each grows and slumps on a clock of its own
-    float yk = top * (0.60 + 0.40 * (0.5 + 0.5 * sin(live * (0.7 + 0.6 * h2) + h3 * 6.2831853)));
+    // each grows and slumps on a clock of its own — by a quarter, not
+    // more: a turret that drops to half its neighbors' height leaves the
+    // tallest standing alone over the crown as a spire
+    float yk = top * (0.74 + 0.26 * (0.5 + 0.5 * sin(live * (0.7 + 0.6 * h2) + h3 * 6.2831853)));
     float d = abs(c - ctr) * cell;
-    // the head is flat-domed and the flanks steepen as they fall, down to
-    // half the turret's height at R — where the body they share takes over —
-    // and past that steeply: a turret still standing where the three read
-    // move on would leave a straight slot
+    // the head is a broad dome, nearly level across its middle, and the
+    // flanks steepen as they fall, down to half the turret's height at R —
+    // where the body they share takes over — and past that steeply: a
+    // turret still standing where the three read move on would leave a
+    // straight slot
     float u = d / R;
-    float t = u < 1.0 ? yk * (1.0 - 0.5 * u * u * sqrt(u)) : yk * 0.5 - (d - R) * 6.0;
+    float t = u < 1.0 ? yk * (1.0 - 0.5 * u * u * u) : yk * 0.5 - (d - R) * 6.0;
     float hm = clamp(0.5 + 0.5 * (t - sky) / k, 0.0, 1.0);
     sky = mix(sky, t, hm) + k * hm * (1.0 - hm) * 0.5;
   }
@@ -996,6 +1033,102 @@ float turretRow(float a, float n, float gain, float kind,
 float lobeLayer(float f, float n, float band, float dent, float lift) {
   return f + max(min(n, 0.0), -dent) * (1.0 - smoothstep(0.0, 2.0 * dent, f))
            + max(n, 0.0) * 0.60 * lift * smoothstep(-band, -0.02, f);
+}
+
+// The anvil's plate, where the view ray crosses a level plane at the
+// tropopause (X; the plane at height 1 and the eye under its middle).
+//
+// The towers are read as standing round a ring of radius D on that plane —
+// the distance at which a top at height 1 sits at the elevation the
+// cylinder puts it at — one per turret (turretRow's own cells, read the
+// same way, so a plate only ever spreads from a turret that is there to
+// feed it). Every turret that reached the ceiling spreads a plate: out
+// round its head a little, and downwind of it for two or three times the
+// tower's width, widening as it goes. Which turrets can reach X is a
+// question of where the upwind line through X crosses the ring, so only
+// the few turrets either side of the crossing are read.
+//
+// The plate is laid out in the plane, so it takes the plane's perspective:
+// side-on a band drooping a little as its far end recedes, a sheet
+// reaching up over the eye from a tower upwind, its underside in view. In
+// one respect it is not: its depth along the line of sight is counted
+// four times over. Taken at its true depth a plate twice a tower's width,
+// seen from under thirty degrees, is a ceiling a quarter of the sky deep,
+// where what the eye knows from photographs (taken from much further off)
+// is a thin flat band; the cylinder the towers stand on keeps them at
+// their angular size the same way.
+//   x  how much plate the ray crosses, as a share of its thickness over
+//      its tower
+//   y  how far downwind of its turret X is
+//   z  the fibres: a noise streaked along the wind, 0..1
+//   w  where across the band the ray is: < 0 its near edge, toward the
+//      top, > 0 its underside, below
+vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0) {
+  // the upper wind: the way the cirrus drift, toward −x
+  vec2 up = vec2(0.9889, 0.1483);
+  float b = dot(X, up);
+  float l = dot(X, vec2(-up.y, up.x));
+  // Fibrous: the ice is drawn out into strands along the wind, so the
+  // noise runs long along it and fine across it, and it carries the
+  // leading edge out in fingers rather than a clean front
+  float fib = vnoise(vec2(l * 11.0, b * 0.8 - u_evo * 0.04) + 5.0) * 0.62
+            + vnoise(vec2(l * 27.0, b * 1.9 - u_evo * 0.07) + 9.0) * 0.38;
+  // and the plate's margins billow where they meet the sky, rather than
+  // running ruled along the wind
+  float bil = vnoise(X * 4.3 + vec2(11.0, u_evo * 0.05)) - 0.5;
+  vec4 best = vec4(0.0);
+  vec2 rh = X / max(length(X), 1e-3);
+  vec2 tg = vec2(rh.y, -rh.x);
+  // where the upwind line crosses the ring; past the ring's edge, the
+  // nearest point of it
+  float sq = sqrt(max(D * D - l * l, 0.0));
+  const float N = 40.0;
+  for (int k = 0; k < 2; k++) {
+    float s0 = -b + (k == 0 ? -sq : sq);
+    if (s0 > -0.6 && s0 < L * 1.35) {
+      vec2 Q = X + s0 * up;
+      float cQ = (atan(Q.x, Q.y) + u_windOff * 0.15) * N / 6.2831853;
+      float ic = floor(cQ);
+      for (int j = -2; j <= 2; j++) {
+        // the turret: the same cell, center and thrust turretRow reads
+        float id = mod(ic + float(j), N);
+        float h1 = hash12(vec2(id, 0.0));
+        float h2 = hash12(vec2(id, 3.1));
+        float cc = ic + float(j) + 0.5 + (h1 - 0.5) * 0.4;
+        float ak = cc * 6.2831853 / N;
+        float riseC = pow(max(fbm4(vec2(sin(ak), cos(ak)) * 0.85 + vec2(0.0, u_evo * 0.12)) - 0.42, 0.0) * 4.6, 1.5) * gain;
+        // (faded out toward the ends of the window read, or where the
+        // window moves on a turret would drop out of it at a stroke and
+        // cut a seam through its plate)
+        float feedC = sqrt(smoothstep(1.7, 2.3, riseC)) * (1.0 - smoothstep(1.4, 2.4, abs(cc - cQ)));
+        if (feedC > 0.01) {
+          float aw = ak - u_windOff * 0.15;
+          vec2 T = vec2(sin(aw), cos(aw)) * D;
+          vec2 rel = X - T;
+          // downwind of the turret, and to the side of its plume: across
+          // the line of sight, and along it (counted four times, above)
+          float s = -dot(rel, up);
+          vec2 lat = rel + s * up;
+          float la = dot(lat, tg);
+          float lr = dot(lat, rh);
+          float sp = max(s, 0.0);
+          float wA = (0.20 + 0.08 * h2) + 0.32 * sp;
+          // thickest over the turret, thinning as it spreads
+          float thf = 1.0 - 0.82 * smoothstep(-0.1, 0.85 * L, s);
+          float wR = wA * 0.30 + 0.6 * th0 * thf / tE;
+          float q = length(vec2(la / wA, lr / wR)) - bil * 0.55 * smoothstep(0.0, 0.5, sp);
+          float reach = L * (0.82 + 0.36 * fib) * (0.85 + 0.30 * h2);
+          float along = smoothstep(-0.10 - wA, -0.02, s) * (1.0 - smoothstep(0.45 * reach, reach, s));
+          float v = feedC * along * along * (1.0 - smoothstep(0.40, 1.0, q)) * thf;
+          // neighbors' plates are one plate: summed, not the thickest of
+          // them, or each turret's shows as a pleat of its own
+          best += vec4(v, v * s, 0.0, v * lr / wR);
+        }
+      }
+    }
+  }
+  float sum = max(best.x, 1e-4);
+  return vec4(min(best.x, 1.0), best.y / sum, fib, best.w / sum);
 }
 
 // ── Forms of the ten cloud genera ──────────────────────
@@ -2274,7 +2407,14 @@ void main() {
     // if a tower grows past this, its top gets sliced perfectly flat and
     // reads as a slab. Leave the roundness to the tower's own tapering, and
     // place the tropopause at the height "only the tallest tower's tip reaches"
-    float anvilTop = 0.62 + 0.16 * cbAmt + (fbm4(acir * 1.6 + 11.0) - 0.5) * 0.10;
+    //
+    // A quarter to a third of the way up the sky: a cumulonimbus is 12 km
+    // tall and stands a few tens of kilometres off, and placed higher it
+    // read as a column leaning over the eye rather than a mountain on the
+    // horizon. ceilN is its height without the undulation, for what must
+    // agree across azimuths (the crown's shape, the anvil's plane)
+    float ceilN = 0.44 + 0.11 * cbAmt;
+    float anvilTop = ceilN + (fbm4(acir * 1.6 + 11.0) - 0.5) * 0.07;
 
     // The silhouette is decided by one formula: "thrust − height".
     //
@@ -2285,6 +2425,13 @@ void main() {
     // round head. Making the height term quadratic accelerates the tapering
     // higher up, giving a cumulonimbus with a wide base and a round top.
     float rise = env * (1.05 + 1.35 * cbAmt);
+    // how strongly this azimuth's tower feeds an anvil: the same test the
+    // plate makes upwind (anvilPlate). Where it does, the ceiling is the
+    // plate's top — one level, not the tropopause's undulation, or the
+    // column's flat top stood proud of the plate in places and sank under
+    // it in others
+    float feed = smoothstep(1.7, 2.3, rise) * u_cbFeat.x;
+    anvilTop = mix(anvilTop, ceilN, feed);
     // ── The base ──
     // A tower's base is flat: it is the condensation level, one height across
     // the whole cloud, and from tens of kilometres off it sits a few degrees
@@ -2293,9 +2440,9 @@ void main() {
     // stands higher. The same line the rain shafts hang from (see there, and
     // read off the same raw thrust), so a curtain starts where the cloud ends
     float baseY = 0.12 + 0.06 * smoothstep(0.6, 2.0, rise);
-    // how far this azimuth's tower reaches (solving rise − (y + 0.8y²) − 1 = 0
-    // for y, with hgt = y + 0.6y^2). Used for shading and the companion forms' attachment height
-    float towerTop = (sqrt(1.0 + 2.4 * max(rise - 1.0, 0.0)) - 1.0) / 1.2;
+    // how far this azimuth's tower reaches (cbShape). Used for shading and
+    // the companion forms' attachment height
+    float towerTop = cbShape(cbReach(rise), ceilN);
     // ── Backlit ──
     // how far this tower stands between the eye and the sun. Squashed
     // vertically while the sun is low, so a tower over it is dark to the
@@ -2330,7 +2477,7 @@ void main() {
     //
     // Both rows are only read where a tower or its skirt can stand, and
     // never under the base, where there is nothing to draw.
-    float topV = (sqrt(1.0 + 2.4 * max(rise - 0.75, 0.0)) - 1.0) / 1.2;
+    float topV = cbShape(cbReach(rise + 0.25), ceilN);
     float skirt = smoothstep(0.35, 0.47, mass);
     float skGain = 0.20 * (0.6 + 0.4 * cbAmt) * smoothstep(0.02, 0.20, cbAmt);
     float headY = topV * 0.5;
@@ -2354,8 +2501,151 @@ void main() {
       // to either side, and read at a wandering azimuth it rises and falls
       // from row to row — scraps of the head left hanging over gaps)
       azT = azw + wob * 0.08 / cosEl * smoothstep(0.85, 0.55, rd.y / max(topV, 0.05));
-      headY = max(turretRow(azT, 40.0, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0), headY);
-      skTop = max(baseY + turretRow(azT, 72.0, skGain, 1.0, cosEl, turT * 1.3, 17.0), skTop);
+      headY = max(turretRow(azT, 40.0, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN), headY);
+      skTop = max(baseY + turretRow(azT, 72.0, skGain, 1.0, cosEl, turT * 1.3, 17.0, ceilN), skTop);
+    }
+
+    // ── Anvil (incus) ──
+    // A tower with nowhere left to go at the tropopause spreads out under it:
+    // a thin, flat plate of ice, the tower's head blown downwind for two or
+    // three times the tower's own width and only a little way upwind. Built
+    // as a widening of the tower's own silhouette it came out a mushroom —
+    // as thick as the head and as lumpy, the same both ways. It is a plate
+    // of its own instead, laid on a level plane at the tropopause
+    // (anvilPlate): a few degrees thick over its tower and thinner as it
+    // spreads, flat on top, its far reaches a translucent veil of ice
+    // drawn out in strands.
+    vec3 anvCol = vec3(0.0);
+    float anvA = 0.0, anvNear = 1.0;
+    if (u_cbFeat.x > 0.001 && rd.y > 0.0) {
+      float hor = length(rd.xz);
+      float tE = rd.y / max(hor, 1e-4);
+      float D = sqrt(1.0 - ceilN * ceilN) / ceilN;
+      float th0 = 0.16;
+      // how far downwind it reaches: about the ring's radius when mature,
+      // which carries a plate from a tower upwind out over the eye
+      float L = D * (0.45 + 0.70 * u_cbFeat.x);
+      // (nothing of it lies lower in the sky than its far end, read four
+      // times as deep: see below)
+      if (tE * (D + 0.25 * (L + 0.5)) > 0.85) {
+        vec2 hdir = rd.xz / max(hor, 1e-4);
+        // the plane a little under the top, so the band's upper edge is
+        // level with the tower's flattened crown; and not quite level
+        float und = vnoise(vec2(azw * 9.0, rd.y * 14.0) + 3.0) - 0.5;
+        float rX = (0.90 + 0.025 * und) / tE;
+        // Past the ring the plate is beyond its towers, and there the plane
+        // is read four times as deep. Taken at its true depth, a plate
+        // spreading away from the eye sank toward the horizon as fast as it
+        // spread — half the height by the time it had gone a tower's
+        // distance further — and hid behind the towers that fed it; the
+        // towers stand at their angular size the way a distant one would,
+        // and the plate behind them now keeps to it too: a level shelf at
+        // their tops, widening as it goes. Toward the eye it is left alone,
+        // so a plate blown this way still comes out overhead
+        float rP = rX > D ? D + (rX - D) * 4.0 : rX;
+        vec2 X = hdir * rP;
+        vec4 pl = anvilPlate(X, tE, D, 1.05 + 1.35 * cbAmt, L, th0);
+        if (pl.x > 0.002) {
+          float sP = pl.y;
+          float spread = smoothstep(0.30, 0.95, sP / L);
+          // Over its tower the plate is the tower's head spread flat, and
+          // still billows like it; out along the wind it is ice drawn into
+          // strands. Both as how much of it lies across the ray
+          float billow = fbm4(X * 5.5 + vec2(u_evo * 0.06, 0.0));
+          float dens = mix(0.85 + 0.40 * billow, (0.55 + 0.80 * pl.z) * (0.70 + 0.60 * billow), spread);
+          // ice, and thin: where little of it lies across the ray the sky
+          // shows through. The path through it is its thickness over the
+          // sine of the elevation
+          float tau = 60.0 * th0 * pl.x / max(rd.y, 0.15) * dens;
+          // (and its margins fade out over the last of its thickness, or
+          // the plate's sides come out cut from card)
+          anvA = (1.0 - exp(-tau)) * smoothstep(0.0, 0.30, pl.x) * smoothstep(0.0, 0.08, rd.y);
+          // which face: the underside — most of what is seen of a plate
+          // overhead, and the lower part of the band seen side-on — or the
+          // near edge, the band's top: only what lies nearer than the
+          // plume's middle, where a ray comes in through the plate's side
+          float under = smoothstep(-0.45, 0.25, pl.w);
+          float thin = 1.0 - smoothstep(0.15, 0.70, pl.x);
+
+          // ── The anvil's light ──
+          // The plate is at 10–12 km, the tower's crowns at a few: lit by
+          // the same light (cloudLight), but at its own height, so it keeps
+          // the sun for minutes after the tower has lost it — the orange or
+          // pink plate over a grey tower of a summer sunset
+          vec3 ambient, glow, sunL, shade, moon, leaden;
+          float diffuse;
+          cloudLight(dayF, nightM, sunsetF, cloudSun, 1.0, ambient, glow, sunL, shade, moon, leaden, diffuse);
+          float gainA = mix(1.0, 0.82, dayF);
+          float lz = -dot(sunDir.xz, hdir);
+          // the near edge: a wall facing the eye, lit like a crown
+          vec3 edgeC = (ambient + glow + sunL * (0.38 + 0.08 * smoothstep(-0.6, 0.6, lz)) + moon * 0.7) * gainA;
+          // the underside faces the ground, and sees only the sky's light
+          // round the horizon and what comes up off the ground and the
+          // clouds below: a grey under a white edge. Thin, the light
+          // through it from above brightens it — the ice is translucent.
+          // And a sun near or under the horizon (as the plate sees it,
+          // from 10 km) shines up under it: the underside of a sunset anvil
+          vec3 underC = (mix(ambient + glow, shade, 0.70) + moon * 0.3) * gainA;
+          underC = mix(underC, edgeC * 0.92, thin * 0.55);
+          float lowSun = smoothstep(0.16, -0.02, sunEl);
+          underC += sunL * lowSun * 0.30;
+
+          // ── Mammatus ──
+          // Under the downwind spread of a mature anvil the cold air sinking
+          // out of it bulges the underside down into pouches, a field of
+          // them hanging side by side. Round domes on the underside
+          // (blobPack, read on the plate's plane), each lit from below and
+          // beside: bright where it bulges lowest, dark up in the necks
+          // between, and the flank toward a low sun glowing in its light —
+          // the orange pouches of a sunset storm
+          float mam = smoothstep(0.55, 0.85, u_cbFeat.x)
+                    * smoothstep(0.12, 0.35, sP / L) * (1.0 - smoothstep(0.75, 1.0, sP / L))
+                    * smoothstep(0.15, 0.40, pl.x) * under;
+          if (mam > 0.001) {
+            // (how far each bulges is read off the pack's sum, which falls
+            // away smoothly between its spheres: read off the top dome's
+            // height the necks came out as a net of cracks, a tortoise shell)
+            vec4 pk = blobPack(X * 14.0 + vec2(u_evo * 0.05, 31.0), 0.85);
+            float bulge = smoothstep(0.05, 0.95, pk.x);
+            vec3 nP = vec3(pk.y * 0.7, -sqrt(max(1.0 - 0.49 * dot(pk.yz, pk.yz), 0.0)), pk.z * 0.7);
+            float sunP = (max(dot(nP, sunDir), 0.0) + 0.35 * lowSun) * bulge;
+            vec3 pouch = underC * mix(0.80, 1.06, bulge) + sunL * sunP * 0.55;
+            underC = mix(underC, pouch, mam);
+          }
+          anvCol = mix(edgeC, underC, under);
+          // the billows and the fibres, as grain
+          anvCol *= mix(0.88 + 0.24 * billow, 0.93 + 0.14 * pl.z, spread);
+          // Against the sun the plate is what the tower's rim is: where it
+          // is thick, over its tower, the light has kilometres of ice to
+          // cross and it goes dark; where it is thin — and most of it is —
+          // it glows with the sun's light carried on forward through it
+          float backA = backlit(rd, sunDir, mix(0.35, 1.0, smoothstep(0.15, 0.60, sunEl)));
+          if (backA > 0.0) {
+            float fwd = exp(-sunAng * 5.0);
+            vec3 dark = (shade * 0.80 + moon * 0.3) * gainA;
+            vec3 rimA = mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF);
+            // (thin as the eye sees it: how much ice the ray itself crosses,
+            // not how thick the plate is there — a plate crossed near its
+            // edge, or far out where it is a veil, lets the light through)
+            float thinB = max(thin * thin, exp(-tau * 0.35));
+            vec3 bcol = mix(dark, rimA * (1.25 + 0.9 * fwd), thinB * mix(0.65, 1.0, fwd));
+            anvCol = mix(anvCol, bcol, backA);
+          }
+          anvCol = mix(anvCol, leaden, gloom * 0.85);
+          anvCol += flash * vec3(0.75, 0.80, 1.0) * 0.45;
+          // the air in front of it, as for the tower — thin up there, so
+          // the sky as it stands behind the plate will do for its color
+          float airA = 1.0 - exp(-(0.35 + 0.40 * u_haze) * 0.12 / max(rd.y, 0.02));
+          anvCol = mix(anvCol, disp, airA);
+          // What of it stands in front of the tower and what behind: the
+          // plate past the ring is beyond the tower's head, and the head
+          // covers it; this side of the ring it hangs over the head. And
+          // right over the tower the head itself stands in front: the plate
+          // comes out from behind its crown rather than lying on it like a lid
+          anvNear = smoothstep(D + 0.03, D - 0.06, rX) * smoothstep(0.06, 0.40, abs(sP));
+          OVER(anvCol, anvA * (1.0 - anvNear));
+        }
+      }
     }
 
     // Where neither row stands above the base, and under the base itself,
@@ -2421,46 +2711,25 @@ void main() {
       // — and the taller of the two kept: a bulge, never a bite, so nothing
       // on the flank comes loose. Over a level head the push barely changes
       // the height, so it lifts no scraps off it
-      float headB = turretRow(azT + (bMid - 0.60) * 0.06 / cosEl, 40.0, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0);
+      float headB = turretRow(azT + (bMid - 0.60) * 0.06 / cosEl, 40.0, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN);
       headY = max(headY, mix(headY, headB, near));
       // The envelope: positive under the turrets' skyline, zero on it — the
       // old "thrust − height", with the turrets standing in for the thrust
       float envT = headY + 0.6 * headY * headY - hgt;
 
-      // ── Anvil cloud (incus) ──
-      // A tower with nowhere left to go at the tropopause flares sideways into
-      // a mushroom cap. Drawing this as a separate elevation band breaks down —
-      // away from the tower the band floats alone in open sky, and near the
-      // zenith the cylindrical projection smears it into diagonal streaks.
-      // Widening the tower's own silhouette inherits the mass's texture,
-      // shading and edge treatment, so nothing can detach — so it widens the
-      // envelope, before the lobes are laid on (added after them, it hung
-      // over the dents they cut in the turret's head)
+      // ── The anvil's column ──
+      // The anvil itself is a plate of its own (anvilPlate, laid below), but
+      // it has to stand on something: a turret that reaches the tropopause
+      // under a plate carries its column on up to it, where the ceiling
+      // below flattens it into the plate's root. Only where a turret got
+      // near — a column raised over the notch between two turrets, above
+      // the lower one's head, stands in open sky. (It used to lift the air
+      // in a window under the cap instead, and wherever that left the air
+      // just short of cloud the lobes broke it into a spray of crumbs.)
       float flareA = 0.0;
-      float headF = headY;
-      if (u_cbFeat.x > 0.001) {
-        // resample the tower's thrust slightly upwind and fold it in, so the
-        // cap spreads asymmetrically, downwind of the tower
-        vec2 dircU = vec2(sin(azw + 0.55), cos(azw + 0.55));
-        float massU = fbm4HQ(dircU * 0.85 + vec2(0.0, u_evo * 0.12));
-        float riseU = pow(max(massU - 0.42, 0.0) * 4.6, 1.5) * (1.05 + 1.35 * cbAmt);
-        float reach = max(towerTop, max(riseU - 1.0, 0.0) * 0.47 * 0.85);
-        // only azimuths whose tower (or upwind neighbor) got near the
-        // tropopause flare out. The upwind term alone must never create mass: over an azimuth whose
-        // own tower is stubby it would hang a cap in open sky with nothing
-        // beneath it — demand the local tower carries at least half the height.
-        // And the turret, not just the thrust: a cap laid over the notch
-        // between two turrets, above the lower one's head, hangs in open sky
-        flareA = smoothstep(anvilTop * 0.50, anvilTop * 0.95, reach)
-               * smoothstep(anvilTop * 0.30, anvilTop * 0.60, towerTop)
-               * smoothstep(anvilTop - 0.28, anvilTop - 0.14, headY)
-               * u_cbFeat.x;
-        // A turret that flares carries its column on up to the tropopause,
-        // where the ceiling below flattens it. (It used to lift the air in a
-        // window under the cap instead, and wherever that left the air just
-        // short of cloud — over a head that stopped below the window, or
-        // under a weak flare — the lobes broke it into a spray of crumbs.)
-        headF = mix(headY, max(headY, anvilTop), flareA);
+      if (feed > 0.001) {
+        flareA = feed * smoothstep(anvilTop - 0.20, anvilTop - 0.08, headY);
+        float headF = mix(headY, max(headY, anvilTop), flareA);
         envT = max(envT, headF + 0.6 * headF * headF - hgt);
       }
       // ── The tropopause ──
@@ -2619,12 +2888,17 @@ void main() {
         float massS = fbm4HQ(vec2(sin(azw + dA), cos(azw + dA)) * 0.85 + vec2(0.0, u_evo * 0.12));
         // (clamped at the silhouette: past it the ratios below would read
         // empty sky as a flank)
-        float yU = rd.y + 0.10;
-        float envX = pow(max(mass - 0.42, 0.0) * 4.6, 1.5) * gainR - hgt - 1.0;
+        //
+        // All of it reasons in the bare reach, before cbShape bent it into
+        // the crown, so the height is taken back there first
+        float yN = cbUnshape(rd.y, ceilN);
+        float hgtN = yN + 0.6 * yN * yN;
+        float yU = yN + 0.10;
+        float envX = pow(max(mass - 0.42, 0.0) * 4.6, 1.5) * gainR - hgtN - 1.0;
         float envE = max(envX, 0.0);
-        float envW = max(pow(max(massW - 0.42, 0.0) * 4.6, 1.5) * gainR - hgt - 1.0, 0.0);
-        float envS = max(pow(max(massS - 0.42, 0.0) * 4.6, 1.5) * gainR - hgt - 1.0, 0.0);
-        float envU = max(envE + hgt - (yU + yU * yU * 0.6), 0.0);
+        float envW = max(pow(max(massW - 0.42, 0.0) * 4.6, 1.5) * gainR - hgtN - 1.0, 0.0);
+        float envS = max(pow(max(massS - 0.42, 0.0) * 4.6, 1.5) * gainR - hgtN - 1.0, 0.0);
+        float envU = max(envE + hgtN - (yU + yU * yU * 0.6), 0.0);
         vec2 outN = vec2((envW - envS) / (envW + envS + 0.15),
                          (envE - envU) / (envE + envU + 0.12));
         outN *= min(1.0, 0.95 / max(length(outN), 1e-3));
@@ -2834,6 +3108,11 @@ void main() {
         OVER(tcol, cbMask);
       }
     }
+    // and the anvil's near side, over the tower's head
+    if (anvA > 0.001) {
+      OVER(anvCol, anvA * anvNear);
+      cbMask = max(cbMask, anvA * anvNear);
+    }
 
     // ── Veil cloud (velum) ──
     // A thin, flat cap draped like white cloth over the tower's head.
@@ -2850,7 +3129,7 @@ void main() {
       // height turns the veil into a zigzag tracing the ridgeline.
       // **what ties it to the tower is presence, not height** — only show it
       // around a tower that actually reaches that high
-      float velumY = 0.30 + 0.18 * cbAmt + (fbm4(dirc * 2.2 + 29.0) - 0.47) * 0.05;
+      float velumY = cbShape(0.30 + 0.18 * cbAmt, ceilN) + (fbm4(dirc * 2.2 + 29.0) - 0.47) * 0.05;
       // the reach gate must stay strict: relaxed, the veil stretches into
       // long horizontal streaks across azimuths that hold no real tower
       float reach = smoothstep(velumY * 0.85, velumY * 1.25, towerTop);
