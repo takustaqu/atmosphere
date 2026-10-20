@@ -31,6 +31,20 @@ describe('featureKey', () => {
     expect(all).toBe(ALL_FEATURES);
   });
 
+  it('rain shafts are compiled in under rain or a thundering tower, and nowhere else', () => {
+    expect(featureKey(resolveConditions({ time: 17, weather: 'thunderstorm' })) & FEATURE.SHAFTS).toBe(FEATURE.SHAFTS);
+    expect(featureKey(resolveConditions({ time: 15, weather: 'rain' })) & FEATURE.SHAFTS).toBe(FEATURE.SHAFTS);
+    expect(featureKey(resolveConditions({ time: 12, weather: 'typhoon' })) & FEATURE.SHAFTS).toBe(FEATURE.SHAFTS);
+    expect(featureKey(resolveConditions({ time: 12, weather: 'clear' })) & FEATURE.SHAFTS).toBe(0);
+    expect(featureKey(resolveConditions({ time: 14, weather: 'fair' })) & FEATURE.SHAFTS).toBe(0);
+    // a tower that rains with no rain falling here: thunder alone is enough
+    const s = resolveConditions({ time: 17, weather: 'thunderstorm' });
+    s.rain = 0;
+    expect(featureKey(s) & FEATURE.SHAFTS).toBe(FEATURE.SHAFTS);
+    s.thunder = 0;
+    expect(featureKey(s) & FEATURE.SHAFTS).toBe(0);
+  });
+
   it('lets go of the dark sky once an eased bortle is all but back at 6', () => {
     const s = resolveConditions({ time: 22, weather: 'clear', celestial: 'suburban' });
     s.celestial.bortle = 5.9999;

@@ -712,6 +712,23 @@ vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
 }
 #endif
 
+#ifdef FEAT_SHAFTS
+// The grain of a rain shaft, seen from tens of kilometres off: x is the
+// sheets a curtain gathers into, a few degrees across, and y the streaks
+// within them. Both are noise stretched tall — most of the band high — so
+// they read as falling rain and never as cloud. Sampled on a circle round
+// the sky (the radius standing in for height, as the cumulonimbus does)
+// rather than at the raw azimuth, which would tear a seam due south where
+// atan wraps
+vec2 shaftGrain(float a, float y) {
+  vec2 d = vec2(sin(a), cos(a));
+  float sheets = vnoise(d * (12.0 + y * 1.6) + vec2(3.1, u_evo * 0.08));
+  float streaks = vnoise(d * (38.0 + y * 2.6) + vec2(0.0, u_evo * 0.20)) * 0.65
+                + vnoise(d * (83.0 + y * 4.5) + vec2(5.3, 1.7 - u_evo * 0.35)) * 0.35;
+  return vec2(sheets, streaks);
+}
+#endif
+
 #ifdef FEAT_RAINBOW
 // One wavelength's color, 400..700 nm in seven steps, each channel scaled so
 // the seven sum to white: light spread evenly across them adds back up to
@@ -2424,6 +2441,115 @@ void main() {
     OVER(leak, band * deck * 0.88);
   }
 
+#ifdef FEAT_SHAFTS
+  // ── Rain shafts (praecipitatio, and virga where it never lands) ──
+  // A grey curtain hanging from a distant cloud base toward the ground: the
+  // one sign that says it is raining over there. They hang in the band
+  // between the horizon and the base, under whichever of two things is
+  // raining — a cumulonimbus tower, or a cell of heavier rain in the
+  // nimbostratus deck. A thunderstorm's tower rains whether or not it is
+  // raining here, so thunder alone is enough to give it shafts.
+  //
+  // Laid after the light leaking in under the base, not before it: a
+  // curtain stands in front of that bright distance and darkens it, and
+  // under it the leak's band washed the shafts out to nothing. Before the
+  // scud, though, which races by far nearer than any of this
+  float shaftRain = max(u_rain, step(0.001, u_thunder) * step(0.05, u_low.w) * 0.5);
+  if (shaftRain > 0.01 && stack && rd.y > -0.01 && rd.y < 0.20) {
+    // tilted with the wind: the air the rain falls through moves slower than
+    // the cloud that drops it, so the curtain trails behind its cloud the
+    // lower it hangs — sampled at the azimuth the rain left the base from
+    float lean = 0.10 + 0.40 * u_wind;
+    float azw = az + u_windOff * 0.15;
+    // the tower's own thrust, read off the same field the cumulonimbus is cut
+    // from (see that block), so the curtain hangs only where a tower stands.
+    // Unrelated noise here would rain out of an empty sky
+    float cbP = 0.0, cbBase = 0.12;
+    if (u_low.w > 0.001) {
+      float cbAmtS = u_low.w * (1.0 - gloom * 0.6);
+      float azT = azw - lean * max(0.13 - rd.y, 0.0);
+      float massS = fbm4(vec2(sin(azT), cos(azT)) * 0.85 + vec2(0.0, u_evo * 0.12));
+      float riseS = pow(max(massS - 0.42, 0.0) * 4.6, 1.5) * (1.05 + 1.35 * cbAmtS);
+      // only a grown tower rains, and only from its core: the flanks of the
+      // footprint, where the mass is thin, stay dry
+      cbP = smoothstep(0.60, 1.40, riseS) * smoothstep(0.05, 0.30, u_low.w);
+      // a bigger tower's base spreads wider and lower over the ground, so it
+      // stands a little higher on screen
+      cbBase = 0.12 + 0.06 * smoothstep(0.6, 2.0, riseS);
+    }
+    // the deck: rain falls from all of it, but heavier in cells, and only
+    // the cells show as shafts against the lighter rain round them. The more
+    // it rains the more of the deck is a cell
+    float dkP = 0.0;
+    if (u_mid.z > 0.02 && u_rain > 0.01) {
+      float azD = azw - lean * max(0.18 - rd.y, 0.0);
+      float cell = fbm2(vec2(sin(azD), cos(azD)) * 1.45 + vec2(13.0, u_evo * 0.05));
+      float cut = 0.62 - 0.20 * u_rain;
+      dkP = smoothstep(cut, cut + 0.18, cell) * smoothstep(0.05, 0.5, u_mid.z)
+          * smoothstep(0.01, 0.30, u_rain);
+    }
+    float pres = max(cbP, dkP);
+    if (pres > 0.002) {
+      // where the curtain starts: just under the base it hangs from (the
+      // deck's base is where the plane layers fade into the horizon)
+      float base = (cbP * cbBase + dkP * 0.18) / (cbP + dkP);
+      float t = rd.y / base;   // 0 at the horizon, 1 at the base
+      // the grain, sheared by the same lean as the presence above
+      float aS = azw - lean * max(base - rd.y, 0.0);
+      vec2 gr = shaftGrain(aS, rd.y);
+      float sheet = smoothstep(0.20, 0.80, gr.x);
+      // how far down the rain gets before it evaporates. Heavy rain reaches
+      // the ground; a light shower is virga, gone by mid-height. Not at one
+      // height across the curtain, either — each sheet runs out at its own
+      float reach = mix(0.45, 1.25, smoothstep(0.10, 0.65, shaftRain));
+      reach *= 0.70 + 0.35 * sheet + 0.20 * gr.y;
+      float fall = smoothstep(1.0 - reach, 1.0 - reach + 0.50, t);
+      // densest just under the base, thinning as it falls; and soft into the
+      // base itself, never a hard top edge
+      float hang = fall * smoothstep(1.12, 0.70, t) * mix(0.65, 1.0, t);
+      // the sheets and streaks modulate the curtain, they are not the
+      // curtain: cut to lines it reads as a barcode
+      float a = pres * hang * (0.50 + 0.50 * sheet) * (0.70 + 0.30 * smoothstep(0.25, 0.75, gr.y));
+      // below the horizon is the ground; let the curtain meet it, not cross it
+      a *= smoothstep(-0.01, 0.006, rd.y);
+      // the air in front of a shaft kilometres off washes it toward the
+      // horizon, as it does the tower's foot — but a heavy curtain still
+      // shows down to the ground
+      float air = 1.0 - exp(-(0.35 + 0.40 * u_haze) * 0.05 / max(rd.y, 0.02));
+      a *= 1.0 - air * 0.55;
+      a *= 0.70 + 0.30 * smoothstep(0.05, 0.6, shaftRain);
+      if (a > 0.002) {
+        // a curtain of drops is lit like a thin cloud: mostly by the sky, so
+        // the cloud palette's shade — greyer than the shade, though, since
+        // what is above falling rain is the cloud, not blue sky. Left blue,
+        // a typhoon's curtains came out a steel blue on a grey horizon
+        vec3 ambient, glow, sunL, shade, moon, leaden;
+        float diffuse;
+        cloudLight(dayF, nightM, sunsetF, cloudSun, 0.0, ambient, glow, sunL, shade, moon, leaden, diffuse);
+        vec3 col = mix(shade, ambient + glow, 0.15);
+        col = mix(col, vec3(dot(col, vec3(0.30, 0.59, 0.11))), 0.40);
+        // and from the side by a sun that is not behind the deck: drops
+        // scatter forward, so the curtain is brightest toward the sun, but a
+        // low sun across it still lights it — the orange curtains of an
+        // evening shower. Toward the sunlit color, not added over the shade:
+        // a lit curtain is the light it scatters, and the blue of the shade
+        // under it turns an orange curtain a muddy pink
+        vec2 hs = normalize(sunDir.xz + vec2(1e-5)), hr = normalize(rd.xz + vec2(1e-5));
+        float fwd = 0.5 + 0.5 * dot(hs, hr);
+        float side = (1.0 - diffuse) * (0.40 + 0.60 * fwd * fwd) * (0.80 + 0.40 * gr.y);
+        col = mix(col, sunL * 1.15 + ambient * 0.10, clamp(side * 1.05, 0.0, 1.0));
+        col = mix(col, leaden, gloom * 0.80 * (1.0 - side * 0.6));
+        // and a lit curtain shows more than a shaded one: the drops scatter
+        // the sun toward us against the shadow of the storm behind them
+        a *= 1.0 + 0.60 * side * sunsetF;
+        col += moon * 0.2;
+        col += flash * vec3(0.75, 0.80, 1.0) * 0.40;
+        OVER(col, clamp(a, 0.0, 1.0));
+      }
+    }
+  }
+#endif
+
   // ── Pannus (ragged scud beneath rain clouds) ──
   // Dark fragments racing fast beneath the cloud base. Layering dark shapes
   // over the bright leaking horizon reads as "there's another layer beneath
@@ -3025,6 +3151,8 @@ export const FEATURE = {
   /** a dark site: the deeper star grids, the Milky Way, airglow, zodiacal light */
   DARKSKY: 128,
   POLARIZER: 256,
+  /** rain shafts hanging under a raining tower or deck */
+  SHAFTS: 512,
 } as const;
 
 const FEATURE_DEFINES: [number, string][] = [
@@ -3037,10 +3165,11 @@ const FEATURE_DEFINES: [number, string][] = [
   [FEATURE.BOLT, 'FEAT_BOLT'],
   [FEATURE.DARKSKY, 'FEAT_DARKSKY'],
   [FEATURE.POLARIZER, 'FEAT_POLARIZER'],
+  [FEATURE.SHAFTS, 'FEAT_SHAFTS'],
 ];
 
 /** every feature compiled in: the one program the renderer used to be */
-export const ALL_FEATURES = 511;
+export const ALL_FEATURES = 1023;
 
 /**
  * Which features a state needs drawn — the key of the shader variant that
@@ -3060,6 +3189,8 @@ export function featureKey(s: AtmosphereState, rays = 0): number {
   // `< 6` would keep the dark-sky variant (and its cost) for good after one
   if (s.celestial.bortle < 5.95 || s.celestial.milkyWay > 0.001) k |= FEATURE.DARKSKY;
   if (s.polarizer.strength > 0.001) k |= FEATURE.POLARIZER;
+  // a thunderstorm's tower rains whether or not it is raining here
+  if (s.rain > 0.01 || (s.clouds.cumulonimbus > 0.05 && s.thunder > 0.001)) k |= FEATURE.SHAFTS;
   return k;
 }
 
