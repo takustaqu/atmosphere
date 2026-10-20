@@ -3,6 +3,7 @@ import {
   aggregateCover,
   CLOUD_GENERA,
   CLOUD_GENERA_IDS,
+  DEFAULT_CB_DISTANCE,
   defaultCloudFeatures,
   defaultCloudMix,
   NO_CLOUDS,
@@ -111,7 +112,15 @@ describe('defaultCloudMix', () => {
 
 describe('defaultCloudFeatures', () => {
   it('no cumulonimbus means no companion forms', () => {
-    expect(defaultCloudFeatures(0)).toEqual({ anvil: 0, velum: 0 });
+    expect(defaultCloudFeatures(0)).toEqual({ anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE });
+  });
+
+  it('the storm stands at the middle distance however developed it is', () => {
+    for (const cb of [0, 0.3, 0.55, 0.8, 1]) {
+      expect(defaultCloudFeatures(cb).distance).toBe(DEFAULT_CB_DISTANCE);
+    }
+    expect(DEFAULT_CB_DISTANCE).toBeGreaterThan(0);
+    expect(DEFAULT_CB_DISTANCE).toBeLessThan(1);
   });
 
   it('a fully mature cumulonimbus has spread its anvil and lost its velum', () => {

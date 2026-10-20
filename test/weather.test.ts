@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveWeather, WEATHER_PRESETS, type WeatherId } from '../src/weather';
-import { aggregateCover, resolveClouds } from '../src/clouds';
+import { aggregateCover, DEFAULT_CB_DISTANCE, defaultCloudFeatures, resolveClouds } from '../src/clouds';
 
 describe('resolveWeather precipitation', () => {
   it('rain saturates at 30mm/h and stays saturated beyond', () => {
@@ -86,5 +86,27 @@ describe('resolveWeather cloud genera priority', () => {
   it('without clouds, convection does raise cumulonimbus', () => {
     const state = resolveWeather({ cloudCover: 0.5, convection: 1 });
     expect(state.clouds.cumulonimbus).toBeGreaterThan(0);
+  });
+});
+
+describe('resolveWeather cumulonimbus features', () => {
+  it('without features the storm stands at the default distance', () => {
+    expect(resolveWeather({ convection: 0.9, cloudCover: 0.3 }).features.distance).toBe(DEFAULT_CB_DISTANCE);
+    expect(resolveWeather('thunderstorm').features.distance).toBe(DEFAULT_CB_DISTANCE);
+  });
+
+  it('a distance alone keeps the forms derived from the development', () => {
+    const w = { convection: 1, cloudCover: 0.3 };
+    const auto = resolveWeather(w).features;
+    const near = resolveWeather({ ...w, features: { distance: 0.1 } }).features;
+    expect(near.distance).toBe(0.1);
+    expect(near.anvil).toBe(auto.anvil);
+    expect(near.velum).toBe(auto.velum);
+    expect(auto.anvil).toBe(defaultCloudFeatures(resolveWeather(w).clouds.cumulonimbus).anvil);
+  });
+
+  it('the distance is clamped to 0..1', () => {
+    expect(resolveWeather({ features: { distance: -2 } }).features.distance).toBe(0);
+    expect(resolveWeather({ features: { distance: 7 } }).features.distance).toBe(1);
   });
 });

@@ -29,7 +29,7 @@ export interface Weather {
   clouds?: CloudsInput;
   /** Convective development 0..1. Shorthand for `clouds.cumulonimbus` */
   convection?: number;
-  /** Cumulonimbus companion forms (anvil / velum). Auto-derived from convection when omitted */
+  /** Cumulonimbus companion forms (anvil / velum) and the storm's distance. Auto-derived from convection when omitted */
   features?: Partial<CloudFeatures>;
   /** Precipitation rate, mm/h */
   precipitation?: number;
@@ -148,6 +148,7 @@ export function resolveWeather(input: WeatherInput): WeatherState {
     features: {
       anvil: clamp01(w.features?.anvil ?? auto.anvil),
       velum: clamp01(w.features?.velum ?? auto.velum),
+      distance: clamp01(w.features?.distance ?? auto.distance),
     },
     cloudCover,
     rain,

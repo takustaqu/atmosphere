@@ -12,7 +12,7 @@ import {
   Atmosphere, AtmosphereRenderer,
   CELESTIAL_IDS, CELESTIAL_PRESETS,
   POLARIZER_IDS, POLARIZER_PRESETS, TONE_IDS, TONE_PRESETS,
-  CLOUD_GENERA, CLOUD_GENERA_IDS, CUBE_FACE_CAMERAS,
+  CLOUD_GENERA, CLOUD_GENERA_IDS, CUBE_FACE_CAMERAS, DEFAULT_CB_DISTANCE,
   FILTER_IDS, WEATHER_IDS, WEATHER_PRESETS,
   cloudGenusLabel, filterLabel, weatherLabel,
   formatTod, resolveConditions,
@@ -51,7 +51,7 @@ const ui = {
   cloudMode: 'auto' as 'auto' | 'manual',
   clouds: Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])) as CloudMix,
   featureMode: 'auto' as 'auto' | 'manual',
-  features: { anvil: 0, velum: 0 },
+  features: { anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE },
   filter: 'none' as FilterId,
   tone: { ...TONE_PRESETS.neutral } as { exposure: number; contrast: number; knee: number; bleach: number },
   polarizer: { ...POLARIZER_PRESETS.none } as {
@@ -110,7 +110,9 @@ function conditionsNow(): Conditions {
       ...ui.weather,
       // leaving these undefined lets the cloud genus mix build automatically from cloud cover
       clouds: ui.cloudMode === 'manual' ? ui.clouds : undefined,
-      features: ui.featureMode === 'manual' ? ui.features : undefined,
+      // (the storm's distance is not derived from anything, so it is
+      // passed either way; only the forms follow the development)
+      features: ui.featureMode === 'manual' ? ui.features : { distance: ui.features.distance },
     } as Weather,
     filter: ui.filter,
     celestial: ui.celestial,
@@ -451,7 +453,7 @@ syncers.push(chips(
   (id) => ui.featureMode === id,
   (id) => {
     if (id === 'manual' && ui.featureMode === 'auto') {
-      ui.features = { ...sky.state.features };
+      ui.features = { ...sky.state.features, distance: ui.features.distance };
     }
     ui.featureMode = id as 'auto' | 'manual';
   },
@@ -460,6 +462,10 @@ syncers.push(slider('Anvil', 0, 1, 0.01,
   () => ui.features.anvil, (v) => { ui.features.anvil = v; ui.featureMode = 'manual'; }, (v) => v.toFixed(2)));
 syncers.push(slider('Veil', 0, 1, 0.01,
   () => ui.features.velum, (v) => { ui.features.velum = v; ui.featureMode = 'manual'; }, (v) => v.toFixed(2)));
+note('How far off the storm stands: near, its base high over the horizon and the '
+  + 'anvil spreading overhead; far, a small tower on the horizon, washed into its haze.');
+syncers.push(slider('Distance', 0, 1, 0.01,
+  () => ui.features.distance, (v) => { ui.features.distance = v; }, (v) => v.toFixed(2)));
 
 section('Sunset');
 note('How hard the sky burns. Warmth is the band on the sun\'s side — its strength, '

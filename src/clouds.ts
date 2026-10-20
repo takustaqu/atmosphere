@@ -69,9 +69,21 @@ export interface CloudFeatures {
   anvil: number;
   /** 0..1 veil cloud (velum): a thin sheet draped like cloth over the tower's flank */
   velum: number;
+  /**
+   * 0..1 how far off the storm stands. 0: close — its base looming high
+   * over the horizon and its tower filling the sky, the anvil spreading
+   * overhead. 1: far on the horizon — small, its base near the horizon,
+   * washed toward the horizon's color by the air in between.
+   * Not a companion form, but it is the storm's: the same towers, seen
+   * from nearer or further. {@link DEFAULT_CB_DISTANCE} when omitted.
+   */
+  distance: number;
 }
 
-export const NO_FEATURES: CloudFeatures = { anvil: 0, velum: 0 };
+/** A middle-distance storm, a few tens of kilometres off */
+export const DEFAULT_CB_DISTANCE = 0.65;
+
+export const NO_FEATURES: CloudFeatures = { anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE };
 
 /**
  * Derive the companion forms from how developed the cumulonimbus is.
@@ -83,6 +95,8 @@ export function defaultCloudFeatures(cumulonimbus: number): CloudFeatures {
   return {
     anvil: ramp(cb, 0.68, 1.0),
     velum: ramp(cb, 0.22, 0.50) * (1 - ramp(cb, 0.68, 0.95)),
+    // how developed a storm is says nothing of where it stands
+    distance: DEFAULT_CB_DISTANCE,
   };
 }
 

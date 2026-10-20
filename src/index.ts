@@ -28,6 +28,7 @@ export {
   CLOUD_GENERA_IDS,
   NO_CLOUDS,
   NO_FEATURES,
+  DEFAULT_CB_DISTANCE,
   resolveClouds,
   defaultCloudMix,
   defaultCloudFeatures,

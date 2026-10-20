@@ -133,3 +133,17 @@ describe('StateAnimator state isolation', () => {
     expect(a.current.filter.tint).not.toBe(initial.filter.tint);
   });
 });
+
+describe('StateAnimator storm distance', () => {
+  it('a storm draws nearer gradually, and arrives', () => {
+    const far = resolveConditions({ time: 15, weather: { convection: 1, cloudCover: 0.3, features: { distance: 1 } } });
+    const near = resolveConditions({ time: 15, weather: { convection: 1, cloudCover: 0.3, features: { distance: 0 } } });
+    const a = new StateAnimator(far);
+    a.step(near, 0.1);
+    expect(a.current.features.distance).toBeLessThan(1);
+    expect(a.current.features.distance).toBeGreaterThan(0);
+    for (let i = 0; i < 2000; i++) a.step(near, 0.1);
+    expect(a.current.features.distance).toBeCloseTo(0, 8);
+    expect(far.features.distance).toBe(1);
+  });
+});
