@@ -789,6 +789,23 @@ vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp, float 
   return vec3(den, lit, dcomb);
 }
 
+// How far a ray looks into the sun, as a cloud's lighting sees it: 1 for a
+// cloud standing in front of the disc, fading out by thirty-five degrees off
+// it — past that the face turned to the eye is the sun's side or its flank.
+// squash shrinks the vertical part of the separation before it is measured.
+// A tall cloud with a low sun behind it is backlit all the way up, not just
+// where it covers the disc: its head, thirty degrees above a sun on the
+// horizon, still shows the eye its shadowed face. Only a sun that is up and
+// not taken by an overcast can light anything from behind
+float backlit(vec3 rd, vec3 sunDir, float squash) {
+  vec3 a = normalize(vec3(rd.x, rd.y * squash, rd.z));
+  vec3 b = normalize(vec3(sunDir.x, sunDir.y * squash, sunDir.z));
+  float ang = acos(clamp(dot(a, b), -1.0, 1.0));
+  return (1.0 - smoothstep(0.26, 0.60, ang))
+       * smoothstep(-0.05, 0.03, sunDir.y)
+       * (1.0 - smoothstep(0.55, 0.95, u_cover));
+}
+
 // ── Forms of the ten cloud genera ──────────────────────
 // The ten genera reduce to "4 forms (filament/stratiform/granular/convective)
 // × 3 altitudes". Altitude is handled by the cloud plane's projection scale;
@@ -1985,6 +2002,16 @@ void main() {
     // for y, with hgt = y + 0.6y^2). Used for shading and the companion forms' attachment height
     float towerTop = (sqrt(1.0 + 2.4 * max(rise - 1.0, 0.0)) - 1.0) / 1.2;
 
+    // ── Backlit ──
+    // how far this tower stands between the eye and the sun. Squashed
+    // vertically while the sun is low, so a tower over it is dark to the
+    // top; a high sun lights the heads from above, and then only what
+    // actually crowds the disc is
+    float back = backlit(rd, sunDir, mix(0.35, 1.0, smoothstep(0.15, 0.60, sunEl)));
+    // the lining's color: the sun's own, run hot — at dusk past the orange
+    // of the light itself toward gold, as anything blown out goes
+    vec3 rimC = mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF);
+
     // An azimuth with no thrust at all carries no tower, and the mass below is
     // provably empty there: with rise, near and towerTop all zero the field
     // tops out at 1/2.4 - 1 (the lowest hgt can go, minus one) — nowhere near
@@ -2096,6 +2123,18 @@ void main() {
       // whose boundary is crisp with only a thin frayed fringe. Keep the band
       // narrow, and let wisp/fine (already folded into field) supply the fraying
       float m = smoothstep(-0.11, 0.24, field);
+
+      // cumulonimbus isn't a cloud-plane projection, so high frequency
+      // doesn't blow up near the horizon. Applying the same strong fade as
+      // the other layers would dissolve the cloud base into haze and make it vanish.
+      float cbFade = smoothstep(-0.02, 0.06, rd.y);
+      // just outside a backlit rim the air is not empty: the tower's last
+      // wisps, too thin to see, scatter the sun forward into a soft glow that
+      // hugs the silhouette. Laid under the tower, so the mass covers its inside
+      float aura = smoothstep(-0.90, -0.11, field) * (1.0 - m) * back * exp(-sunAng * 3.0);
+      if (aura > 0.001) {
+        OVER(rimC * 1.2, aura * 0.45 * cbFade);
+      }
 
       if (m > 0.001) {
         // use the difference against a resample shifted toward the sun as surface orientation.
@@ -2217,6 +2256,34 @@ void main() {
         // the edge is thin, so light passes through it (silver lining — only with direct sun)
         tcol += cloudSun * m * (1.0 - m) * 4.0 * 0.22
               * max(t - 0.45, 0.0) * max(dayF, sunsetF * 0.6) * (1.0 - diffuse);
+        // Against the sun none of that lighting is what the eye gets. The face
+        // turned this way is in the tower's own shadow, and what comes through
+        // it has crossed kilometres of cloud and lost most of itself on the
+        // way: the mass goes dark, in the shade's color — a blue-grey by day, a
+        // violet-grey once the afterglow tints the sky light. Only the rim,
+        // where the silhouette thins and the light has little cloud left to
+        // cross, blazes in the sun's own color, hottest right by the disc. A
+        // tower over a low sun used to come out the same lavender-white as one
+        // across the sky from it, and read as a translucent veil for being too
+        // light to stand in front of anything.
+        if (back > 0.0) {
+          // how much cloud the light crossed: the most deep inside the
+          // silhouette, low down, and through a lobe's dense core
+          float through = smoothstep(0.05, 0.80, field)
+                        * clamp(0.55 + core * 1.2 + depth * 0.35, 0.0, 1.0);
+          vec3 dark = (shade * mix(0.95, 0.55, through) + moon * 0.3) * gain;
+          // the lobes still show, faintly: their thin margins pass a little more
+          dark *= 1.0 + micro * 0.10 + (wisp - 0.5) * 0.08;
+          float fwd = exp(-sunAng * 5.0);
+          // the rim is read off the field, not the alpha: the alpha's ramp is
+          // a pixel or two wide, and a lining only that wide never shows
+          float rimW = 1.0 - smoothstep(0.0, 0.75, field);
+          rimW *= rimW * mix(0.70, 1.0, fwd);
+          // and right over the disc even the thick of it lets a little through
+          dark += cloudSun * fwd * fwd * 0.25 * (1.0 - through * 0.7);
+          vec3 bcol = mix(dark, rimC * (1.7 + 0.8 * fwd), rimW);
+          tcol = mix(tcol, bcol, back);
+        }
         // in severe weather the cumulonimbus itself sits inside the storm.
         // leaving it bright here makes a pure-white cloud float in a leaden
         // sky. Pull it toward the same leaden grey as the other layers.
@@ -2236,11 +2303,13 @@ void main() {
         // little, since the haze wash at the end already paints the air's own
         // color over everything.
         float air = 1.0 - exp(-(0.35 + 0.40 * u_haze) * 0.06 / max(rd.y, 0.02));
-        // cumulonimbus isn't a cloud-plane projection, so high frequency
-        // doesn't blow up near the horizon. Applying the same strong fade as
-        // the other layers would dissolve the cloud base into haze and make it vanish.
-        float cbFade = smoothstep(-0.02, 0.06, rd.y);
-        cbMask = clamp(m, 0.0, 1.0) * 0.97 * cbFade * (1.0 - air);
+        // Except toward the sun. There the sky behind the base is the disc
+        // itself, and cutting the alpha let it shine straight through a tower
+        // kilometres thick. The air in front of a backlit base glows with the
+        // sun's forward-scattered light instead, so paint that glow in and
+        // keep the mass whole
+        tcol = mix(tcol, mix(ambient, cloudSun, 0.55) * gain, air * back);
+        cbMask = clamp(m, 0.0, 1.0) * 0.97 * cbFade * (1.0 - air * (1.0 - back));
         OVER(tcol, cbMask);
       }
     }
@@ -2285,6 +2354,18 @@ void main() {
           // skin. Multiplicative so it adds texture without changing overall brightness
           float vFray = vnoise(vcyl * 4.2 + 3.0) * 0.6 + vnoise(vcyl * 9.5 + 11.0) * 0.4 - 0.5;
           vcol *= 1.0 + vFray * 0.22;
+          // against the sun the cap does what the tower's rim does: where it
+          // hangs in open sky, thin, it glows with the light coming through
+          // it; where it lies across the tower, in the tower's shadow, it is
+          // as dark as the mass behind it
+          if (back > 0.0) {
+            vec3 ambient, glow, sunL, shade, moon, leaden;
+            float diffuse;
+            cloudLight(dayF, nightM, sunsetF, cloudSun, 0.3, ambient, glow, sunL, shade, moon, leaden, diffuse);
+            vec3 vdark = shade * 0.75 * mix(1.0, 0.82, dayF);
+            vec3 vback = mix(rimC * 1.25, vdark, max(cbMask, smoothstep(0.20, 0.70, v)));
+            vcol = mix(vcol, vback * (1.0 + vFray * 0.22), back);
+          }
           OVER(vcol, v * 0.70 * horizonFade);
         }
       }
@@ -2344,6 +2425,36 @@ void main() {
       edge += patch * 0.34 * (1.0 - smoothstep(0.55, 0.9, u_low.z));
     }
 
+    // Against the sun a lump is lit from behind, like the tower: a thick
+    // core shows the eye its shadowed face and goes a blue-grey (violet at
+    // dusk), while a thin lump and every lump's margin glow with the light
+    // coming through them. The thin ones carry the day here — a fair sky's
+    // small cotton round the sun stays bright, only real cores darken
+    float cuBack = backlit(rd, sunDir, mix(0.5, 1.0, smoothstep(0.15, 0.60, sunEl)));
+    vec3 cuShade = vec3(0.0), cuRim = vec3(0.0);
+    if (cuBack > 0.0) {
+      vec3 ambient, glow, sunL, shade, moon, leaden;
+      float diffuse;
+      cloudLight(dayF, nightM, sunsetF, cloudSun, 0.0, ambient, glow, sunL, shade, moon, leaden, diffuse);
+      // lighter than the tower's: a lump is a few hundred metres through, not kilometres
+      cuShade = mix(shade, ambient + glow, 0.40) + moon * 0.3;
+      cuRim = mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF) * (1.45 + 0.6 * exp(-sunAng * 5.0));
+      // a lump hanging in front of a tower that hides the sun is in the
+      // tower's shadow: nothing comes through it to glow
+      cuRim = mix(cuRim, cuShade, cbMask);
+    }
+    // Which flank the eye sees. With the sun off to the side a lump has a
+    // lit flank and a shaded one, so the lit-ness swing is widest there;
+    // with the sun behind the eye every face in view is lit, and toward the
+    // sun every face in view is the far one. Only a lump seen side-on —
+    // low in the sky, under a sun low enough to light it from the side —
+    // shows its flanks at all; overhead it is all crown and base
+    float cuAz = dot(normalize(rd.xz + vec2(1e-5)), ldir);
+    float cuSide = (1.0 - smoothstep(0.35, 0.85, sunEl)) * (1.0 - smoothstep(0.15, 0.65, rd.y));
+    // how far the flank swings the lit-ness, and which way the whole lump leans
+    float cuFlank = 1.6 * (1.0 - cuAz * cuAz) * cuSide;
+    float cuBias = -cuAz * 0.30 * cuSide;
+
     // the crown: the plane above, the full footprint, lit from above and
     // shaded shallowly
     {
@@ -2355,7 +2466,23 @@ void main() {
       float tthick = smoothstep(tedge, tedge + 0.35, tl.z);
       // shaded enough inside that a lump has a form rather than a flat white
       // cut-out — the flat white is most of what read as hard contrast
-      vec3 tc = cloudColor(tl.x, tl.y + 0.20, tthick * 0.75, dayF, nightM, sunsetF, flash, gloom, 0.8, cloudSun, 0.0);
+      // the flank is read off the plain density gradient toward the sun:
+      // positive on the flank facing it, negative on the far one. cloudField's
+      // lit-ness can't serve as it is — it sets a contrast-stretched density
+      // against an unstretched resample, so inside a lump it leans bright
+      // whatever the side, which is why a lump came out white all round.
+      // Undoing the stretch on its two halves recovers the gradient
+      float tgrad = clamp(((tl.z - 0.5) / 2.2 + 0.5 - tl.z + tl.y / 2.5) * 16.0, -1.0, 1.0);
+      float tlit = tl.y + tgrad * cuFlank + cuBias;
+      vec3 tc = cloudColor(tl.x, tlit + 0.20, tthick * 0.75, dayF, nightM, sunsetF, flash, gloom, 0.8, cloudSun, 0.0);
+      if (cuBack > 0.0) {
+        // graded over a wider span of the raw density than tthick, or the
+        // glow and the grey meet in a line and the core reads as a stain
+        float thin = 1.0 - smoothstep(tedge, tedge + 0.30, tl.z);
+        float deep = smoothstep(tedge + 0.05, tedge + 0.65, tl.z);
+        vec3 bc = mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin);
+        tc = mix(tc, bc, cuBack);
+      }
       OVER(tc, talpha * 0.97);
     }
 
@@ -2390,8 +2517,17 @@ void main() {
     // camouflage print. Where the base is thin it is the lump's sunlit flank
     // and takes the lump's own light
     float core = smoothstep(0.20, 1.0, thick);
-    float baseLit = mix(dl.y, mix(-0.30, dl.y, under), core);
+    // and that flank turns lit or shaded with the sun's bearing, as the crown does
+    float dgrad = clamp(((dl.z - 0.5) / 2.2 + 0.5 - dl.z + dl.y / 2.5) * 16.0, -1.0, 1.0);
+    float dlit = dl.y + dgrad * cuFlank + cuBias;
+    float baseLit = mix(dlit, mix(-0.30, dlit, under), core);
     vec3 c = cloudColor(dl.x, baseLit, max(thick * 0.9, 0.30 * dl.x), dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 0.0);
+    if (cuBack > 0.0) {
+      float thin = 1.0 - smoothstep(bedge, bedge + 0.30, dl.z);
+      float deep = smoothstep(bedge + 0.05, bedge + 0.65, dl.z);
+      vec3 bc = mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin);
+      c = mix(c, bc, cuBack);
+    }
     OVER(c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
@@ -2401,6 +2537,11 @@ void main() {
     float falpha = fl.x * u_low.z * horizonFade * (1.0 - cbMask * 0.6);
     float fthick = smoothstep(fedge, fedge + 0.35, fl.z);
     vec3 fc = cloudColor(fl.x, fl.y, fthick, dayF, nightM, sunsetF, flash, gloom, 1.25, cloudSun, 0.0);
+    if (cuBack > 0.0) {
+      float thin = 1.0 - smoothstep(fedge, fedge + 0.30, fl.z);
+      float deep = smoothstep(fedge + 0.05, fedge + 0.65, fl.z);
+      fc = mix(fc, mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin), cuBack);
+    }
     OVER(fc, falpha * 0.95);
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
