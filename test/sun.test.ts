@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  illuminatedFraction, lunarPosition, nominalLunarPosition, nominalSolarPosition, solarPosition,
+  illuminatedFraction, lunarEcliptic, lunarEclipse, lunarPosition, nominalLunarPosition,
+  nominalSolarPosition, solarEcliptic, solarPosition,
 } from '../src/sun';
 
 const DEG = 180 / Math.PI;
@@ -109,5 +110,86 @@ describe('nominalLunarPosition', () => {
     expect(nominalLunarPosition(0).elevation).toBeCloseTo(nominalSolarPosition(12).elevation, 9);
     expect(nominalLunarPosition(12).elevation).toBeLessThan(0);
     expect(nominalLunarPosition(18).elevation).toBeCloseTo(0, 6);
+  });
+});
+
+describe('lunarEcliptic', () => {
+  it('matches the worked example in Meeus (1992 April 12, 0h TD)', () => {
+    // λ 133.162655°, β −3.229126°, Δ 368409.7 km; the Date is UT, so step
+    // back by the ~58 s that TD ran ahead then
+    const m = lunarEcliptic(new Date(Date.UTC(1992, 3, 12) - 57.6e3));
+    expect(Math.abs(m.longitude * DEG - 133.162655)).toBeLessThan(0.005);
+    expect(Math.abs(m.latitude * DEG + 3.229126)).toBeLessThan(0.005);
+    expect(Math.abs(m.distance - 368409.7)).toBeLessThan(20);
+  });
+
+  it('solarEcliptic matches Meeus 25.a (1992 October 13) once nutation is taken back out', () => {
+    // apparent λ 199.90895° with −0.00478°·sin Ω of nutation in it; Ω ≈ 264.65°
+    const s = solarEcliptic(new Date(Date.UTC(1992, 9, 13) - 57.6e3));
+    expect(Math.abs(s.longitude * DEG - (199.90895 + 0.00478 * Math.sin(264.65 / DEG)))).toBeLessThan(0.002);
+    expect(s.distance).toBeCloseTo(0.99766, 4);
+  });
+});
+
+describe('lunarEclipse', () => {
+  // times of greatest eclipse and umbral magnitudes from NASA's catalogue.
+  // The magnitudes there use Danjon's enlargement of the shadow, a shade
+  // smaller than Chauvenet's fiftieth used here, hence the slack
+  it('is total at the maximum of 2026-03-03', () => {
+    const e = lunarEclipse(new Date('2026-03-03T11:33Z'));
+    expect(e.umbra).toBe(1);
+    expect(e.penumbra).toBe(1);
+    expect(Math.abs(e.magnitude - 1.153)).toBeLessThan(0.02);
+  });
+
+  it('is total at the maximum of 2025-09-07', () => {
+    const e = lunarEclipse(new Date('2025-09-07T18:11Z'));
+    expect(e.umbra).toBe(1);
+    expect(Math.abs(e.magnitude - 1.362)).toBeLessThan(0.02);
+  });
+
+  it('is a deep partial on 2026-08-28: most of the disc, not all of it', () => {
+    const e = lunarEclipse(new Date('2026-08-28T04:13Z'));
+    expect(e.umbra).toBeGreaterThan(0.85);
+    expect(e.umbra).toBeLessThan(1);
+    expect(e.penumbra).toBe(1);
+    expect(Math.abs(e.magnitude - 0.930)).toBeLessThan(0.02);
+  });
+
+  it('has the moon only grazing the umbra on 2024-09-18', () => {
+    const e = lunarEclipse(new Date('2024-09-18T02:44Z'));
+    expect(e.umbra).toBeGreaterThan(0);
+    expect(e.umbra).toBeLessThan(0.1);
+    expect(Math.abs(e.magnitude - 0.085)).toBeLessThan(0.02);
+  });
+
+  it('a penumbral eclipse touches the penumbra and misses the umbra (2023-05-05)', () => {
+    const e = lunarEclipse(new Date('2023-05-05T17:23Z'));
+    expect(e.umbra).toBe(0);
+    expect(e.penumbra).toBeGreaterThan(0.9);
+  });
+
+  it('a plain full moon passes beside the shadow', () => {
+    const e = lunarEclipse(new Date('2026-04-02T02:12Z'));
+    expect(e.umbra).toBe(0);
+    expect(e.penumbra).toBe(0);
+  });
+
+  it('a day before the eclipse there is none', () => {
+    const e = lunarEclipse(new Date('2026-03-02T11:33Z'));
+    expect(e.umbra).toBe(0);
+    expect(e.penumbra).toBe(0);
+  });
+
+  it('the shadow comes and goes over hours, not at once', () => {
+    // totality of 2026-03-03 lasts about an hour around 11:34; the partial
+    // phases run an hour either side of it
+    const at = (t: string) => lunarEclipse(new Date(t)).umbra;
+    expect(at('2026-03-03T09:30Z')).toBe(0);
+    expect(at('2026-03-03T10:15Z')).toBeGreaterThan(0);
+    expect(at('2026-03-03T10:15Z')).toBeLessThan(1);
+    expect(at('2026-03-03T11:10Z')).toBe(1);
+    expect(at('2026-03-03T12:00Z')).toBe(1);
+    expect(at('2026-03-03T13:30Z')).toBe(0);
   });
 });

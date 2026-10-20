@@ -11,7 +11,7 @@ import { resolveSunset, type Sunset, type SunsetInput } from './sunset.js';
 import { resolveParticles, type Particles, type ParticlesInput } from './particles.js';
 import { resolvePolarizer, type Polarizer, type PolarizerInput } from './polarizer.js';
 import {
-  lunarPosition, nominalLunarPosition, nominalSolarPosition, solarPosition, type GeoLocation,
+  lunarEclipse, lunarPosition, nominalLunarPosition, nominalSolarPosition, solarPosition, type GeoLocation,
 } from './sun.js';
 import { toDate, toTimeOfDay, type TimeInput } from './time.js';
 import { resolveTone, type ToneCurve, type ToneInput } from './tone.js';
@@ -91,6 +91,11 @@ export interface AtmosphereState extends WeatherState {
   moonAzimuth: number;
   /** the illuminated fraction of the moon's disc, 0..1 (0 new, 1 full) */
   moonPhase: number;
+  /**
+   * how much of the moon's disc stands in the Earth's umbra, 0..1 — 1 in a
+   * total eclipse. Only ever nonzero for a real date and place
+   */
+  moonEclipse: number;
   filter: ColorFilter;
   tone: ToneCurve;
   polarizer: Polarizer;
@@ -122,6 +127,10 @@ export function resolveConditions(c: Conditions): AtmosphereState {
   const moon = c.location && date
     ? lunarPosition(date, c.location)
     : nominalLunarPosition(timeOfDay);
+  // and an eclipse of it when the calendar has one: the nominal moon is
+  // always full and opposite the sun, which would put it in the shadow every
+  // night, so it never is
+  const moonEclipse = c.location && date ? lunarEclipse(date).umbra : 0;
 
   return {
     timeOfDay,
@@ -130,6 +139,7 @@ export function resolveConditions(c: Conditions): AtmosphereState {
     moonElevation: moon.elevation,
     moonAzimuth: moon.azimuth,
     moonPhase: moon.phase,
+    moonEclipse,
     ...resolveWeather(c.weather ?? DEFAULT_CONDITIONS.weather),
     filter: resolveFilter(c.filter),
     tone: resolveTone(c.tone),

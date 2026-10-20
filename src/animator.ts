@@ -102,6 +102,7 @@ export class StateAnimator {
     c.moonElevation += (target.moonElevation - c.moonElevation) * k;
     c.moonAzimuth = lerpWrapped(c.moonAzimuth, target.moonAzimuth, k, TAU_2PI);
     c.moonPhase += (target.moonPhase - c.moonPhase) * k;
+    c.moonEclipse += (target.moonEclipse - c.moonEclipse) * k;
 
     c.cloudCover += (target.cloudCover - c.cloudCover) * k;
     // follow each cloud genus independently, so a cumulus sky settling into a

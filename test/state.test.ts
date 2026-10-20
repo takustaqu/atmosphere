@@ -19,6 +19,12 @@ describe('resolveConditions', () => {
     expect(s.sunAzimuth).toBeCloseTo(Math.PI, 12);
   });
 
+  it('a real date and place carry the eclipse of the moon; the nominal moon never has one', () => {
+    expect(resolveConditions({ time: new Date('2026-03-03T11:33Z'), location: TOKYO }).moonEclipse).toBe(1);
+    expect(resolveConditions({ time: new Date('2026-04-02T02:12Z'), location: TOKYO }).moonEclipse).toBe(0);
+    expect(resolveConditions({ time: 0 }).moonEclipse).toBe(0);
+  });
+
   it('a location plus a Date gives the real solar position', () => {
     const date = new Date('2026-06-21T11:43+09:00');
     const s = resolveConditions({ time: date, location: TOKYO });

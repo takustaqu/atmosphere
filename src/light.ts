@@ -228,12 +228,15 @@ export function celestialLights(
     normalizedColor(sunDisplay), sunVis, 1);
 
   // the moon where it stands, as bright as its phase: a thin crescent gives
-  // a sliver of a full moon's light. Up by day too, but outshone there
+  // a sliver of a full moon's light. Up by day too, but outshone there.
+  // In the Earth's shadow it goes dim and copper — only the light bent
+  // through the Earth's sunsets reaches it then
   const moonUp = smoothstep(-0.03, 0.03, Math.sin(s.moonElevation));
   const moonVis = moonUp * clamp01(1 - s.cloudCover * 0.9 - gloom);
+  const eclipse = clamp01(s.moonEclipse ?? 0);
   const moon = celestial(s.moonElevation, s.moonAzimuth, camera, aspect,
-    normalizedColor([1.0, 0.96, 0.88]), moonVis,
-    MOON_RELATIVE * s.moonPhase * (0.4 + 0.6 * nightF));
+    normalizedColor([1.0, 0.96 - 0.5 * eclipse, 0.88 - 0.62 * eclipse]), moonVis,
+    MOON_RELATIVE * s.moonPhase * (0.4 + 0.6 * nightF) * (1 - 0.9 * eclipse));
 
   const key = sun.intensity <= 0 && moon.intensity <= 0 ? null
     : sun.intensity >= moon.intensity ? 'sun' : 'moon';
