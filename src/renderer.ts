@@ -644,8 +644,8 @@ vec3 aurora(vec3 rd, float amt) {
 // 22° halo (refraction through the crystals, red on its inner edge), the
 // parhelia — the sun dogs — that sit on it level with a low sun, and a pillar
 // of light standing on a sun at the horizon, off the flat faces of falling
-// plates. The moon gets its halo too. Linear light to add; nothing without
-// the veil.
+// plates; and high over a sun below 32 degrees, the circumzenithal arc. The
+// moon gets its halo too. Linear light to add; nothing without the veil.
 vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
              vec3 moonDir, float moonAng, float moonVis, float nightF) {
   float ice = u_high.y;
@@ -689,6 +689,37 @@ vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
       float dEl = el - u_sun.x;
       float column = exp(-dAz * dAz / 0.0008) * exp(-abs(dEl) * 12.0) * smoothstep(0.0, 0.02, abs(dEl));
       add += L(vec3(1.0, 0.70, 0.45)) * column * 0.25 * lowP * sunVis;
+    }
+    // the circumzenithal arc: light in through the top face of a flat plate
+    // and out through a side, a 90 degree prism. The top face keeps the
+    // horizontal part of the ray and the side face the vertical, which puts
+    // the arc on a circle round the zenith at sin(altitude) = sqrt(n^2 -
+    // cos^2(sun altitude)): 32 degrees from the zenith with the sun on the
+    // horizon, closing to nothing at the zenith as the sun reaches 32.2.
+    // Red bends least, so it is the lower edge, toward the sun, and the
+    // violet the upper. Brightest with the sun near 22, and the most
+    // saturated thing a veil does — the dispersion is not smeared out by
+    // the spread of crystal tilts the way the 22 degree ring's is
+    float czaSun = smoothstep(0.04, 0.26, sunEl) * smoothstep(0.532, 0.44, sunEl);
+    if (czaSun > 0.0) {
+      vec2 hs = normalize(sunDir.xz + vec2(1e-5)), hr = normalize(rd.xz + vec2(1e-5));
+      float dAz = acos(clamp(dot(hs, hr), -1.0, 1.0));
+      // a quarter turn of arc, its ends fading
+      float span = smoothstep(0.92, 0.55, dAz);
+      float c2 = 1.0 - sunEl * sunEl;
+      float sRed = sqrt(max(1.307 * 1.307 - c2, 0.0));
+      float sBlue = sqrt(max(1.317 * 1.317 - c2, 0.0));
+      // 0 at the red edge, 1 at the violet, measured in the sine of the
+      // altitude (the arc is only a couple of degrees wide, so that is near
+      // enough even)
+      float t = (rd.y - sRed) / max(sBlue - sRed, 1e-4);
+      float band = smoothstep(-0.45, 0.10, t) * (1.0 - smoothstep(0.80, 1.45, t));
+      vec3 czaCol = vec3(1.0, 0.25, 0.12);
+      czaCol = mix(czaCol, vec3(1.0, 0.85, 0.20), smoothstep(0.05, 0.30, t));
+      czaCol = mix(czaCol, vec3(0.30, 0.95, 0.45), smoothstep(0.30, 0.55, t));
+      czaCol = mix(czaCol, vec3(0.25, 0.45, 1.0), smoothstep(0.55, 0.80, t));
+      czaCol = mix(czaCol, vec3(0.50, 0.30, 1.0), smoothstep(0.80, 1.05, t));
+      add += L(czaCol) * band * span * czaSun * 0.85 * sunVis;
     }
   }
   if (moonVis > 0.0) {
@@ -962,6 +993,12 @@ void cloudLight(float dayF, float nightF, float sunsetF, vec3 cloudSun, float al
 // the cloud layers, from how far this ray is from the moon
 float g_moonFwd = 0.0;
 vec3 g_corona = vec3(1.0);
+// and the sun's: how much of its light a thin water cloud this far from it
+// sends on forward, the corona round it, and how far out from its limb this
+// ray is, for the iridescence the cloud's own edges pick out
+float g_sunFwd = 0.0;
+vec3 g_sunCorona = vec3(1.0);
+float g_sunLimb = 1.0;
 
 // The corona: light diffracted round the moon by a water cloud's droplets —
 // a bluish-white aureole, a red-brown ring a couple of degrees out, then
@@ -999,6 +1036,38 @@ vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, flo
   // water cloud, plain on an ice one (alt 1)
   float through = (1.0 - clamp(thick, 0.0, 1.0) * 0.85) * (1.0 - den * 0.45);
   c += vec3(0.80, 0.84, 0.92) * mix(g_corona, vec3(1.0), alt) * g_moonFwd * through;
+  // and near the sun, iridescence: the same diffraction by the droplets,
+  // but where the moon's corona is rings round the moon, the sun's shows as
+  // pastel pinks and greens laid along a thin cloud's edges. The droplets at
+  // a cloud's margin are small and freshly made, and smaller droplets throw
+  // the colors wider, so the band a patch shows follows how thin it is more
+  // than how far it is from the sun. Strongest on a mid-level water cloud,
+  // weaker on a low one, none on ice (alt 1), which gives a halo instead.
+  // Kept modest: what makes it vivid in a photograph is the sun hidden
+  // behind a roof, and here the sun is in the frame
+  float iriW = clamp(min(0.6 + 0.8 * alt, 2.0 - 2.0 * alt), 0.0, 1.0);
+  float sunFwd = g_sunFwd * iriW * (1.0 - gloom);
+  if (sunFwd > 0.0) {
+    // a fringe: neither the clear sky nor the cloud's thick core
+    float fringe = smoothstep(0.04, 0.30, den) * (1.0 - smoothstep(0.55, 0.95, den))
+                 * (1.0 - clamp(thick, 0.0, 1.0) * 0.6);
+    // the lookup angle swings with the density, back and forth through the
+    // corona's colored rings rather than wrapping, so no band ends in a seam
+    float phase = g_sunLimb * 1.5 + (1.0 - den) * 3.4 + thick * 0.8;
+    float dEff = 1.5 + 4.2 * abs(fract(phase) * 2.0 - 1.0);
+    vec3 iri = corona(dEff / 57.2958);
+    // right by the sun, the corona's own rings round it
+    iri = mix(g_sunCorona, iri, smoothstep(0.015, 0.05, g_sunLimb));
+    // and the cloud there is lit through from behind, as bright as the
+    // display goes: so the color goes in as a mix toward a bright pastel,
+    // not as light added on top, which only clips back to white. The
+    // corona's colors are already faded at these angles; the departure from
+    // white is drawn out again, normalized to keep the brightness
+    vec3 tint = iri / max(dot(iri, vec3(0.30, 0.59, 0.11)), 0.1);
+    tint = max(mix(vec3(1.0), tint, 2.2), 0.0);
+    float amt = clamp(sunFwd * fringe * through * 1.7, 0.0, 0.85);
+    c = mix(c, cloudSun * 0.94 * tint, amt);
+  }
   // silver lining (the edge glows on the sun side — only with direct light)
   float rim = den * (1.0 - den) * 4.0 * max(litE, 0.0) * (1.0 - diffuse);
   c += cloudSun * rim * 0.35 * max(dayF, sunsetF * 0.5);
@@ -1527,6 +1596,15 @@ void main() {
   g_moonFwd = moonUp * u_moon.z * nightF
             * (exp(-moonLimb / 0.03) * 1.6 + exp(-moonLimb / 0.13) * 0.65 + exp(-moonLimb / 0.40) * 0.12);
   g_corona = corona(moonLimb);
+  // the sun's, likewise from its limb (the drawn disc's flat core reaches
+  // about 0.035 rad out) and not cut by the cover. Within ten degrees or so;
+  // past fifteen there is nothing a thin cloud makes of it
+  float sunLimb = max(acos(clamp(dot(rd, sunDir), -1.0, 1.0)) - 0.035, 0.0);
+  g_sunLimb = sunLimb;
+  g_sunFwd = dayF * smoothstep(-0.02, 0.08, sunEl)
+           * (exp(-sunLimb / 0.10) + exp(-sunLimb / 0.20) * 0.40)
+           * smoothstep(0.30, 0.18, sunLimb);
+  g_sunCorona = corona(sunLimb);
   if (moonVis > 0.0 && skyLight) {
     float ang = moonAng;
     float moon = smoothstep(0.048, 0.043, ang);

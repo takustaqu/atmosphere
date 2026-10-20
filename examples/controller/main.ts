@@ -291,6 +291,8 @@ note('Some of the sky only shows under the right conditions and in the right '
       { id: 'halo', label: '22° halo' },
       { id: 'moonhalo', label: 'Moon halo' },
       { id: 'mooncloud', label: 'Moon behind clouds' },
+      { id: 'iridescence', label: 'Iridescence' },
+      { id: 'cza', label: 'Circumzenithal arc' },
       { id: 'aurora', label: 'Aurora' },
       { id: 'away', label: 'Face away from the sun' },
       { id: 'toward', label: 'Face the sun' },
@@ -333,6 +335,25 @@ note('Some of the sky only shows under the right conditions and in the right '
           altocumulus: 0.8, stratocumulus: 0.3 };
         const s = sunNow();
         look(s.moonAzimuth + 0.3, s.moonElevation - 0.15, 0.9);
+      } else if (id === 'iridescence') {
+        // thin water cloud drifting by a high sun: its edges take on pastel
+        // bands, from the same diffraction as the corona
+        sunBetween(35, 50, 10.5);
+        ui.weather = { ...ui.weather, precipitation: 0, thunder: 0, visibility: 30 };
+        ui.cloudMode = 'manual';
+        ui.clouds = { ...ui.clouds, ...Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])),
+          altocumulus: 0.45, cumulus: 0.1 };
+        const s = sunNow();
+        look(s.sunAzimuth, s.sunElevation, 0.9);
+      } else if (id === 'cza') {
+        // a cirrostratus veil with the sun near 22°: the arc stands high
+        // above it, round the zenith
+        sunBetween(16, 27, 16);
+        ui.weather = { ...ui.weather, precipitation: 0, thunder: 0, visibility: 30 };
+        ui.cloudMode = 'manual';
+        ui.clouds = { ...ui.clouds, ...Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])),
+          cirrostratus: 0.75 };
+        look(sunNow().sunAzimuth, 1.05, 1.2);
       } else if (id === 'aurora') {
         // a dark night, looking north
         if (sunNow().sunElevation > -18 * DEG) { ui.city = 'None'; ui.timeOfDay = 23; }
@@ -350,7 +371,10 @@ note('Some of the sky only shows under the right conditions and in the right '
     + '42° from the point straight away from the sun, so face away from it. '
     + 'Halo: a cirrostratus veil, the ring 22° around the sun — or the moon, at night, '
     + 'where the moonlit veil glows round it. Moon behind clouds: a thin water cloud in '
-    + 'front of the moon glows, ringed by the corona. Aurora: a dark sky, toward the north.');
+    + 'front of the moon glows, ringed by the corona. Iridescence: the thin edges of a '
+    + 'water cloud passing near the sun pick up pastel pinks and greens. Circumzenithal '
+    + 'arc: with the sun below 32° in a cirrostratus veil, an upside-down rainbow high '
+    + 'above it, red toward the sun. Aurora: a dark sky, toward the north.');
 }
 
 section('Time and location');
