@@ -1121,10 +1121,16 @@ vec3 skyWeather(vec3 disp, float dayF, float gloom) {
 #ifdef FEAT_SEA
 // ── Waves ──
 // The slope of one travelling sine across the water, height a·sin(k·p − ωt):
-// its gradient, a·k·cos(k·p − ωt). Slopes are all the sea needs — they tilt
-// the mirror — so the height itself is never summed
+// its gradient, a·k·cos(k·p − ωt). Slopes are all the mirror needs — they
+// tilt it — so for the swell the height itself is never summed
 vec2 waveSlope(vec2 p, vec2 k, float a, float w, float t) {
   return a * k * cos(dot(k, p) - w * t);
+}
+// The same wave with its height as well, in z: the chop's, which is where
+// the whitecaps break — on the crests, so they need to know where those are
+vec3 waveSlopeHeight(vec2 p, vec2 k, float a, float w, float t) {
+  float ph = dot(k, p) - w * t;
+  return vec3(a * k * cos(ph), a * sin(ph));
 }
 #endif
 
@@ -2556,16 +2562,70 @@ void main() {
     // are what break the sun's image into a path: their slopes reach several
     // degrees even in a light air, where the swell's are long and shallow
     float ch = (0.35 + 0.65 * u_wind) * (1.0 - smoothstep(20.0, 60.0, dist));
+    // where the chop is cresting, -1 in a trough .. 1 on a crest, leaning a
+    // little onto the face downwind of it: a wave breaks forward, and its foam
+    // spills down the front. Fades to 0 — no knowledge — with the chop
+    float crest = 0.0;
     if (ch > 0.001) {
-      slope += waveSlope(wp, (wdir * 0.62 + wperp * 0.78) * 2.09, 0.030 * ch, 3.580, t);
-      slope += waveSlope(wp, (wdir * 0.71 - wperp * 0.71) * 3.14, 0.018 * ch, 4.390, t);
-      slope += waveSlope(wp, (wdir * 0.97 + wperp * 0.26) * 1.40, 0.045 * ch, 2.930, t);
+      vec3 c = waveSlopeHeight(wp, (wdir * 0.62 + wperp * 0.78) * 2.09, 0.030 * ch, 3.580, t)
+             + waveSlopeHeight(wp, (wdir * 0.71 - wperp * 0.71) * 3.14, 0.018 * ch, 4.390, t)
+             + waveSlopeHeight(wp, (wdir * 0.97 + wperp * 0.26) * 1.40, 0.045 * ch, 2.930, t);
+      slope += c.xy;
+      // the three amplitudes sum to 0.093 and their slopes along the wind to
+      // 0.140, which brings both to about -1..1; the chop's fade with
+      // distance then goes back on
+      float front = max(-dot(c.xy, wdir) / (0.140 * ch), 0.0);
+      crest = (c.z / (0.093 * ch) + 0.5 * front) / 1.5 * (ch / (0.35 + 0.65 * u_wind));
     }
     vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
     vec3 r = reflect(rd, n);
     // a slope steep enough to mirror the water itself is a slope the sea
     // never shows at these amplitudes; keep the mirror pointed at the sky
     r.y = max(r.y, 0.01);
+
+    // ── cloud shadows ──
+    // Water under a low cloud is in its shadow: the sun's glitter is gone
+    // from it, and the light coming up out of the water is only the sky's,
+    // darker and bluer. Found the way the sun finds it — from the point on
+    // the water, up toward the sun to the plane the low clouds are read on,
+    // and the same field there, cut the same way, so each shadow is the
+    // shadow of a cloud that is drawn. The mirror itself is not shaded: what
+    // it shows comes from the sky, not from the sun.
+    //
+    // The scale: the eye is one unit up, 1.6 m, and the low clouds' plane
+    // a kilometre, some 600 units. So the shadows are big, as they are —
+    // the near water lies wholly in one or wholly out of one, and the
+    // patches show as bands across the far water, breaking up the sun's path
+    float shade = 0.0;
+    if (sunVis > 0.0 && (u_low.z > 0.02 || u_low.y > 0.02)) {
+      // plane units per unit of eye height, at the cumulus plane
+      float toPlane = ALT_LOW * 2.5 / 600.0;
+      vec2 toSun = sunDir.xz / max(sunDir.y, 0.05);
+      // the cumulus' ramp as it is overhead, where the widening the layers
+      // take toward the horizon is nil
+      float cuRampS = 0.22;
+      float sunLit = 1.0;
+      if (u_low.z > 0.02) {
+        // the cumulus: its crown's threshold, the full footprint of the lump,
+        // and its locality field, as the cumulus block takes them
+        vec2 x = (wp + toSun * 601.0) * toPlane;
+        float edgeS = 0.88 - u_low.z * 0.52;
+        edgeS += (fbm2((x + vec2(u_windOff * 0.7, u_windOff * 0.105)) * 0.045 + 61.0) - 0.5)
+               * 0.34 * (1.0 - smoothstep(0.55, 0.9, u_low.z));
+        vec3 cs = cloudField(x + vec2(u_windOff, u_windOff * 0.15), churn, ldir,
+                             edgeS - 0.07, cuRampS, edgeS - 0.08);
+        sunLit *= 1.0 - cs.x * smoothstep(0.02, 0.30, u_low.z);
+      }
+      if (u_low.y > 0.02) {
+        // the stratocumulus, on its own lower plane
+        vec2 x = (wp + toSun * (600.0 * 1.9 / 2.5 + 1.0)) * toPlane;
+        sunLit *= 1.0 - granular(x + vec2(u_windOff * 1.2, u_windOff * 0.18), 1.22, 0.5, 0.78, ldir).x
+                     * u_low.y * 0.95;
+      }
+      // the more of the sun the sky has already taken, the less a cloud's
+      // shadow has to take away
+      shade = (1.0 - sunLit) * smoothstep(0.0, 0.35, sunVis);
+    }
 
     // ── the far water ──
     // The last kilometres before the horizon sit behind a long reach of air,
@@ -2596,8 +2656,10 @@ void main() {
       float ang = acos(clamp(dot(r, sunDir), -1.0, 1.0));
       vec3 sunCol = L(mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF));
       float core = clamp(exp(-ang * ang * 400.0) * 2.2, 0.0, 1.0);
-      mir = mix(mir, vec3(SUN_LUM), core * sunVis * clear);
-      mir += sunCol * exp(-ang * 4.0) * 0.22 * sunVis * HALO_LUM * clear;
+      // and none of it where a cloud's shadow lies
+      float lightS = sunVis * clear * (1.0 - shade);
+      mir = mix(mir, vec3(SUN_LUM), core * lightS);
+      mir += sunCol * exp(-ang * 4.0) * 0.22 * HALO_LUM * lightS;
     }
     // the moon's, at night
     if (moonVis > 0.0) {
@@ -2613,6 +2675,29 @@ void main() {
     if (u_aurora > 0.001) {
       mir += aurora(r, u_aurora) * AURORA_LUM * clear * starF
            * clamp(1.0 - u_cover * 1.4, 0.0, 1.0) * (1.0 - gloom);
+    }
+#endif
+#ifdef FEAT_RAINBOW
+    // the rainbow, as the sky draws it but in the mirrored direction. Not the
+    // sky's bow turned over: the drops that send it to the water are other
+    // drops, at 42° from the point opposite the sun as seen along the
+    // reflected ray, so the bow in the water is centred on that point's
+    // image above the horizon — it stands wider than a mirror image would,
+    // and the waves break it up as they do the sun's path
+    if (u_rain > 0.01 && sunVis > 0.0) {
+      float bAng = acos(clamp(-dot(r, sunDir), -1.0, 1.0));
+      float bDeg = bAng * 57.2958;
+      if (bDeg > 25.0 && bDeg < 64.0) {
+        float bAmt = smoothstep(0.03, 0.25, u_rain) * sqrt(sunVis) * smoothstep(-0.02, 0.06, r.y) * clear;
+        float along = fbm2(r.xz * 2.2 + vec2(r.y * 3.1, 7.3) + u_evo * 0.04);
+        bAmt *= smoothstep(0.25, 0.65, along) * mix(1.0, 0.35, smoothstep(0.05, 0.65, r.y));
+        vec3 bows = bowLight(bDeg);
+        float bLum = dot(bows, vec3(0.2126, 0.7152, 0.0722));
+        bows = mix(vec3(bLum), bows, 0.72);
+        float dark = smoothstep(0.73, 0.76, bAng) * smoothstep(0.90, 0.87, bAng);
+        mir *= 1.0 - dark * bAmt * 0.12;
+        mir += bows * bAmt * 0.8;
+      }
     }
 #endif
 
@@ -2636,9 +2721,65 @@ void main() {
     deep = mix(deep, L(mix(vec3(0.012, 0.014, 0.017), vec3(0.085, 0.095, 0.105), dayF)),
                smoothstep(0.5, 0.95, u_cover) * 0.8);
     deep = mix(deep, deep * vec3(0.9, 0.85, 0.8), gloom * 0.5);
+    // in a cloud's shadow the light down into the water is the sky's alone:
+    // less of it, and bluer
+    deep *= mix(vec3(1.0), vec3(0.32, 0.42, 0.60), shade);
     // the far water is all air: the water's own color goes with the fog too
     vec3 seaLin = mix(deep, mir, fres + (1.0 - fres) * seaFog);
-    //
+
+    // ── whitecaps ──
+    // Past a fresh breeze the crests start to break, and the broken water is
+    // foam: white, lit by the whole sky, covering both the mirror and the
+    // water beneath. How much of the sea it covers is the measured share
+    // (Monahan's, 3.84e-6 · U^3.41 at U m/s, U got back from u_wind by
+    // undoing the wind curve): a fleck here and there at 8 m/s, a few in a
+    // hundred by 15, two fifths of the sea in a typhoon. Where the foam lies
+    // is a field of noise, held to the crests of the chop; past a gale the
+    // wind tears it into streaks along its heading, which is the same field
+    // stretched downwind. Like the waves, the foam
+    // is laid on the water, so it shrinks with distance — and once a fleck
+    // is smaller than a pixel what is left is its share, a paling of the far
+    // water, until the haze takes that too
+    float cov = min(3.84e-6 * pow(33.0 * pow(u_wind, 1.25), 3.41), 0.45);
+    if (cov > 0.0005) {
+      // a fleck of foam is a few tens of centimetres, a fifth of the eye's height
+      const float FLECK = 5.0;
+      vec2 fp = wp - wdir * (u_windOff * 6.0);
+      float stretch = mix(1.6, 8.0, smoothstep(0.6, 0.95, u_wind));
+      // two octaves: one alone thresholds into smooth blobs, which read as
+      // paint; the second frays them
+      vec2 fq = vec2(dot(fp, wdir) / stretch, dot(fp, wperp)) * FLECK + 3.7;
+      float fn = vnoise(fq) * 0.62 + vnoise(fq * 2.9 + 11.3) * 0.38;
+      // Two kinds of it from the one field. The caps: flecks of solid white
+      // where the noise runs high, gathered onto the crests of the chop. And
+      // the lace they leave behind as the crest moves on, a net of thin
+      // strands — the lines where the noise crosses its middle — spread over
+      // more of the sea the harder it blows, and torn into streaks with it
+      float body = 0.5 * crest + (fn - 0.5);
+      // the threshold that leaves cov of the sea white, fitted to how the
+      // noise and the crests are distributed
+      float th = 0.625 - 0.88 * pow(cov, 0.3);
+      // a cap is densest at its heart and thins toward its rim
+      float cap = smoothstep(th, th + 0.25, body) * (0.7 + 0.3 * smoothstep(th, th + 0.4, body));
+      // in a fresh breeze the lace is only on the crests, and faint; in a
+      // gale it spreads across the troughs as well
+      float spread = smoothstep(0.02, 0.3, cov);
+      float strand = 1.0 - smoothstep(0.0, 0.02 + 0.06 * cov, abs(fn - 0.5));
+      float fleck = max(cap, strand * smoothstep(th - 0.1 - 0.4 * spread, th - 0.05, body)
+                             * (0.25 + 0.35 * spread));
+      // a fleck's size against a pixel's footprint along the water, which
+      // grows as the distance squared; past it, the share, still gathered
+      // onto the crests as far as the chop reaches
+      float fpx = dist * dist * u_cam.z / u_frame.w * FLECK;
+      float foam = mix(fleck, clamp(cov * (1.0 + 1.5 * crest), 0.0, 1.0), smoothstep(0.35, 1.4, fpx));
+      // white under a clear sky, grey under a storm's; warm at sunset, blue in
+      // a cloud's shadow
+      vec3 foamCol = mix(vec3(0.10, 0.11, 0.13), vec3(0.90, 0.92, 0.94), dayF);
+      foamCol = mix(foamCol, vec3(0.42, 0.45, 0.49) * (0.25 + 0.75 * dayF), gloom * 0.8);
+      foamCol *= mix(vec3(1.0), vec3(1.0, 0.86, 0.74), sunsetF * 0.5);
+      foamCol *= mix(vec3(1.0), vec3(0.58, 0.64, 0.76), shade);
+      seaLin = mix(seaLin, L(foamCol), foam * clear);
+    }
     disp = mix(disp, encodeSrgb(seaLin), smoothstep(0.0, -0.012, rd.y) * u_sea.x);
   }
 #endif
