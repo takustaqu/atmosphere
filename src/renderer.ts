@@ -74,7 +74,8 @@ uniform float u_aspect;    // width / height of the picture this viewport stands
 uniform float u_time;      // seconds
 uniform vec3  u_cam;       // yaw, pitch, fov (radians)
 uniform vec2  u_sun;       // sun's elevation, azimuth (radians)
-uniform vec3  u_moon;      // moon's elevation, azimuth (radians), and the lit fraction of its disc
+uniform vec3  u_moon;      // moon's elevation, azimuth (radians), and its light: the lit fraction of the disc, dimmed by the Earth's shadow
+uniform float u_moonEclipse; // how much of the moon's disc is in the Earth's umbra, 0..1
 uniform float u_cover;     // 0..1 total occlusion (accumulated from the cloud-genus mix)
 uniform vec3  u_high;      // amount of the ten cloud genera: cirrus Ci, cirrostratus Cs, cirrocumulus Cc
 uniform vec3  u_mid;       //                                 altostratus As, altocumulus Ac, nimbostratus Ns
@@ -1583,7 +1584,9 @@ void main() {
   float moonVis = moonUp * clamp(1.0 - u_cover * 0.9 - gloom, 0.0, 1.0);
   // how much moonlight there is for the clouds and the night: a full moon
   // high up gives all of it, a crescent a sliver, a set moon none — with a
-  // floor for the starlight and airglow a night keeps regardless
+  // floor for the starlight and airglow a night keeps regardless. u_moon.z
+  // already carries an eclipse (see bind), so a moon in the Earth's shadow
+  // leaves the night nearly as dark as a new one
   float nightM = nightF * mix(0.3, 1.0, moonUp * u_moon.z);
   float moonAng = acos(clamp(dot(rd, moonDir), -1.0, 1.0));
   // for the clouds: how much of the moon's light a thin cloud this far from
@@ -1629,9 +1632,38 @@ void main() {
     // flat disc, famously) and falls to nothing at the terminator with the
     // slow gradient a crescent shows. The surge near full is the opposition
     // effect, what makes a full moon so much brighter than two half moons
+    // the shape is the phase's, not the light's: take the eclipse back out
+    float phase = u_moon.z / (1.0 - 0.9 * u_moonEclipse);
     float ls = max(mu0, 0.0) * 2.0 / max(mu0 + mu, 1e-3);
-    ls *= 1.0 + 0.5 * smoothstep(0.7, 1.0, u_moon.z);
+    ls *= 1.0 + 0.5 * smoothstep(0.7, 1.0, phase);
     float lit = moon * ls;
+
+    // ── the Earth's shadow ──
+    // In an eclipse the umbra crosses the face as a circle near three times
+    // the moon's width, its centre the point opposite the sun — which, seen
+    // on the disc, lies the way the sun's direction leans off it, so the
+    // shadow bites in from the limb the moon is moving toward (its east) and
+    // its curved edge is the Earth's own outline. How far it reaches is
+    // set by the coverage the ephemeris gives, not by the shader's
+    // geometry: the drawn disc is ten times its real size and the sun here
+    // is a coarser sun. Inside it, sunlight bent through every sunset on
+    // the Earth's rim: dim, copper, darker toward the shadow's middle. Just
+    // outside, the penumbra takes a little off
+    float umbra = 0.0, deep = 0.0, penDim = 0.0;
+    if (u_moonEclipse > 0.0) {
+      vec2 toShadow = normalize(-vec2(dot(sunDir, right), dot(sunDir, up)) + vec2(1e-7, 0.0));
+      const float UMBRA_R = 2.7;          // in moon radii, about
+      // where the edge crosses the line to the shadow's centre, +1 at the
+      // first touch to −1 at the last: the inverse of the two circles'
+      // overlap, fitted to within half a percent of the disc. Pushed on past
+      // the far limb as totality comes, so the soft edge leaves no lit rim
+      float t = pow(max(1.0 - u_moonEclipse, 1e-6), 0.6667) - pow(max(u_moonEclipse, 1e-6), 0.6667);
+      float edge = -0.0633 + 0.9666 * t + 0.0601 * t * t - 0.35 * smoothstep(0.96, 1.0, u_moonEclipse);
+      float dist = length(muv - toShadow * (UMBRA_R + edge));
+      umbra = smoothstep(UMBRA_R + 0.2, UMBRA_R - 0.2, dist);
+      deep = clamp((UMBRA_R - dist) / 1.8, 0.0, 1.0);
+      penDim = smoothstep(UMBRA_R + 1.8, UMBRA_R, dist) * smoothstep(0.0, 0.05, u_moonEclipse);
+    }
 
     // ── the face ──
     // The near side's maria, where they are: the large dark basins as
@@ -1672,15 +1704,25 @@ void main() {
     // heavy overcast dims the disc away instead of punching a dark hole in
     // the cloud glow. By day the sky in front of it outshines it and the dark
     // face is not there at all.
-    vec3 shine = L(vec3(0.62, 0.68, 0.78)) * albedo * 0.012 * (1.4 - u_moon.z) * MOON_LUM;
-    sky = mix(sky, shine, moon * smoothstep(0.0, 0.55, vis) * nightF);
+    vec3 shine = L(vec3(0.62, 0.68, 0.78)) * albedo * 0.012 * (1.4 - phase) * MOON_LUM;
+    // (none on the shadowed part: the Earth turns its night side to it)
+    sky = mix(sky, shine * (1.0 - umbra), moon * smoothstep(0.0, 0.55, vis) * nightF);
 
     // The lit face. Held just over the tone curve's knee, not blown out: a
     // moon that saturates to paper white loses its seas and reads as a disc
     // of paper, which is exactly what it did. By day the daylit sky in front
     // takes the edge off it — a white about a cloud's
     float face = 0.42 * mix(0.55, 1.0, nightF);
-    sky += L(vec3(1.0, 0.97, 0.90)) * albedo * lit * vis * MOON_LUM * face;
+    // the shadowed part in linear light, already dim: the outer umbra a
+    // lighter orange, its middle a deep brick red. Lit from all round the
+    // Earth's rim rather than from the sun's side, so not by ls. While part
+    // of the face is still in sunlight the eye is held by it and the shadow
+    // reads near black; only in totality does the copper come up
+    vec3 copper = mix(vec3(0.70, 0.17, 0.04) * 1.3, vec3(0.50, 0.07, 0.02) * 0.6, deep)
+                * 0.16 * mix(0.3, 1.0, smoothstep(0.9, 1.0, u_moonEclipse)) * moon;
+    vec3 faceCol = L(vec3(1.0, 0.97, 0.90)) * lit * (1.0 - 0.4 * penDim);
+    sky += mix(faceCol, copper, umbra) * albedo * vis * MOON_LUM * face;
+    lit *= 1.0 - umbra * 0.9;
 
     // Bloom: a little scatter around the lit limb, warm like the light that
     // causes it, growing with the phase. Kept small — a wide halo is what a
@@ -1688,7 +1730,8 @@ void main() {
     vec2 litDir = normalize(vec2(dot(sunDir, right), dot(sunDir, up)) + vec2(1e-5, 0.0));
     float sideW = 0.5 + 0.5 * dot(muv, litDir) / max(length(muv), 1e-3);
     sideW = 0.12 + 0.88 * sideW;
-    float rim = exp(-max(ang - 0.045, 0.0) * 55.0) * (1.0 - moon) * (0.1 + 0.9 * u_moon.z);
+    float rim = exp(-max(ang - 0.045, 0.0) * 55.0) * (1.0 - moon) * (0.1 + 0.9 * u_moon.z)
+              * (1.0 - 0.85 * u_moonEclipse);
     sky += L(vec3(1.0, 0.95, 0.87)) * rim * sideW * 0.10 * vis * nightF;
     // a whisper of scattered moonlight haze just past the limb, all around
     sky += L(vec3(0.45, 0.55, 0.75)) * exp(-max(ang - 0.045, 0.0) * 11.0)
@@ -3225,7 +3268,7 @@ type Uniforms = Record<string, WebGLUniformLocation | null>;
 
 const UNIFORM_NAMES = [
   'u_noise',
-  'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun', 'u_moon',
+  'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun', 'u_moon', 'u_moonEclipse',
   'u_cover', 'u_high', 'u_mid', 'u_low',
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
   'u_windOff', 'u_evo',
@@ -4042,7 +4085,13 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
     gl.uniform3f(u.u_snowDrift, this.snowDrift[0], this.snowDrift[1], this.snowDrift[2]);
     gl.uniform2f(u.u_sun, s.sunElevation, s.sunAzimuth);
-    gl.uniform3f(u.u_moon, s.moonElevation, s.moonAzimuth, s.moonPhase);
+    // The moon's third number is how much light it gives, not its shape: a
+    // moon in the Earth's shadow lights the clouds, its halo and the sea a
+    // tenth as much as the same moon outside it. Everything that is lit by
+    // the moon reads it from here; the disc itself takes its phase back out
+    const eclipse = Math.min(Math.max(s.moonEclipse ?? 0, 0), 1);
+    gl.uniform3f(u.u_moon, s.moonElevation, s.moonAzimuth, s.moonPhase * (1 - 0.9 * eclipse));
+    gl.uniform1f(u.u_moonEclipse, eclipse);
     const c = s.clouds;
     gl.uniform1f(u.u_cover, s.cloudCover);
     gl.uniform3f(u.u_high, c.cirrus, c.cirrostratus, c.cirrocumulus);

@@ -671,7 +671,8 @@ function readout(c: Conditions): void {
     .map(([k, v]) => `${k} ${v.toFixed(2)}`).join('  ') || '—';
   stateEl.textContent = [
     `sun       elevation ${(s.sunElevation * 180 / Math.PI).toFixed(1)}°  azimuth ${(s.sunAzimuth * 180 / Math.PI).toFixed(0)}°`,
-    `moon      elevation ${(s.moonElevation * 180 / Math.PI).toFixed(1)}°  azimuth ${(s.moonAzimuth * 180 / Math.PI).toFixed(0)}°  lit ${(s.moonPhase * 100).toFixed(0)}%`,
+    `moon      elevation ${(s.moonElevation * 180 / Math.PI).toFixed(1)}°  azimuth ${(s.moonAzimuth * 180 / Math.PI).toFixed(0)}°  lit ${(s.moonPhase * 100).toFixed(0)}%`
+      + (s.moonEclipse > 0.005 ? `  eclipse ${(s.moonEclipse * 100).toFixed(0)}%` : ''),
     `cover     ${s.cloudCover.toFixed(2)}`,
     `rain ${s.rain.toFixed(2)}  snow ${s.snow.toFixed(2)}  wind ${s.wind.toFixed(2)}  thunder ${s.thunder.toFixed(2)}  haze ${s.haze.toFixed(2)}`,
     `clouds    ${pick(s.clouds as unknown as Record<string, number>)}`,
