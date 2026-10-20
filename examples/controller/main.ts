@@ -293,6 +293,8 @@ note('Some of the sky only shows under the right conditions and in the right '
       { id: 'mooncloud', label: 'Moon behind clouds' },
       { id: 'iridescence', label: 'Iridescence' },
       { id: 'cza', label: 'Circumzenithal arc' },
+      { id: 'shafts', label: 'Rain shafts' },
+      { id: 'backlit', label: 'Backlit thunderhead' },
       { id: 'aurora', label: 'Aurora' },
       { id: 'away', label: 'Face away from the sun' },
       { id: 'toward', label: 'Face the sun' },
@@ -354,6 +356,24 @@ note('Some of the sky only shows under the right conditions and in the right '
         ui.clouds = { ...ui.clouds, ...Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])),
           cirrostratus: 0.75 };
         look(sunNow().sunAzimuth, 1.05, 1.2);
+      } else if (id === 'shafts') {
+        // a storm late in the day: curtains hang under the towers and the
+        // rain deck along most of the horizon, side-on to the sun so they
+        // take its light. The towers stand where the noise puts them, so
+        // turn the view along the horizon to find the deepest ones
+        sunBetween(4, 28, 17);
+        ui.weather = { ...ui.weather, cloudCover: 0.97, precipitation: 25, precipitationType: 'rain',
+          thunder: 1, windSpeed: 12, visibility: 5, convection: 0.5 };
+        ui.cloudMode = 'auto';
+        // the lens would be covered in drops in this rain, and they hide the view
+        ui.lens.droplets = 0;
+        look(sunNow().sunAzimuth + Math.PI / 2, 0.12, 1.3);
+      } else if (id === 'backlit') {
+        // a thunderhead standing against a low sun: dark mass, lit rim
+        sunBetween(2, 20, 17.6);
+        ui.weather = { ...ui.weather, cloudCover: 0.3, precipitation: 0, thunder: 0, visibility: 30, convection: 0.8 };
+        ui.cloudMode = 'auto';
+        look(sunNow().sunAzimuth, 0.25, 1.2);
       } else if (id === 'aurora') {
         // a dark night, looking north
         if (sunNow().sunElevation > -18 * DEG) { ui.city = 'None'; ui.timeOfDay = 23; }

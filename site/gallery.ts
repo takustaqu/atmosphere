@@ -1,6 +1,6 @@
 // gallery.ts — the weather presets and the night skies, side by side
 //
-// Eighteen live canvases would mean eighteen WebGL contexts on top of the hero's.
+// Twenty-two live canvases would mean twenty-two WebGL contexts on top of the hero's.
 // Browsers cap how many can exist at once (and evict the oldest, which would
 // kill the hero), so instead one renderer draws them all in turn, each frame
 // is copied into a plain 2D canvas, and the context is released. The tiles
@@ -115,6 +115,35 @@ const TILES: readonly Tile[] = [
     camera: { yaw: 0, pitch: 0.3 },
     label: { ja: 'オーロラ', en: 'Aurora' },
   },
+  {
+    // a thunderhead against the setting sun: a dark mass with a gold rim
+    conditions: { time: 17.6, weather: { cloudCover: 0.3, convection: 0.8, visibility: 30 } },
+    camera: { yaw: WEST + 0.1, pitch: 0.25, fov: 1.2 },
+    label: { ja: '逆光の入道雲', en: 'Backlit thunderhead' },
+  },
+  {
+    // the arc stands round the zenith, on the sun's side, with the sun near 22°
+    conditions: { time: 16, weather: { clouds: { cirrostratus: 0.75 }, visibility: 30 } },
+    camera: { yaw: WEST - 0.5, pitch: 1.05, fov: 1.2 },
+    label: { ja: '環天頂アーク', en: 'Circumzenithal arc' },
+  },
+  {
+    // the total lunar eclipse of 3 March 2026, at greatest eclipse, from Tokyo
+    conditions: {
+      time: new Date('2026-03-03T11:33:00Z'),
+      location: { latitude: 35.68, longitude: 139.77 },
+      weather: 'clear', celestial: { bortle: 3 },
+    },
+    // the moon stands at azimuth 1.92, 36° up, at that moment
+    camera: { yaw: 1.92 + 0.3, pitch: 0.5, fov: 0.6 },
+    label: { ja: '皆既月食', en: 'Total lunar eclipse' },
+  },
+  {
+    // a shower in the distance: grey curtains hanging from the cloud base
+    conditions: { time: 17, weather: 'thunderstorm' },
+    camera: { yaw: 0.6, pitch: 0.15, fov: 1.3 },
+    label: { ja: '雨脚', en: 'Rain shafts' },
+  },
 ];
 
 const captions: { el: HTMLElement; label: Tile['label'] }[] = [];
@@ -129,7 +158,7 @@ export function relabelGallery(lang: Locale): void {
 
 /**
  * Fill `#gallery`. The section removes itself if WebGL is unavailable or the
- * shader never compiles, so it stays absent rather than showing eighteen black
+ * shader never compiles, so it stays absent rather than showing twenty-two black
  * rectangles.
  *
  * The shader compiles off the main thread, so this can't draw the moment the
@@ -176,7 +205,7 @@ export function buildGallery(lang: Locale): void {
       renderer.resize(w, h);
       try {
         TILES.forEach((tile, i) => {
-          // vary the evolution offset per tile so the skies aren't eighteen
+          // vary the evolution offset per tile so the skies aren't twenty-two
           // shots of one cloud field — the same weather, different afternoons
           renderer!.render(tile.t ?? 0, resolveConditions(tile.conditions),
             { ...DEFAULT_CAMERA, ...tile.camera }, 41.7 + i * 5.7, 7.3 + i * 3.1);

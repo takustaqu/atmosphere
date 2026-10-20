@@ -33,7 +33,9 @@ be an easy way to get a sky that keeps changing procedurally.
   odd fireball, zodiacal light after dusk at a dark site
 - **The moon** — where the ephemeris puts it, lit by the sun from where the sun is, so
   the phase and the tilt of the horns follow from the date; earthshine and maria;
-  the disc occludes the stars behind it; up by day too
+  the disc occludes the stars behind it; up by day too. Lunar eclipses happen on
+  their dates: the disc goes a dim copper red by how much of it is in the Earth's
+  umbra, and its light on the clouds fades with it
 - **The aurora** — curtains toward the north that fold and shimmer, green with red tops,
   coming overhead as the activity rises
 - **The ten cloud genera** — cirrus, cirrostratus, cirrocumulus, altostratus,
@@ -42,15 +44,21 @@ be an easy way to get a sky that keeps changing procedurally.
   cloud plane gives depth by altitude
 - **Cumulonimbus anvils** — a tower that reaches the tropopause spreads out horizontally
 - **Cloud lighting** — pseudo shading toward the sun, silver lining,
-  blue-grey shadow from continuous thickness, flattening to diffuse light under overcast
+  blue-grey shadow from continuous thickness, flattening to diffuse light under overcast.
+  A cumulonimbus or cumulus standing against the sun is backlit: a dark mass with
+  only its rim blazing in the sun's color
 - **Cloud shape evolution** — the domain-warp field itself moves, so clouds billow and collapse in place
 - **Precipitation** — rain (leaning with the wind), snow (tumbling on the wind), droplets on the lens
   (both switchable — see [Falling rain and snow](#falling-rain-and-snow) and [Lens](#lens))
-- **Severe weather** — lightning that shows its bolt now and then, cloud turbulence from high wind
-- **Optics** — the 22° halo with sun dogs and a sun pillar through cirrostratus, a moon halo,
+- **Severe weather** — lightning that shows its bolt now and then, cloud turbulence from high wind,
+  and rain shafts hanging under a distant thunderhead or rain deck — virga that evaporates on
+  the way down, or a curtain that reaches the ground
+- **Optics** — the 22° halo with sun dogs, a sun pillar and the circumzenithal arc through
+  cirrostratus, a moon halo and corona, iridescence on thin cloud edges near the sun,
   and a rainbow with its secondary and Alexander's band when the sun is out in the rain
-- **The sea** — optionally, open water below the horizon that mirrors the sky, with a swell
-  and the sun's path across it (see [Ground](#ground--the-sea))
+- **The sea** — optionally, open water below the horizon that mirrors the sky, with a swell,
+  the sun's path across it, whitecaps in a high wind, cloud shadows on the water and the
+  rainbow's reflection (see [Ground](#ground--the-sea))
 - **Visibility** — haze/mist/fog. Thin haze only crushes the horizon; thick haze covers the whole sky
 - **Lens flare** — ghosts along the optical axis, chromatic aberration, anamorphic-style streaks
 - **Color filters** — sepia, monochrome, cyanotype, and more
@@ -757,7 +765,7 @@ linked instead. That is what `renderCubeFaces` does, because a bake has no
 loop to come back on; do not do it for anything on screen.
 
 The shader is compiled per combination of features a sky needs — the sea,
-the aurora, the halos, the rainbow and the rest are each compiled in only
+the aurora, the halos, the rainbow, the rain shafts and the rest are each compiled in only
 when their state is on, because a block that is never run still costs every
 frame by being there. A feature coming on later gets its variant compiled
 then, in the background; the frames in between are drawn with the previous

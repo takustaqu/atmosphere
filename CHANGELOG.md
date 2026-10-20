@@ -1,5 +1,88 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Lunar eclipses, on their dates.** The lunar ephemeris is now the
+  abridged Meeus series (51 terms in longitude and distance, 30 in
+  latitude, with the E factor and the planetary corrections) — good to
+  about 0.001°, where the old series' degree could not place the moon in an
+  umbra 0.7° across. With a location and a date, `lunarEclipse` gives the
+  fraction of the disc in the Earth's umbra and penumbra (Chauvenet's shadow
+  radii with the usual 1/50 enlargement, an exact two-circle overlap), and
+  the state carries it as `moonEclipse`. The disc goes a dim copper red by
+  that fraction, the shadow biting in from the limb it is moving toward and
+  darker toward its centre, with the maria still faintly there; the moon's
+  light on the clouds, its halo and its path on the sea fade with it, and
+  `AtmosphereLight`'s moon dims and reddens. Greatest eclipse for
+  2025-09-07, 2026-03-03 and 2026-08-28 lands within a minute of NASA's
+  times, with the published umbral magnitudes to ±0.004.
+- **Rain shafts.** Under a distant thunderhead, or a rain deck, a grey
+  curtain hangs from the cloud base toward the ground: streaky, leaning
+  downwind, densest just under the base — virga that runs out by mid-height
+  when the rain is light, a curtain to the horizon when it is heavy. A low
+  sun lights it from the side, orange at sunset; lightning flashes in it.
+  Its own shader feature (`FEATURE.SHAFTS`), compiled in only when it rains
+  or a thunderhead has thunder; a clear or fair frame is bit-identical.
+  About 4% on a thunderstorm frame.
+- **Cloud iridescence.** Thin water cloud within a few degrees of the sun
+  takes on pastel pink, green and blue bands following its own edges — the
+  same diffraction as the moon's corona, carried by the cloud's density
+  rather than laid round the sun as rings. Strongest on altocumulus fringes;
+  none on ice cloud; gone under a gloom.
+- **The circumzenithal arc.** Through a cirrostratus veil with the sun
+  below 32°, an upside-down rainbow stands round the zenith on the sun's
+  side — placed by the plate-crystal relation rather than a fit, red on the
+  lower edge and violet above, brightest with the sun near 22°, gone as it
+  climbs. The most saturated member of the halo family, and brighter than
+  the 22° ring.
+- **The sea breaks into whitecaps.** Above about 7 m/s the crests foam,
+  covering the share of the water Monahan's formula gives (1% at 10 m/s,
+  7% at 18, two fifths in a typhoon), with a net of foam strands that
+  stretch into streaks along the wind as it rises; white by day, grey under
+  a storm, warm at sunset.
+- **Cloud shadows on the water.** By day the water under a low cloud loses
+  the sun's glitter and goes darker and bluer: each sea point is traced
+  toward the sun to the low cloud plane and read against the cumulus and
+  stratocumulus fields there, with the clouds' own thresholds. At the eye's
+  height a shadow is hundreds of metres across, so it reads as the glitter
+  coming and going rather than as patches to match overhead.
+- **The rainbow's reflection.** The sea mirrors the bow as well as the sky
+  now: the lower part of a circle centred above the horizon, warped by the
+  swell, with the same gating and unevenness as the bow in the sky.
+- Controller example: "Iridescence", "Circumzenithal arc", "Rain shafts"
+  and "Backlit thunderhead" buttons in the Sky phenomena drawer; the
+  resolved-state readout shows the eclipse fraction.
+- Site: gallery tiles for the backlit thunderhead, the circumzenithal arc,
+  the total lunar eclipse of 3 March 2026 from Tokyo, and rain shafts.
+
+### Changed
+
+- **Clouds against the sun are backlit.** A cumulonimbus standing between
+  the eye and the sun came out the same lavender-white as one across the
+  sky, and read as a translucent veil for being too light to stand in front
+  of anything — the overexposed disc even shone through its base. Against
+  the sun the mass now goes dark, in the shade's color (blue-grey by day,
+  violet-grey at dusk), darker with depth and in the lobes' cores; only
+  the rim, where the silhouette thins, blazes in the sun's own color, gold
+  at sunset, with a soft forward-scatter glow outside the edge. The veil
+  cap darkens over the tower and glows where it hangs in open sky. Cumulus
+  get the lighter version: thick cores a soft grey-blue, thin lumps and
+  margins glowing; a lump in front of a tower that hides the sun takes the
+  tower's shade instead. Away from the sun nothing changes.
+- **Cumulus have a lit flank and a shaded one.** The lit-ness read from the
+  cloud field leaned bright inside every lump whatever the side, which is
+  why they were white all round; the density gradient toward the sun now
+  swings the crown's and base's lit-ness, widest with the sun to one side,
+  for lumps low enough to show their flanks. Kept mild: a fair sky's cotton
+  stays white.
+- Measured at 1080p on an M2 Max, the backlighting and the flank shading
+  cost about 0.5 ms on a fair frame, 1 ms on a thunderstorm, and 1.7 ms on
+  a summer sky looked at toward the sun; iridescence a few tenths on a
+  cloudy frame. A clear noon is 0.3 ms slower by their presence in the
+  program alone.
+
 ## 0.6.0 — 2026-10-19
 
 The moon as a light on the clouds. A moonlit cirrostratus glows round the
