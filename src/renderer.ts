@@ -932,6 +932,20 @@ float cbScale(float d) {
   return exp(0.8515 * (exp(2.585 * (d - 0.65)) - 1.0));
 }
 
+// The storm's clock: how far its thrust's noise has drifted. A tower is
+// born where the drift raises the mass over the cut, grows as it climbs,
+// spreads its anvil while it stands at the tropopause, and decays as the
+// drift carries the mass down again — so this is the clock every tower
+// lives by, each at its own stage of the same drift. Half the speed it
+// used to run at, so a tower lives about four minutes at the default
+// evolution speed; the offset keeps the sky the animator opens on (evo
+// 7.3) as it was. CB_LAG is how far back a tower's past is read: what it
+// was doing about a minute ago says whether it is growing or dying, how
+// long its anvil has been spreading, and whether an anvil it fed has been
+// cut loose
+float cbClock() { return 0.438 + u_evo * 0.06; }
+const float CB_LAG = 0.25;
+
 // How high a cumulonimbus's thrust carries it: the height y solving
 // rise − (y + 0.6y²) − 1 = 0, the thrust's own reach before anything shapes it
 float cbReach(float rise) {
@@ -974,7 +988,8 @@ float cbUnshape(float h, float ceil) {
 // whole cell, at the center and size a whole cell's would have
 vec3 rowCell(float k, float n, float seed) {
   float nI = floor(n), nf = n - nI;
-  float m = nI + 1.0;
+  // (a whole number of cells has no narrow one)
+  float m = nf > 0.0 ? nI + 1.0 : nI;
   float wrap = floor(k / m);
   float id = k - wrap * m;
   float jit = (hash12(vec2(id, seed)) - 0.5) * 0.4;
@@ -1010,49 +1025,60 @@ vec3 rowCell(float k, float n, float seed) {
 // n0·sc is rarely a whole number, so the row closes on itself through one
 // narrower cell (rowCell), its turret sized down with it — the count can
 // then change smoothly, as the storm draws nearer, without the row
-// jumping. Near that cell the turrets either side of the usual three are
-// read too, since it may hold next to nothing
+// jumping. Beside that cell one more turret is read, the one past it,
+// since it may hold next to nothing (turretStep is one turret)
+// one turret of the row (cell kk, read from c along it), laid onto the
+// skyline so far
+float turretStep(float sky, float kk, float c, float n, float gain, float kind,
+                 float cell, float live, float seed, float ceil, float sc) {
+  float k = 0.6 * cell;
+  vec3 rc = rowCell(kk, n, seed);
+  float id = rc.x;
+  float h2 = hash12(vec2(id, seed + 3.1));
+  float h3 = hash12(vec2(id, seed + 7.7));
+  float ctr = rc.y;
+  float ak = ctr * 6.2831853 / n;
+  vec2 q = vec2(sin(ak), cos(ak)) * (0.85 * sc) + vec2(0.0, cbClock());
+  float top;
+  if (kind < 0.5) {
+    float rk = pow(max(fbm4(q) - 0.42, 0.0) * 4.6, 1.5) * gain + 0.25;
+    top = cbShape(cbReach(rk), ceil);
+  } else {
+    float mk = 0.5 * vnoise(q) + 0.25 * vnoise(q * 2.03 + vec2(17.3, 9.1)) + 0.094;
+    top = smoothstep(0.35, 0.47, mk) * gain;
+  }
+  float R = (0.80 + 0.25 * h2) * cell;
+  // each grows and slumps on a clock of its own — by a quarter, not
+  // more: a turret that drops to half its neighbors' height leaves the
+  // tallest standing alone over the crown as a spire
+  float yk = top * (0.74 + 0.26 * (0.5 + 0.5 * sin(live * (0.7 + 0.6 * h2) + h3 * 6.2831853))) * rc.z;
+  float d = abs(c - ctr) * cell;
+  // the head is a broad dome, nearly level across its middle, and the
+  // flanks steepen as they fall, down to half the turret's height at R —
+  // where the body they share takes over — and past that steeply: a
+  // turret still standing where the three read move on would leave a
+  // straight slot
+  float u = d / R;
+  float t = u < 1.0 ? yk * (1.0 - 0.5 * u * u * u) : yk * 0.5 - (d - R) * 6.0;
+  float hm = clamp(0.5 + 0.5 * (t - sky) / k, 0.0, 1.0);
+  return mix(sky, t, hm) + k * hm * (1.0 - hm) * 0.5;
+}
 float turretRow(float a, float n0, float gain, float kind,
                 float cosEl, float live, float seed, float ceil, float sc) {
   float n = n0 * sc;
   float c = mod(a, 6.2831853) * n / 6.2831853;
   float ic = floor(c);
   float cell = 6.2831853 / n0 * cosEl;
-  float k = 0.6 * cell;
   float sky = 0.0;
-  bool seam = c < 2.0 || c > n - 2.0;
-  for (int j = -2; j <= 2; j++) {
-    if (!seam && (j == -2 || j == 2)) continue;
-    vec3 rc = rowCell(ic + float(j), n, seed);
-    float id = rc.x;
-    float h2 = hash12(vec2(id, seed + 3.1));
-    float h3 = hash12(vec2(id, seed + 7.7));
-    float ctr = rc.y;
-    float ak = ctr * 6.2831853 / n;
-    vec2 q = vec2(sin(ak), cos(ak)) * (0.85 * sc) + vec2(0.0, u_evo * 0.12);
-    float top;
-    if (kind < 0.5) {
-      float rk = pow(max(fbm4(q) - 0.42, 0.0) * 4.6, 1.5) * gain + 0.25;
-      top = cbShape(cbReach(rk), ceil);
-    } else {
-      float mk = 0.5 * vnoise(q) + 0.25 * vnoise(q * 2.03 + vec2(17.3, 9.1)) + 0.094;
-      top = smoothstep(0.35, 0.47, mk) * gain;
-    }
-    float R = (0.80 + 0.25 * h2) * cell;
-    // each grows and slumps on a clock of its own — by a quarter, not
-    // more: a turret that drops to half its neighbors' height leaves the
-    // tallest standing alone over the crown as a spire
-    float yk = top * (0.74 + 0.26 * (0.5 + 0.5 * sin(live * (0.7 + 0.6 * h2) + h3 * 6.2831853))) * rc.z;
-    float d = abs(c - ctr) * cell;
-    // the head is a broad dome, nearly level across its middle, and the
-    // flanks steepen as they fall, down to half the turret's height at R —
-    // where the body they share takes over — and past that steeply: a
-    // turret still standing where the three read move on would leave a
-    // straight slot
-    float u = d / R;
-    float t = u < 1.0 ? yk * (1.0 - 0.5 * u * u * u) : yk * 0.5 - (d - R) * 6.0;
-    float hm = clamp(0.5 + 0.5 * (t - sky) / k, 0.0, 1.0);
-    sky = mix(sky, t, hm) + k * hm * (1.0 - hm) * 0.5;
+  for (int j = -1; j <= 1; j++) {
+    sky = turretStep(sky, ic + float(j), c, n, gain, kind, cell, live, seed, ceil, sc);
+  }
+  // and beside a narrow cell the one past it: in cell 0 the one two back,
+  // in the two cells before the seam the one two on. (Only while there
+  // is a narrow cell at all: at the middle distance there is none, and
+  // the row reads its three as it always did)
+  if (fract(n) > 0.0 && (c < 1.0 || c >= floor(n) - 1.0)) {
+    sky = turretStep(sky, c < 1.0 ? ic - 2.0 : ic + 2.0, c, n, gain, kind, cell, live, seed, ceil, sc);
   }
   return sky;
 }
@@ -1121,7 +1147,8 @@ float anvilFibre(vec2 X) {
   return vnoise(vec2(l * 11.0, b * 0.8 - u_evo * 0.04) + 5.0) * 0.62
        + vnoise(vec2(l * 27.0, b * 1.9 - u_evo * 0.07) + 9.0) * 0.38;
 }
-vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float fib, float sc) {
+vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float fib, float sc,
+                out float orphan) {
   vec2 up = vec2(0.9889, 0.1483);
   float b = dot(X, up);
   float l = dot(X, vec2(-up.y, up.x));
@@ -1129,6 +1156,7 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
   // running ruled along the wind
   float bil = vnoise(X * 4.3 + vec2(11.0, u_evo * 0.05)) - 0.5;
   vec4 best = vec4(0.0);
+  float orph = 0.0;
   vec2 rh = X / max(length(X), 1e-3);
   vec2 tg = vec2(rh.y, -rh.x);
   // where the upwind line crosses the ring; past the ring's edge, the
@@ -1137,7 +1165,7 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
   float N = 40.0 * sc;
   for (int k = 0; k < 2; k++) {
     float s0 = -b + (k == 0 ? -sq : sq);
-    if (s0 > -0.6 && s0 < L * 1.8) {
+    if (s0 > -0.6 && s0 < L * 1.5) {
       vec2 Q = X + s0 * up;
       float cQ = mod(atan(Q.x, Q.y) + u_windOff * 0.15, 6.2831853) * N / 6.2831853;
       float ic = floor(cQ);
@@ -1148,11 +1176,30 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
         float h2 = hash12(vec2(id, 3.1));
         float cc = rc.y;
         float ak = cc * 6.2831853 / N;
-        float riseC = pow(max(fbm4(vec2(sin(ak), cos(ak)) * (0.85 * sc) + vec2(0.0, u_evo * 0.12)) - 0.42, 0.0) * 4.6, 1.5) * gain;
+        // (fbm4, an octave pair at a time: the past below shares the fine
+        // pair, which barely moves over the lag)
+        vec2 pN = vec2(sin(ak), cos(ak)) * (0.85 * sc) + vec2(0.0, cbClock());
+        vec2 pP = pN - vec2(0.0, CB_LAG);
+        vec2 o = vec2(17.3, 9.1);
+        vec2 p2 = (pN * 2.03 + o) * 2.03 + o;
+        float fineN = 0.125 * vnoise(p2) + 0.0625 * vnoise(p2 * 2.03 + o);
+        float riseC = pow(max(0.5 * vnoise(pN) + 0.25 * vnoise(pN * 2.03 + o) + fineN - 0.42, 0.0) * 4.6, 1.5) * gain;
+        // ── The anvil's life ──
+        // and where it stood a while ago (CB_LAG). A turret that reaches
+        // the tropopause feeds a plate; one that has only just got there
+        // has spread it a little way, one that has stood there a while
+        // the whole way. Once the turret sinks the plate is cut loose —
+        // an orphan anvil — and drifts on downwind of where it stood, a
+        // thin fibrous sheet, until the last of it is gone with the
+        // reading from the past
+        float riseP = pow(max(0.5 * vnoise(pP) + 0.25 * vnoise(pP * 2.03 + o) + fineN - 0.42, 0.0) * 4.6, 1.5) * gain;
+        float fN = smoothstep(1.7, 2.3, riseC), fP = smoothstep(1.7, 2.3, riseP);
+        float cut = fP * (1.0 - fN);
+        float young = fN * (1.0 - fP);
         // (faded out toward the ends of the window read, or where the
         // window moves on a turret would drop out of it at a stroke and
         // cut a seam through its plate)
-        float feedC = sqrt(smoothstep(1.7, 2.3, riseC)) * (1.0 - smoothstep(1.4, 2.4, abs(cc - cQ))) * rc.z;
+        float feedC = sqrt(max(fN, fP)) * (1.0 - smoothstep(1.4, 2.4, abs(cc - cQ))) * rc.z;
         if (feedC > 0.01) {
           float aw = ak - u_windOff * 0.15;
           vec2 T = vec2(sin(aw), cos(aw)) * D;
@@ -1175,18 +1222,21 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
           // strands further on: never a ruled edge along the wind
           float q = length(vec2(la / wA, lr / wR)) - bil * 0.55 * smoothstep(0.0, 0.5, sp)
                   - (fib - 0.5) * 0.50 * smoothstep(0.1 * L, 0.6 * L, sp);
-          float reach = L * (0.85 + 0.30 * fib) * (0.85 + 0.30 * h2);
-          float cov = feedC * smoothstep(-0.10 - wA, -0.02, s) * (1.0 - smoothstep(0.35, 1.05, q))
-                    * (1.0 - smoothstep(reach, reach * 1.3, s));
-          float dn = thf * (1.0 - smoothstep(0.55 * reach, reach * 1.1, s));
+          float reach = L * (0.85 + 0.30 * fib) * (0.85 + 0.30 * h2) * (1.0 - 0.55 * young);
+          // (cut loose, its root has drifted off downwind of the turret)
+          float cov = feedC * smoothstep(-0.10 - wA, -0.02, s - cut * 0.35 * L) * (1.0 - smoothstep(0.35, 1.05, q + cut * (fib - 0.5) * 0.6))
+                    * (1.0 - smoothstep(reach * 0.95, reach * 1.12, s));
+          float dn = thf * (1.0 - smoothstep(0.55 * reach, reach * 1.1, s)) * (1.0 - 0.6 * cut);
           // neighbors' plates are one plate: summed, not the thickest of
           // them, or each turret's shows as a pleat of its own
           best += vec4(cov, cov * s, cov * dn, cov * lr / wR);
+          orph += cov * cut;
         }
       }
     }
   }
   float sum = max(best.x, 1e-4);
+  orphan = orph / sum;
   return vec4(min(best.x, 1.0), best.y / sum, best.z / sum, best.w / sum);
 }
 
@@ -2444,7 +2494,7 @@ void main() {
     // growth/decay rides on the integrated offset u_evo, not u_time —
     // that lets growth speed be set externally (via StateAnimator's evo
     // speed), and keeps the phase from jumping when the weather changes
-    float mass = fbm4HQ(acir + vec2(0.0, u_evo * 0.12));
+    float mass = fbm4HQ(acir + vec2(0.0, cbClock()));
     // fbm maxima are sometimes knife-ridges crossing the azimuth circle at a
     // steep angle. Raised to a height they become tall needle towers — the
     // most common failure shape. Erode narrow peaks morphologically: clamp
@@ -2458,8 +2508,8 @@ void main() {
     float massE = mass;
     if (massE > 0.42) {
       float e1 = 0.08 / cbS;
-      float massL = fbm4HQ(vec2(sin(azw - e1), cos(azw - e1)) * (0.85 * cbS) + vec2(0.0, u_evo * 0.12));
-      float massR = fbm4HQ(vec2(sin(azw + e1), cos(azw + e1)) * (0.85 * cbS) + vec2(0.0, u_evo * 0.12));
+      float massL = fbm4HQ(vec2(sin(azw - e1), cos(azw - e1)) * (0.85 * cbS) + vec2(0.0, cbClock()));
+      float massR = fbm4HQ(vec2(sin(azw + e1), cos(azw + e1)) * (0.85 * cbS) + vec2(0.0, cbClock()));
       massE = min(massE, max(massL, massR));
     }
     // a second, wider erosion ring: a knife-ridge longer than the first
@@ -2467,8 +2517,8 @@ void main() {
     // allowance lets a broad dome rise a little above its shoulders
     if (massE > 0.42) {
       float e2 = 0.13 / cbS;
-      float massL2 = fbm4HQ(vec2(sin(azw - e2), cos(azw - e2)) * (0.85 * cbS) + vec2(0.0, u_evo * 0.12));
-      float massR2 = fbm4HQ(vec2(sin(azw + e2), cos(azw + e2)) * (0.85 * cbS) + vec2(0.0, u_evo * 0.12));
+      float massL2 = fbm4HQ(vec2(sin(azw - e2), cos(azw - e2)) * (0.85 * cbS) + vec2(0.0, cbClock()));
+      float massR2 = fbm4HQ(vec2(sin(azw + e2), cos(azw + e2)) * (0.85 * cbS) + vec2(0.0, cbClock()));
       massE = min(massE, max(massL2, massR2) + 0.06);
     }
     // the tower's thrust. Whether this is peaked or not decides how boxy it looks.
@@ -2507,6 +2557,18 @@ void main() {
     // it in others
     float feed = smoothstep(1.7, 2.3, rise) * u_cbFeat.x;
     anvilTop = mix(anvilTop, ceilN, feed);
+    // ── The tower's life ──
+    // Where the thrust stood a while ago (CB_LAG) against where it stands
+    // now says what stage this tower is at. Climbing, it is young: the
+    // hard, crisp cauliflower of a towering cumulus, and the anvil comes
+    // only once it reaches the tropopause (feed). Sinking, it is dying —
+    // the updraft gone out of it — and its lobes slump and go soft as the
+    // cloud glaciates and wastes away, while the anvil it fed is cut loose
+    // (see anvilPlate). Read off the thrust before the erosion, as the
+    // past is: a peak the erosion shaved would read as dying. And faded
+    // out toward the thrust's cut, so it ends where the reading does
+    // (read below, only where the tower is drawn)
+    float decay = 0.0, growth = 0.0;
     // ── The base ──
     // A tower's base is flat: it is the condensation level, one height across
     // the whole cloud, and from tens of kilometres off it sits a few degrees
@@ -2610,10 +2672,10 @@ void main() {
       float th0 = 0.16;
       // how far downwind it reaches: about the ring's radius when mature,
       // which carries a plate from a tower upwind out over the eye
-      float L = D0 * (0.50 + 0.85 * u_cbFeat.x);
+      float L = D0 * (0.50 + 0.75 * u_cbFeat.x);
       // (nothing of it lies lower in the sky than its far end, read four
       // times as deep: see below)
-      if (tE * pS * (D + 0.25 * (1.8 * L + 0.5 + 0.45 * D)) > 0.85) {
+      if (tE * pS * (D + 0.25 * (1.5 * L + 0.3 + 0.45 * D)) > 0.85) {
         vec2 hdir = rd.xz / max(hor, 1e-4);
         // the plane a little under the top, so the band's upper edge is
         // level with the tower's flattened crown; and not quite level. Its
@@ -2640,7 +2702,8 @@ void main() {
         float rP = rX + 3.0 * (xD < wD ? xD * xD / (2.0 * wD) : xD - 0.5 * wD);
         vec2 X = hdir * rP;
         float fib = anvilFibre(X);
-        vec4 pl = anvilPlate(X, tE, D, 1.05 + 1.35 * cbAmt, L, th0, fib, cbS);
+        float orphan;
+        vec4 pl = anvilPlate(X, tE, D, 1.05 + 1.35 * cbAmt, L, th0, fib, cbS, orphan);
         if (pl.x > 0.002) {
           float sP = pl.y;
           float spread = smoothstep(0.30, 0.95, sP / L);
@@ -2648,7 +2711,7 @@ void main() {
           // still billows like it; out along the wind it is ice drawn into
           // strands. Both as how much of it lies across the ray
           float billow = fbm4(X * 5.5 + vec2(u_evo * 0.06, 0.0));
-          float dens = mix(0.85 + 0.40 * billow, (0.55 + 0.80 * fib) * (0.70 + 0.60 * billow), spread);
+          float dens = mix(0.85 + 0.40 * billow, (0.55 + 0.80 * fib) * (0.70 + 0.60 * billow), max(spread, orphan));
           // ice, and thin: where little of it lies across the ray the sky
           // shows through. The path through it is its thickness over the
           // sine of the elevation
@@ -2707,7 +2770,8 @@ void main() {
           // stand apart in a net of the plate's own underside. Packed close
           // the gaps between them were what showed — isolated, and dark: a
           // field of spots, not of bulges
-          float mam = smoothstep(0.55, 0.85, u_cbFeat.x)
+          // (a plate cut loose has no sinking air left under it to hang them)
+          float mam = smoothstep(0.55, 0.85, u_cbFeat.x) * (1.0 - orphan)
                     * smoothstep(0.12, 0.35, sP / L) * (1.0 - smoothstep(0.75, 1.0, sP / L))
                     * smoothstep(0.15, 0.40, thick) * under;
           if (mam > 0.001) {
@@ -2831,6 +2895,19 @@ void main() {
       // The envelope: positive under the turrets' skyline, zero on it — the
       // old "thrust − height", with the turrets standing in for the thrust
       float envT = headY + 0.6 * headY * headY - hgt;
+      // The tower's life (see decay, above), read only on and near the
+      // tower itself: nothing outside it has a use for it
+      if (mass > 0.40 && envT > -0.15) {
+        float gain0 = 1.05 + 1.35 * cbAmt;
+        float massP = fbm4HQ(acir + vec2(0.0, cbClock() - CB_LAG));
+        float riseN = pow(max(mass - 0.42, 0.0) * 4.6, 1.5) * gain0;
+        float riseP = pow(max(massP - 0.42, 0.0) * 4.6, 1.5) * gain0;
+        float here = smoothstep(0.40, 0.46, mass) * smoothstep(-0.15, -0.10, envT);
+        decay = smoothstep(0.05, 0.45, riseP - riseN) * here;
+        growth = smoothstep(0.05, 0.45, riseN - riseP) * here;
+      }
+      // (a dying tower's lobes slump: shallower, all of them)
+      near *= 1.0 - 0.45 * decay;
 
       // ── The anvil's column ──
       // The anvil itself is a plate of its own (anvilPlate, laid below), but
@@ -2939,7 +3016,9 @@ void main() {
       // caps went glassy, the sky showing through them. So the ramp is read
       // off a steepened field, and it is all but done at the silhouette —
       // the fade is outside it; inside, the cloud is opaque at once
-      float m = smoothstep(-0.11, 0.06, field * 4.0);
+      // (crisper yet on a young tower; a dying one's edge goes soft, the
+      // sky showing through its wasting margins)
+      float m = smoothstep(-0.11 + 0.03 * growth - 0.12 * decay, 0.06 - 0.015 * growth, field * 4.0);
       // how deep inside the cloud this is, for the shading's rim terms (the
       // lining, the margin, how far the crease shadows reach). The field
       // itself only climbs slowly inward from the silhouette, and inside it
@@ -3009,8 +3088,8 @@ void main() {
         float dA = 0.22;
         float gainR = 1.05 + 1.35 * cbAmt;
         float dAs = dA / cbS;
-        float massW = fbm4HQ(vec2(sin(azw - dAs), cos(azw - dAs)) * (0.85 * cbS) + vec2(0.0, u_evo * 0.12));
-        float massS = fbm4HQ(vec2(sin(azw + dAs), cos(azw + dAs)) * (0.85 * cbS) + vec2(0.0, u_evo * 0.12));
+        float massW = fbm4HQ(vec2(sin(azw - dAs), cos(azw - dAs)) * (0.85 * cbS) + vec2(0.0, cbClock()));
+        float massS = fbm4HQ(vec2(sin(azw + dAs), cos(azw + dAs)) * (0.85 * cbS) + vec2(0.0, cbClock()));
         // (clamped at the silhouette: past it the ratios below would read
         // empty sky as a flank)
         //
@@ -3059,7 +3138,7 @@ void main() {
         float shadow = max(
             smoothstep(0.05, 0.45, pCoarseS.w - pCoarse.w - 0.81 * climb) * 0.50,
             smoothstep(0.05, 0.40, pMidS.w - pMid.w - 0.65 * climb) * 0.70);
-        shadow *= smoothstep(0.0, 0.35, lat);
+        shadow *= smoothstep(0.0, 0.35, lat) * (1.0 - 0.5 * decay);
 
         // ── Creases ──
         // where two domes meet, or none stands at all, the surface folds in:
@@ -3073,7 +3152,7 @@ void main() {
         // a crease needs lobes on both sides of it. At the silhouette the
         // sums run low only because the cloud is ending, and darkening there
         // outlined every turret in grey
-        ao = mix(1.0, ao, smoothstep(0.05, 0.60, depthIn));
+        ao = mix(1.0, ao, smoothstep(0.05, 0.60, depthIn) * (1.0 - 0.5 * decay));
 
         // clouds are brighter where thicker, from multiple scattering — a
         // lobe's core holds its light even on the shaded side
@@ -3274,7 +3353,8 @@ void main() {
         // the sphere field gives thickness variation; a vertical falloff keeps it from spilling outside the cap
         float vfield = (vb - 0.58) * 1.4 + (spread - 0.42) * 1.7 - abs(dY) * 21.0;
         // a thin veil, so the edge dissolves broadly into the sky
-        float v = smoothstep(-0.16, 0.40, vfield) * u_cbFeat.y;
+        // (a cap over a rising head: a dying tower loses it)
+        float v = smoothstep(-0.16, 0.40, vfield) * u_cbFeat.y * (1.0 - decay);
         if (v > 0.001) {
           // lean the same slightly-blue white as the tower's daytime hi —
           // a neutral-warm white here reads as cream against the other layers
@@ -3528,7 +3608,7 @@ void main() {
     if (u_low.w > 0.001) {
       float cbAmtS = u_low.w * (1.0 - gloom * 0.6);
       float azT = azw - lean * max(sin(0.1304 / cbSS) - rd.y, 0.0);
-      float massS = fbm4(vec2(sin(azT), cos(azT)) * (0.85 * cbSS) + vec2(0.0, u_evo * 0.12));
+      float massS = fbm4(vec2(sin(azT), cos(azT)) * (0.85 * cbSS) + vec2(0.0, cbClock()));
       float riseS = pow(max(massS - 0.42, 0.0) * 4.6, 1.5) * (1.05 + 1.35 * cbAmtS);
       // only a grown tower rains, and only from its core: the flanks of the
       // footprint, where the mass is thin, stay dry
