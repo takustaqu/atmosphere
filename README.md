@@ -910,6 +910,24 @@ sky.set({ weather: {
 }});
 ```
 
+`features.distance` (0..1, default 0.65) is how far off the storm stands. At 0
+its base looms overhead, the tower fills the sky and the anvil spreads right
+above you, mammatus and all; at 1 it is a small storm on the horizon with its
+foot sunk in haze. The towers, the skirt, the base's elevation, the anvil's
+apparent size and where the rain shafts start all scale together.
+
+```ts
+sky.set({ weather: { cloudCover: 0.3, convection: 0.9, features: { distance: 0.2 } } });  // a storm close by
+```
+
+The cumulonimbus itself stands as a cluster of turrets competing in height,
+a full-bodied mass with a broad rounded crown. Each lobe is shaded as a sunlit
+dome — light on the crowns, shadow in the creases between — on a flat dark
+base, with a skirt of towering cumulus at its foot. Every tower lives a life
+on its own clock: it climbs as congestus, spreads its anvil on reaching the
+tropopause, then sinks and leaves the anvil behind as a thin fibrous sheet
+that fades — so a sky holds towers at different stages at once.
+
 These two are built fundamentally differently. Anvil is **ice crystal**, so it
 has no cauliflower texture — it becomes silky horizontal streaks that spread
 far downwind. Veil is **water droplet**, so it has no fibers — it drapes as a

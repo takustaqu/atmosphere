@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Changed
+
+- **The cumulonimbus is rebuilt**, in six passes measured against
+  photographs. It is still a 2D field over azimuth and elevation, but:
+  - **Its flanks no longer streak.** The vertical slats were the noise
+    texture's bilinear filter — the GPU keeps about 8 bits of position
+    between texels, so a read along the azimuth rose in steps, and the
+    steep power that turns thrust into height raised each step into a
+    column. The azimuth-only reads now blend the lattice in float.
+  - **Lobes are lit domes.** Each cauliflower lobe carries a normal and a
+    height, so crowns catch the sun, the creases between lobes fall into
+    shadow, lobes shade one another, and a high sun lights the tops where a
+    low sun lights the sunward flanks. The tower as a whole has a lit side
+    and a shaded side. No more grey blotches without form.
+  - **A cluster of turrets on a flat base.** A tower is several turrets
+    competing in height, each with a domed head, on a flat dark base with a
+    skirt of towering cumulus at its foot; the body is solid to the base
+    (aerial perspective now blends color and contrast instead of making the
+    lower body see-through); nothing floats detached above the mass.
+  - **Broad, not pointed.** The profile is full-bodied — steep, bulging
+    flanks and a wide rounded crown — in place of a cone narrowing to a
+    spire, and a grown tower tops out near 33° rather than 45–55°.
+  - **The anvil is a thin plate**, spreading downwind from each turret that
+    reaches the tropopause, fibrous and translucent at its reaches, lit as
+    high cloud so it keeps the sun after the tower below has gone grey, and
+    glowing rather than darkening against the sun. Mammatus hang from its
+    underside on mature storms: round pouches, bright below, orange under a
+    low sun.
+  - **`features.distance`** (0..1, default 0.65): how far off the storm
+    stands. 0 brings its base overhead with the anvil and mammatus right
+    above; 1 puts a small hazy storm on the horizon. Towers, skirt, base,
+    anvil and the rain shafts scale together.
+  - **Every tower lives a life** on its own clock — congestus climbing,
+    then the anvil spreading at the tropopause, then the tower sinking and
+    the anvil lingering as a thin orphan sheet before it fades — so a sky
+    holds towers at different stages at once. `features.anvil` and `velum`
+    remain ceilings over it. A tower's life is a few minutes at the default
+    evolution speed; at the animator's starting clock the sky is laid out as
+    before, other clocks differ.
+  - Controller example: a "Distance" slider in the Cumulonimbus companion
+    forms drawer.
+- Cost, 1080p on an M2 Max, against 0.6.0 plus the sky additions above: a
+  summer sky 9.1 → 11.8 ms, a thunderstorm 6.6 → 9.2 ms, a sunset against a
+  thunderhead 8.0 → 9.5 ms; a fair sky with no cumulonimbus 4.2 → 4.9 ms and
+  a clear noon 1.4 → 1.5 ms by the code's presence in the program alone.
+
 ### Added
 
 - **Lunar eclipses, on their dates.** The lunar ephemeris is now the
