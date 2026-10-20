@@ -2892,6 +2892,17 @@ void main() {
       // the height, so it lifts no scraps off it
       float headB = turretRow(azT + (bMid - 0.60) * 0.06 / (cosEl * cbS), 40.0, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS);
       headY = max(headY, mix(headY, headB, near));
+      // Nor does a turret run on far past the tropopause. Under an anvil
+      // the ceiling below flattens it into the plate; a tower with no
+      // anvil keeps its head round (see the tropopause, below), and there
+      // the leading turret, its neighbors slumped, stood up past the
+      // ceiling alone as a finger. So the skyline is eased into a dome
+      // over the tropopause instead: a little over it at the tower's core,
+      // where its thrust is strongest, sinking to it toward the flanks —
+      // rounded over, never cut flat
+      float capV = anvilTop + 0.01 + 0.05 * smoothstep(anvilTop, anvilTop + 0.25, topV);
+      float hv = clamp(0.5 + 0.5 * (capV - headY) / 0.10, 0.0, 1.0);
+      headY = mix(capV, headY, hv) - 0.05 * hv * (1.0 - hv);
       // The envelope: positive under the turrets' skyline, zero on it — the
       // old "thrust − height", with the turrets standing in for the thrust
       float envT = headY + 0.6 * headY * headY - hgt;
