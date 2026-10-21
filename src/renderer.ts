@@ -1461,6 +1461,31 @@ float vnoise3(vec3 p) {
   vec4 q = mix(NOISEQ_FETCH(uv), NOISEQ_FETCH(uv + vec2(113.0, 71.0) * ${(1 / NOISE_SIZE).toFixed(10)}), f.z);
   return mix(mix(q.x, q.y, f.x), mix(q.z, q.w, f.x), f.y);
 }
+// ...and the same field through the texture filter: two fetches of the
+// filtered lattice (as vnoise reads it) a slice apart. The filter blends in
+// steps of a 256th of a cell, so where the surface's own place or light is
+// read off it the steps show (see above); but a march only asking how far
+// off the surface still is, or a tap read through a smoothstep many times
+// wider than a step, cannot tell the two apart — at a fraction of the cost
+float vnoise3f(vec3 p) {
+  vec3 i = floor(p), f = p - i;
+  f = f * f * (3.0 - 2.0 * f);
+  vec2 uv = (i.xy + f.xy + vec2(113.0, 71.0) * i.z + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)};
+  return mix(NOISE_FETCH(uv).r, NOISE_FETCH(uv + vec2(113.0, 71.0) * ${(1 / NOISE_SIZE).toFixed(10)}).r, f.z);
+}
+// ...and which way it climbs (yzw, per unit of p), from the same two
+// fetches and the slopes of the blend between them
+vec4 vnoise3d(vec3 p) {
+  vec3 i = floor(p), f = p - i;
+  vec3 u = f * f * (3.0 - 2.0 * f), du = 6.0 * f * (1.0 - f);
+  vec2 uv = (i.xy + vec2(113.0, 71.0) * i.z + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)};
+  vec4 a = NOISEQ_FETCH(uv), b = NOISEQ_FETCH(uv + vec2(113.0, 71.0) * ${(1 / NOISE_SIZE).toFixed(10)});
+  vec4 q = mix(a, b, u.z), dq = b - a;
+  float x0 = mix(q.x, q.y, u.x), x1 = mix(q.z, q.w, u.x);
+  return vec4(mix(x0, x1, u.y),
+              vec3(mix(q.y - q.x, q.w - q.z, u.y), x1 - x0,
+                   mix(mix(dq.x, dq.y, u.x), mix(dq.z, dq.w, u.x), u.y)) * du);
+}
 
 // the coarsest lobes' size, in storm units: two or three to a turret's head
 const float CBV_L0 = 0.090;
@@ -1535,6 +1560,11 @@ float cbLobe(float f, vec3 q, float a, float lift) {
   float b = abs(2.0 * vnoise3(q) - 1.0) - 0.30;
   return f + a * (b < 0.0 ? b : b * lift * smoothstep(-a, 0.0, f));
 }
+// (through the filter: for the march and the taps, see vnoise3f)
+float cbLobeF(float f, vec3 q, float a, float lift) {
+  float b = abs(2.0 * vnoise3f(q) - 1.0) - 0.30;
+  return f + a * (b < 0.0 ? b : b * lift * smoothstep(-a, 0.0, f));
+}
 //   f     the surface so far (storm units, > 0 inside)
 //   N     where in the lobes' noise (storm units)
 //   oct   how many scales to read (taps a long way off need few)
@@ -1548,19 +1578,19 @@ float cbLobe(float f, vec3 q, float a, float lift) {
 float cbLobes3(float f, vec3 N, float lift, float oct, float win) {
   if (abs(f) > win + g_cbRest.x + 0.70 * g_cbA.x) return f;
   vec3 p = N * (1.0 / CBV_L0);
-  f = cbLobe(f, p + g_cbE0, g_cbA.x, lift);
+  f = cbLobeF(f, p + g_cbE0, g_cbA.x, lift);
   if (oct > 1.5 && g_cbA.y > 0.0 && abs(f) < win + g_cbRest.x) {
     p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-    f = cbLobe(f, p + g_cbE1, g_cbA.y, lift);
+    f = cbLobeF(f, p + g_cbE1, g_cbA.y, lift);
     if (oct > 2.5 && g_cbA.z > 0.0 && abs(f) < win + g_cbRest.y) {
       p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-      f = cbLobe(f, p + g_cbE2, g_cbA.z, lift);
+      f = cbLobeF(f, p + g_cbE2, g_cbA.z, lift);
       if (oct > 3.5 && g_cbA.w > 0.0 && abs(f) < win + g_cbRest.z) {
         p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-        f = cbLobe(f, p + g_cbE3, g_cbA.w, lift);
+        f = cbLobeF(f, p + g_cbE3, g_cbA.w, lift);
         if (oct > 4.5 && g_cbA4 > 0.0 && abs(f) < win + g_cbRest.w) {
           p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-          f = cbLobe(f, p + g_cbE4, g_cbA4, lift);
+          f = cbLobeF(f, p + g_cbE4, g_cbA4, lift);
         }
       }
     }
@@ -1772,31 +1802,106 @@ float cbRayBare(float z) {
 // read, for cbRayFine to go on from), and the finer ones over those
 float cbRayCoarse(float f, float z, out vec3 q) {
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
-  f = cbLobe(f, p + g_cbE0, g_cbA.x, g_cbY.y);
+  f = cbLobeF(f, p + g_cbE0, g_cbA.x, g_cbY.y);
   p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-  if (g_cbA.y > 0.0) f = cbLobe(f, p + g_cbE1, g_cbA.y, g_cbY.y);
+  if (g_cbA.y > 0.0) f = cbLobeF(f, p + g_cbE1, g_cbA.y, g_cbY.y);
   q = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
   return f;
 }
 float cbRayFine(float f, vec3 p) {
   if (g_cbA.z > 0.0) {
-    f = cbLobe(f, p + g_cbE2, g_cbA.z, g_cbY.y);
+    f = cbLobeF(f, p + g_cbE2, g_cbA.z, g_cbY.y);
     if (g_cbA.w > 0.0) {
       p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-      f = cbLobe(f, p + g_cbE3, g_cbA.w, g_cbY.y);
+      f = cbLobeF(f, p + g_cbE3, g_cbA.w, g_cbY.y);
       if (g_cbA4 > 0.0) {
         p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-        f = cbLobe(f, p + g_cbE4, g_cbA4, g_cbY.y);
+        f = cbLobeF(f, p + g_cbE4, g_cbA4, g_cbY.y);
       }
     }
   }
   return f;
 }
-// the whole of it at depth z, every scale on
+// the whole of it at depth z, every scale on — and read exactly, not
+// through the filter: this is where the surface is put, and where the
+// march's nearest pass is taken from for the fade at the outline
 float cbRay(float z) {
-  vec3 q;
-  float f = cbRayCoarse(cbRayBare(z), z, q);
-  return min(cbRayFine(f, q), g_cbY.z);
+  float f = cbRayBare(z);
+  vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
+  f = cbLobe(f, p + g_cbE0, g_cbA.x, g_cbY.y);
+  if (g_cbA.y > 0.0) {
+    p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+    f = cbLobe(f, p + g_cbE1, g_cbA.y, g_cbY.y);
+    if (g_cbA.z > 0.0) {
+      p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+      f = cbLobe(f, p + g_cbE2, g_cbA.z, g_cbY.y);
+      if (g_cbA.w > 0.0) {
+        p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+        f = cbLobe(f, p + g_cbE3, g_cbA.w, g_cbY.y);
+        if (g_cbA4 > 0.0) {
+          p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+          f = cbLobe(f, p + g_cbE4, g_cbA4, g_cbY.y);
+        }
+      }
+    }
+  }
+  return min(f, g_cbY.z);
+}
+
+// The whole body where the ray met it, at depth z, and which way it climbs
+// there (yzw), from the bare body's own (B, cbBodyG): capped, every scale of
+// lobes laid on and the base, as cbRay, with the slopes carried through.
+// The light's nearest taps — a hundredth or two of a storm unit off — read
+// the body from the plane this gives instead of reading it again each
+// (one scale of lobes: its swell, and the swell's slope)
+vec4 cbLobeG(vec4 F, vec4 n, vec3 g, float a) {
+  float s = 2.0 * n.x - 1.0;
+  float b = abs(s) - 0.30;
+  vec3 gb = sign(s) * 2.0 * g;
+  if (b < 0.0) return F + a * vec4(b, gb);
+  float t = clamp(F.x / a + 1.0, 0.0, 1.0);
+  float S = t * t * (3.0 - 2.0 * t), dS = 6.0 * t * (1.0 - t) / a;
+  float l = a * g_cbY.y;
+  return vec4(F.x + l * b * S, F.yzw + l * (S * gb + b * dS * F.yzw));
+}
+vec4 cbFieldG(float z, vec4 B) {
+  // the cap (a smooth minimum with the ceiling, which falls as y climbs)
+  vec2 c = smaxW(-B.x, -g_cbY.x, 0.04);
+  vec4 F = mix(B, vec4(-c.x, B.yzw * c.y - vec3(0.0, 1.0 - c.y, 0.0)), g_cbP.z);
+  // each scale's noise is read at p, the one before taken twice as fine
+  // with its axes turned (yzx), so its slope comes back to the noise's own
+  // axes turned the other way (zxy) for every scale it has passed through;
+  // and to the body's (across, up, through) as the noise is laid on it
+  vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
+  vec4 n = vnoise3d(p + g_cbE0);
+  vec3 gN = n.yzw * (1.0 / CBV_L0);
+  F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.x);
+  if (g_cbA.y > 0.0) {
+    p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+    n = vnoise3d(p + g_cbE1);
+    gN = n.wyz * (2.03 / CBV_L0);
+    F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.y);
+    if (g_cbA.z > 0.0) {
+      p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+      n = vnoise3d(p + g_cbE2);
+      gN = n.zwy * (4.1209 / CBV_L0);
+      F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.z);
+      if (g_cbA.w > 0.0) {
+        p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+        n = vnoise3d(p + g_cbE3);
+        gN = n.yzw * (8.3654 / CBV_L0);
+        F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.w);
+        if (g_cbA4 > 0.0) {
+          p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+          n = vnoise3d(p + g_cbE4);
+          gN = n.wyz * (16.982 / CBV_L0);
+          F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA4);
+        }
+      }
+    }
+  }
+  // and the base: flat, climbing straight up
+  return F.x < g_cbY.z ? F : vec4(g_cbY.z, 0.0, 1.0, 0.0);
 }
 #endif
 
@@ -3820,7 +3925,14 @@ void main() {
         float re = R.y + reach;
         if (re * re > d2) { float h = sqrt(re * re - d2); zLo = min(zLo, R.z - h); zHi = max(zHi, R.z + h); }
       }
-      for (int j = 0; j < 5; j++) {
+      // (the skirt's turrets only where they can reach: nothing of a turret
+      // stands higher than its own top, skMax at most, and over it the field
+      // falls away at least as fast as the height climbs — and the light's
+      // taps all climb from here toward a sun over the horizon. Higher up the
+      // tower they stand nowhere, and are not looked up)
+      g_cbS0 = g_cbS1 = g_cbS2 = g_cbS3 = g_cbS4 = vec4(0.0, -10.0, 0.0, 0.0);
+      g_cbK0 = g_cbK1 = g_cbK2 = g_cbK3 = g_cbK4 = vec3(1.0, -1.0, 0.0);
+      if (ty < skMax + reach) for (int j = 0; j < 5; j++) {
         vec4 t = cbTurret(floor(cS) + float(j - 2), cS, nS, skGain, 1.0, cellS, turT * 1.3, 17.0, ceilN);
         float yk = baseY + t.y * stand;
         vec4 T = vec4(t.x, yk - t.z / CBV_HEAD, -CBV_ZS + (t.w - 0.5) * CBV_ZT, t.z);
@@ -3892,7 +4004,7 @@ void main() {
           // (finely where the ray grazes the surface, so the nearest it comes
           // is read to within a little of a pixel: read coarsely, the fade at
           // the outline stepped as the tower grew, and its pixels popped)
-          z += max(-f * 0.6, f > -4.0 * wE ? 0.0015 : 0.004 + 0.0004 * float(i));
+          z += max(-f * 0.6, f > -4.0 * wE ? 0.003 : 0.006 + 0.0006 * float(i));
         }
         // A ray that runs out of steps still short of the far side, well
         // inside the outline, is one threading a fold between two turrets
@@ -3907,13 +4019,18 @@ void main() {
           // surface sat at a different depth from one pixel to the next and
           // the light on it came out in contour lines
           float za = zp, fa = fpv, zb = z, fb = fmax;
-          for (int j = 0; j < 3; j++) {
-            float zm = 0.5 * (za + zb);
+          for (int j = 0; j < 2; j++) {
+            float zm = mix(za, zb, clamp(-fa / max(fb - fa, 1e-5), 0.1, 0.9));
             float fm = cbRay(zm);
             if (fm > 0.0) { zb = zm; fb = fm; } else { za = zm; fa = fm; }
           }
           zL = mix(za, zb, clamp(-fa / max(fb - fa, 1e-5), 0.0, 1.0));
           fmax = max(fmax, 0.0);
+        } else if (fmax > -wE) {
+          // (a ray that grazed the outline: how near it came, read exactly.
+          // Through the filter the nearest pass moved in its steps as the
+          // lobes drifted, and the fade at the outline with it)
+          fmax = cbRay(zmax);
         }
         m = smoothstep(-wE, 0.0, fmax);
       }
@@ -3951,29 +4068,30 @@ void main() {
         // out, where one on a bulge has open air
         // ...and how much cloud lies behind the surface along the eye's own
         // ray: little at a grazing margin, where the light comes through
-        // (All eight read in one loop, through one call: written out as eight
-        // calls the body was too big to be taken inline at each, and every
-        // read of it went out to a function that fetched the ten turrets
-        // from memory)
-        float tauS = 0.0, tauA = 0.0, tauV = 0.0;
+        //
+        // The nearest of them — a floret's and a lobe's toward the sun, a
+        // floret's up and toward the eye, and a floret's behind — lie within
+        // a hundredth or two of the surface, where it is as good as the plane
+        // it touches: they read the body off that plane (F, the whole body
+        // and its slope where the ray met it), and only the ones a lobe or a
+        // turret off read it again. A turret's width or more toward the sun
+        // the other turrets are what stands in the way, and there the bare
+        // body is read whole; a lobe off the bare body is still the plane it
+        // touches here (B), with the coarse lobes laid on it
         vec4 B = cbBodyG(P);
-        for (int k = 0; k < 8; k++) {
-          vec3 d; float oct, w, wt;
-          if (k == 0) { d = Ls * 0.005; oct = 5.0; w = 0.002 + wE; wt = 0.005; }
-          else if (k == 1) { d = Ls * 0.015; oct = 4.0; w = 0.005 + wE; wt = 0.010; }
-          else if (k == 2) { d = Ls * 0.045; oct = 3.0; w = 0.012 + wE; wt = 0.030; }
-          else if (k == 3) { d = Ls * 0.120; oct = 2.0; w = 0.050; wt = 0.040; }
-          else if (k == 4) { d = Ls * 0.300; oct = 1.0; w = 0.120; wt = 0.080; }
-          else if (k == 5) { d = vec3(0.0, 0.045, 0.0); oct = 3.0; w = 0.012 + wE; wt = 0.07; }
-          else if (k == 6) { d = vec3(0.0, 0.006, -0.02); oct = 4.0; w = 0.006 + wE; wt = 0.04; }
-          else { d = vec3(0.0, 0.0, 0.010); oct = 4.0; w = 0.003 + wE; wt = 0.020; }
-          float fb = k == 3 || k == 4 ? cbBare(P + d) : B.x + dot(B.yzw, d);
-          float v = smoothstep(-w, w, cbFinish(fb, P + d, oct, w)) * wt;
-          if (k < 5) tauS += v; else if (k < 7) tauA += v; else tauV += v;
-        }
-        float tau = CBV_SIGL * tauS;
-        float ambVis = exp(-CBV_SIGA * tauA);
-        float alphaV = 1.0 - exp(-CBV_SIGV * (0.003 + tauV));
+        vec4 F = cbFieldG(zL, B);
+        float w2 = 0.012 + wE;
+        float t0 = smoothstep(-0.002 - wE, 0.002 + wE, F.x + 0.005 * dot(F.yzw, Ls));
+        float t1 = smoothstep(-0.005 - wE, 0.005 + wE, F.x + 0.015 * dot(F.yzw, Ls));
+        float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 3.0, w2));
+        float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 2.0, 0.050));
+        float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 1.0, 0.120));
+        float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
+        float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 3.0, w2));
+        float u3 = smoothstep(-0.006 - wE, 0.006 + wE, F.x + 0.006 * F.z - 0.02 * F.w);
+        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3));
+        float v1 = smoothstep(-0.003 - wE, 0.003 + wE, F.x + 0.010 * F.w);
+        float alphaV = 1.0 - exp(-CBV_SIGV * (0.003 + 0.020 * v1));
 
         // ── Its light ──
         // The palette is the 2D tower's (cloudLight), at the same authored
