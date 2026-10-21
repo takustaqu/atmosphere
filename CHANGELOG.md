@@ -38,9 +38,9 @@
     then the anvil spreading at the tropopause, then the tower sinking and
     the anvil lingering as a thin orphan sheet before it fades — so a sky
     holds towers at different stages at once. `features.anvil` and `velum`
-    remain ceilings over it. A tower's life is a few minutes at the default
-    evolution speed; at the animator's starting clock the sky is laid out as
-    before, other clocks differ.
+    remain ceilings over it. A tower's life is a couple of minutes at the
+    default evolution speed, and the storms drift at the rate they always
+    did, so a sky is laid out as before at every clock.
   - Controller example: a "Distance" slider in the Cumulonimbus companion
     forms drawer.
 - Cost, 1080p on an M2 Max, against 0.6.0 plus the sky additions above: a

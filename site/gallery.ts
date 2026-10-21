@@ -20,6 +20,8 @@ interface Tile {
   camera?: Partial<Camera>;
   /** seconds into the sky's own clock, for something that has to have happened by then */
   t?: number;
+  /** take another tile's seeds: where the towers stand is the noise's business */
+  seed?: number;
 }
 
 // azimuths for camera.yaw: north 0, east π/2
@@ -116,9 +118,12 @@ const TILES: readonly Tile[] = [
     label: { ja: 'オーロラ', en: 'Aurora' },
   },
   {
-    // a thunderhead against the setting sun: a dark mass with a gold rim
+    // a thunderhead against the setting sun: a dark mass with a gold rim.
+    // The sun stands at azimuth 4.61 then; with the 20th tile's seeds a
+    // tower happens to stand just to its right
     conditions: { time: 17.6, weather: { cloudCover: 0.3, convection: 0.8, visibility: 30 } },
-    camera: { yaw: WEST + 0.1, pitch: 0.25, fov: 1.2 },
+    camera: { yaw: 4.61, pitch: 0.25, fov: 1.2 },
+    seed: 20,
     label: { ja: '逆光の入道雲', en: 'Backlit thunderhead' },
   },
   {
@@ -207,8 +212,9 @@ export function buildGallery(lang: Locale): void {
         TILES.forEach((tile, i) => {
           // vary the evolution offset per tile so the skies aren't twenty-two
           // shots of one cloud field — the same weather, different afternoons
+          const k = tile.seed ?? i;
           renderer!.render(tile.t ?? 0, resolveConditions(tile.conditions),
-            { ...DEFAULT_CAMERA, ...tile.camera }, 41.7 + i * 5.7, 7.3 + i * 3.1);
+            { ...DEFAULT_CAMERA, ...tile.camera }, 41.7 + k * 5.7, 7.3 + k * 3.1);
           // copy synchronously: the drawing buffer is cleared once we yield.
           // Match the renderer's space or the wide-gamut pixels clip here
           outputs[i].getContext('2d', { colorSpace: renderer!.colorSpace })
