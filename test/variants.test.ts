@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, FEATURE, featureKey } from '../src/renderer.js';
+import { ALL_FEATURES, FEATURE, cbLobePixels, featureKey } from '../src/renderer.js';
 import { resolveConditions } from '../src/state.js';
 import { StateAnimator } from '../src/animator.js';
 
@@ -67,6 +67,23 @@ describe('featureKey', () => {
     expect(featureKey(summer, 0, 'volumetric') & ~FEATURE.CBVOL).toBe(featureKey(summer));
     // a sky without a tower shares the 2D variant
     expect(featureKey(fair, 0, 'volumetric')).toBe(featureKey(fair));
+  });
+
+  it('leaves the near tower to the frame: no state alone asks for it', () => {
+    for (const mode of ['2d', 'volumetric'] as const) {
+      const near = resolveConditions({ time: 13, weather: { cloudCover: 0.25, convection: 0.9, features: { distance: 0.1 } } });
+      expect(featureKey(near, 0, mode) & FEATURE.CBNEAR).toBe(0);
+    }
+  });
+
+  it('measures the tower\'s coarse lobes in pixels as the shader does', () => {
+    // a storm at the middle distance, 1080 pixels tall through 1.25 rad: the
+    // sky's own scale, 0.09 storm units to a lobe
+    expect(cbLobePixels(1080, 1.25, 0.65)).toBeCloseTo(0.09 * 1080 / 1.25, 6);
+    // nearer stands larger, a narrower view larger still, a taller frame in proportion
+    expect(cbLobePixels(1080, 1.25, 0.1)).toBeGreaterThan(cbLobePixels(1080, 1.25, 0.65) * 1.8);
+    expect(cbLobePixels(1080, 0.55, 0.65)).toBeCloseTo(cbLobePixels(1080, 1.25, 0.65) * 1.25 / 0.55, 6);
+    expect(cbLobePixels(2160, 1.25, 0.65)).toBeCloseTo(2 * cbLobePixels(1080, 1.25, 0.65), 6);
   });
 
   it('keeps the cumulonimbus compiled in for as long as any of it can show, easing away or in', () => {
