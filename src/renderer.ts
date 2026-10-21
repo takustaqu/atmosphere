@@ -3925,7 +3925,11 @@ void main() {
       float A = cbLobeRest(0.0);
       float nT = ${TOWER_TURRETS.toFixed(1)} * cbS, nS = ${SKIRT_TURRETS.toFixed(1)} * cbS;
       float aT = mod(azT, 6.2831853) / 6.2831853;
-      float cT = aT * nT, cS = aT * nS;
+      // (cTw: in the split variant OVER composites into the cloud stack's
+      // own cT, and a local of that name here took the tower's cover off what
+      // the stack lets through — the sky came through the tower whole, and
+      // the tower was laid over it as light, near white)
+      float cTw = aT * nT, cS = aT * nS;
       float cellT = 6.2831853 / ${TOWER_TURRETS.toFixed(1)} * cosEl;
       float cellS = 6.2831853 / ${SKIRT_TURRETS.toFixed(1)} * cosEl;
       float hb = min(topV * 0.5, mix(baseY, topV * 0.5, stand));
@@ -3954,7 +3958,7 @@ void main() {
       float wU = exp(min(bodyD, 0.30) * 66.7), wSum = wU;
       vec2 uS = vec2(0.0, inversesqrt(1.0 + 80.0 * max(bodyD, 0.0))) * wU;
       for (int j = 0; j < 4; j++) {
-        vec4 t = cbTurret(floor(cT - 0.5) + float(j - 1), cT, nT, 1.0, cellT);
+        vec4 t = cbTurret(floor(cTw - 0.5) + float(j - 1), cTw, nT, 1.0, cellT);
         float yk = t.y;
         float hv = clamp(0.5 + 0.5 * (capV - yk) / 0.10, 0.0, 1.0);
         yk = mix(capV, yk, hv) - 0.05 * hv * (1.0 - hv);
