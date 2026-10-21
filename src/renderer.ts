@@ -1774,6 +1774,11 @@ void main() {
   // Held display-encoded as disp rather than decoded straight away: every
   // overlay() below would only re-encode it. See the note on disp at the clouds.
   vec3 disp = skyBase(rd, el, h, sunDir, sunEl, dayF, sunsetF, wide);
+#ifdef FEAT_CB
+  // kept as it is here, before the polarizer: the air in front of a tower
+  // is this sky's own color (see the cumulonimbus's aerial perspective)
+  vec3 airSky = disp;
+#endif
 
   // ── Circular polarizer ──
   // Applied here on purpose: this is the scattered skylight, and it is the only
@@ -2571,8 +2576,12 @@ void main() {
     if (massE > 0.42) {
       float e1 = 0.08 / cbS;
       float massL = fbm4HQ(vec2(sin(azw - e1), cos(azw - e1)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-      float massR = fbm4HQ(vec2(sin(azw + e1), cos(azw + e1)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-      massE = min(massE, max(massL, massR));
+      // (a neighbor standing as high on one side leaves the peak standing
+      // whatever the other does, so that one is only read when it can tell)
+      if (massL < massE) {
+        float massR = fbm4HQ(vec2(sin(azw + e1), cos(azw + e1)) * (0.85 * cbS) + vec2(0.0, cbClock()));
+        massE = min(massE, max(massL, massR));
+      }
     }
     // a second, wider erosion ring: a knife-ridge longer than the first
     // ring slips through it and still stands as a needle. The small
@@ -2580,8 +2589,10 @@ void main() {
     if (massE > 0.42) {
       float e2 = 0.13 / cbS;
       float massL2 = fbm4HQ(vec2(sin(azw - e2), cos(azw - e2)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-      float massR2 = fbm4HQ(vec2(sin(azw + e2), cos(azw + e2)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-      massE = min(massE, max(massL2, massR2) + 0.06);
+      if (massL2 + 0.06 < massE) {
+        float massR2 = fbm4HQ(vec2(sin(azw + e2), cos(azw + e2)) * (0.85 * cbS) + vec2(0.0, cbClock()));
+        massE = min(massE, max(massL2, massR2) + 0.06);
+      }
     }
     // the tower's thrust. Whether this is peaked or not decides how boxy it looks.
     // left as a gentle hill, a wide range of azimuths reach the same height
@@ -3524,8 +3535,7 @@ void main() {
           // 1/sin(elevation), and with the distance — a tower that stands
           // small is a far one; haze thickens it only a little, since the haze
           // wash at the end already paints the air's own color over everything
-          float wideA = 0.0;
-          vec3 airCol = skyWeather(skyBase(rd, el, h, sunDir, sunEl, dayF, sunsetF, wideA), dayF, gloom);
+          vec3 airCol = skyWeather(airSky, dayF, gloom);
           airCol = mix(airCol, mix(ambient, cloudSun, mix(0.55, 0.30, side)) * gain, backT);
           float far = mix(1.6, 1.0, smoothstep(0.20, 0.60, max(topV, skTop - baseY)));
           // (and a storm further off is behind more air — but mostly at its
