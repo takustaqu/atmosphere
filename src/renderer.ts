@@ -22,12 +22,6 @@ import { NOISE_SIZE, noiseLattice, noiseQuads } from './noise.js';
 import { SKIRT_TURRETS, TOWER_TURRETS, TURRET_ROWS, TURRET_SLOTS, stormAmount, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
-// The volumetric thunderhead's coarsest lobes, in storm units (CBV_L0 in the
-// shader), and how many pixels across they stand when the tower is near: from
-// there they give way to the domes over the florets (FEATURE.CBNEAR)
-const CBV_LOBE = 0.090;
-const CB_NEAR_PX = 115;
-
 const VERT = `
 attribute vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
@@ -1132,35 +1126,19 @@ vec3 budPack(vec2 p, float kc, vec2 up) {
 // read out of the lattice's squares of four rather than hashed — three of
 // one texel's four corners, the texel taken two cells apart so no two
 // buds share one. A third of the arithmetic of hash32, nine times a pixel
-// for each octave; the 8-bit places are fixed for a bud, so nothing steps.
-// irr: how far each bud's rim swells in and out round its middle, as the
-// lobes' do (lobeCell: the second and third harmonics of the bearing, turned
-// by the texel's fourth corner) — for the domes laid over the florets on a
-// near tower, a hundred pixels across, where round buds are discs and a pack
-// of them bubble wrap. Nothing on the florets themselves, and compiled in
-// only with the domes)
-vec3 budPackQ(vec2 p, float kc, vec2 up, float irr) {
+// for each octave; the 8-bit places are fixed for a bud, so nothing steps)
+vec3 budPackQ(vec2 p, float kc, vec2 up) {
   vec2 ip = floor(p), fp = fract(p);
   float mx = 0.0, ws = 1.0;
   vec4 acc = vec4(0.0, 0.0, 1.0, 0.0);
   for (int j = -1; j <= 1; j++) {
     for (int i = -1; i <= 1; i++) {
       vec2 g = vec2(float(i), float(j));
-      vec4 h = NOISEQ_FETCH(((ip + g) * 2.0 + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)});
+      vec3 h = NOISEQ_FETCH(((ip + g) * 2.0 + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)}).xyz;
       vec2 d = g + h.xy - fp;
-      float dd = dot(d, d);
       float R = 0.70 + 0.30 * h.z;
-#ifdef FEAT_CBNEAR
-      if (irr > 0.0) {
-        vec2 u = d * inversesqrt(dd + 1e-8);
-        vec2 a = vec2(h.w, fract(h.w * 7.31)) * 2.0 - 1.0;
-        vec2 e2 = vec2(u.x * u.x - u.y * u.y, 2.0 * u.x * u.y);
-        vec2 e3 = vec2(e2.x * u.x - e2.y * u.y, e2.x * u.y + e2.y * u.x);
-        R *= 1.0 + irr * (0.16 * dot(e2, a) + 0.14 * dot(e3, a.yx)) * dd / (dd + 0.12 * R * R);
-      }
-#endif
       float iR = 1.0 / R;
-      float q = 1.0 - dd * iR * iR;
+      float q = 1.0 - dot(d, d) * iR * iR;
       if (q > 0.0) {
         packAdd(acc, ws, mx, R * q * (1.0 + PACK_TILT * clamp(-dot(d, up) * iR, -1.0, 1.0)),
                 vec4(-d * (iR * PACK_FLAT), (1.0 - q) * (1.0 - q), 0.0), kc);
@@ -1529,7 +1507,7 @@ vec4 vnoise3d(vec3 p) {
 }
 
 // the coarsest lobes' size, in storm units: two or three to a turret's head
-const float CBV_L0 = ${CBV_LOBE.toFixed(3)};
+const float CBV_L0 = 0.090;
 // how far each scale of lobes swells the surface, as a share of its size
 const float CBV_AMP = 0.80;
 // how far apart the turrets may stand in depth, and the skirt's in front
@@ -1571,18 +1549,7 @@ const float CBV_SIGV = 220.0;
 //
 // Each scale is laid on only where the screen can hold it, from two pixels
 // to five (fp: storm units to a pixel), so a scale never shimmers at the
-// size of a pixel. And on a near tower (FEATURE.CBNEAR: CBV_NEAR pixels to a
-// lobe and more) a scale gives way over the next third again to a third
-// of its swell. Billowed noise a hundred pixels and more across is broad,
-// level domes ringed by a crease: on a near tower the coarse scale drew the
-// turrets' heads as smooth pancakes a few hundred pixels wide, stacked like
-// slabs, where the 2D tower is cauliflower. There the light takes over the
-// scale (the domes over the florets, in main), and the body keeps what the
-// swell that gave way added on average, a fifth of its height (g_cbI):
-// taken away with the rest, the gaps the lobes had closed between turrets
-// opened on the sky, and given way altogether the turrets' smooth bare
-// flanks stood as sheets.
-// And the lobes evolve: each scale drifts slowly up the
+// size of a pixel. And the lobes evolve: each scale drifts slowly up the
 // tower, as a growing tower's lobes rise and roll over, and boils in place
 // — the noise slid through the depth, so lobes swell out of the face and
 // sink back into it — the finer the faster.
@@ -1609,20 +1576,9 @@ vec3 g_cbE0, g_cbE1;
 // from it. (Only across and up the sky: through the depth, along the eye's
 // ray, a lump in front of a face only ever shows as a bump on it)
 vec3 g_cbU;
-#ifdef FEAT_CBNEAR
-const float CBV_NEAR = ${CB_NEAR_PX.toFixed(1)};
-float g_cbI;
-#else
-const float g_cbI = 0.0;
-#endif
 void cbLobeSetup(float fp, float lobe) {
   vec2 lam = CBV_L0 * vec2(1.0, 0.5);
   g_cbA = CBV_AMP * lam * smoothstep(2.0, 5.0, lam / fp) * lobe;
-#ifdef FEAT_CBNEAR
-  vec2 give = 0.65 * smoothstep(CBV_NEAR, CBV_NEAR * 1.3, lam / fp);
-  g_cbI = 0.2 * g_cbA.x * give.x;
-  g_cbA *= 1.0 - give;
-#endif
   // (rising a hundredth of a storm unit for every unit of evolution,
   // whatever the scale; boiling faster the finer it is)
   vec2 r = u_evo * 0.010 / lam;
@@ -1632,7 +1588,7 @@ void cbLobeSetup(float fp, float lobe) {
 // the most the lobes can move the surface by, all told (the second scale
 // alone, for a march that has read the first)
 float cbLobeRest(float from) {
-  return 0.70 * (from < 0.5 ? g_cbA.x + g_cbA.y : g_cbA.y) + g_cbI;
+  return 0.70 * (from < 0.5 ? g_cbA.x + g_cbA.y : g_cbA.y);
 }
 // one scale laid on the surface f: q is where in its noise, a its swell
 float cbLobe(float f, vec3 q, float a, float lift) {
@@ -1655,7 +1611,6 @@ float cbLobeF(float f, vec3 q, float a, float lift) {
 //         exactly: a tap deep in the cloud or well out in the air reads
 //         only the coarse scale, or none
 float cbLobes3(float f, vec3 N, float lift, float oct, float win) {
-  f += g_cbI;
   if (oct < 0.5 || abs(f) > win + 0.70 * (g_cbA.x + g_cbA.y)) return f;
   vec3 p = N * (1.0 / CBV_L0);
   vec3 u = g_cbU * (1.0 / CBV_L0);
@@ -1893,7 +1848,6 @@ float cbRayBare(float z) {
 float cbRayLobes(float f, float z) {
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
   vec3 u = g_cbU * (1.0 / CBV_L0);
-  f += g_cbI;
   f = cbLobeF(f, p + u * clamp(f, -g_cbA.x, g_cbA.x) + g_cbE0, g_cbA.x, g_cbY.y);
   p = (p + u * clamp(f, -g_cbA.y, g_cbA.y)).yzx * 2.03 + vec3(17.3, 9.1, 5.7);
   if (g_cbA.y > 0.0) f = cbLobeF(f, p + g_cbE1, g_cbA.y, g_cbY.y);
@@ -1906,7 +1860,6 @@ float cbRay(float z) {
   float f = cbRayBare(z);
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
   vec3 u = g_cbU * (1.0 / CBV_L0);
-  f += g_cbI;
   f = cbLobe(f, p + u * clamp(f, -g_cbA.x, g_cbA.x) + g_cbE0, g_cbA.x, g_cbY.y);
   if (g_cbA.y > 0.0) {
     p = (p + u * clamp(f, -g_cbA.y, g_cbA.y)).yzx * 2.03 + vec3(17.3, 9.1, 5.7);
@@ -1956,7 +1909,6 @@ vec4 cbFieldG(float z, vec4 B) {
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
   vec3 u = g_cbU * (1.0 / CBV_L0);
   vec3 uB = vec3(dot(g_cbU, g_cbTg), g_cbU.y, 0.0);
-  F.x += g_cbI;
   float sh = clamp(F.x, -g_cbA.x, g_cbA.x);
   vec4 n = vnoise3d(p + u * sh + g_cbE0);
   vec3 gN = n.yzw * (1.0 / CBV_L0);
@@ -4128,16 +4080,7 @@ void main() {
       // read for every ray the march takes, a band a lobe's reach wide
       // round the whole tower read them for nothing)
       float bumpS = 0.55 * fp * (1.0 - 0.6 * sv) * budW;
-      // (how far the domes over the florets come in, as the coarse lobes
-      // give way — see cbLobeSetup; their own domes stand that much further
-      // out, half a cell of up to eighty-four pixels)
-#ifdef FEAT_CBNEAR
-      float wS = smoothstep(CBV_NEAR, CBV_NEAR * 1.3, CBV_L0 / fp);
-      vec2 leanT = vec2(0.0);
-#else
-      const float wS = 0.0;
-#endif
-      float wF = wE + (51.0 + 34.0 * wS) * bumpS;
+      float wF = wE + 51.0 * bumpS;
 
       float m = 0.0, zL = 0.0, cF = 0.0, crack = 0.0;
       if (fUp > -wF) {
@@ -4229,49 +4172,21 @@ void main() {
         // with nothing under twenty pixels. Three, from five pixels to
         // forty-six, cost a tenth of the tower's whole frame for florets
         // the eye takes for the two)
-        //
-        // ...and over them, on a near tower where the coarse lobes give way
-        // (wS, FEATURE.CBNEAR), the octave above: domes from forty pixels a
-        // cell to eighty-four, fading out as the next one up would come in,
-        // their rims swelling in and out (budPackQ's irr), tilting the face a
-        // third as far again as a floret and laid on the outline as theirs
-        // are. Every weight is a function of its cell's size alone, whichever
-        // of the slots it is read in, so the ladder moves on an octave
-        // without a step as the tower draws nearer. (Read as a pack of the 2D
-        // tower's lobes instead, with their cast shadows, the domes came out
-        // a little rounder and cost a tenth of the frame — and a slot more of
-        // these, compiled in at every distance, cost the tower at the usual
-        // sizes a twentieth of its frame without drawing a thing, which is
-        // why they have a variant of their own)
         if (hit || fmax > -wF) {
-#ifdef FEAT_CBNEAR
-          float k0 = max(0.0, ceil(log(1.0 / (40.0 * 7.6 * fpc)) * 1.3478)) - 1.0;
-          for (int j = 0; j < 3; j++) {
-#else
           float k0 = max(0.0, ceil(log(1.0 / (40.0 * 7.6 * fpc)) * 1.3478));
           for (int j = 0; j < 2; j++) {
-#endif
             float k = k0 + float(j);
             float fq = 7.6 * pow(2.1, k);
             float cellPx = 1.0 / (fpc * fq);
-            float big = smoothstep(27.0, 40.0, cellPx);
-            float wB = (smoothstep(9.07, 13.0, cellPx) * (1.0 - big)
-                        + wS * big * (1.0 - smoothstep(60.0, 84.0, cellPx))) * budW;
+            float wB = smoothstep(9.07, 13.0, cellPx) * (1.0 - smoothstep(27.0, 40.0, cellPx)) * budW;
             if (wB > 0.0) {
-              vec3 bud = budPackQ(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc, big * wS);
-              lean += bud.xy * ((0.63 + 0.12 * smoothstep(12.0, 27.0, cellPx) + 0.25 * big * wS) * wB);
-              rec += bud.z * ((0.14 + 0.10 * big * wS) * wB);
+              vec3 bud = budPackQ(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc);
+              lean += bud.xy * ((0.75 - 0.12 * float(j)) * wB);
+              rec += bud.z * (0.14 * wB);
               float q = max(1.0 - sqrt(bud.z), 0.0);
               bump += q * q * cellPx * (wB / max(budW, 1e-3));
-#ifdef FEAT_CBNEAR
-              leanT += bud.xy * (big * wB);
-#endif
             }
           }
-#ifdef FEAT_CBNEAR
-          // (the domes' own tilt, across and up the tower: see relief)
-          leanT = vec2(dot(leanT, vec2(dirc.y, -dirc.x)), dot(leanT, dirc));
-#endif
           rec = clamp(rec, 0.0, 1.0);
           bump *= bumpS;
         }
@@ -4351,8 +4266,7 @@ void main() {
         // shade, at two scales of noise fewer a pixel. The lobe-wide one, and
         // the sky's a lobe up, read the coarse scale alone: the fine one is
         // half a lobe across and swells the surface by a third of their
-        // window, and the light it gave them is the florets' and the
-        // domes' business now)
+        // window, and the light it gave them is the florets' business)
         float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 1.0, 0.050));
         float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 0.0, 0.120));
         float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
@@ -4430,22 +4344,7 @@ void main() {
         // through rather than shaded as a ball's limb is, and taken edge-on
         // every turret's rim came out a dark line drawn round it)
         float wrap = smoothstep(-0.55, 1.05, dot(normalize(nrm + vec3(0.0, 0.0, -1.0) * (1.0 + 2.0 * slide)), Ls));
-        // A dome over the florets is a hundred pixels across, and most of a
-        // near tower's face is in the shade of the heads over it, where the
-        // sun's tilt across it does nothing: tilted only that way it was a
-        // faint quilting on a grey wall. But the light in the shade came in
-        // at the top and on the sun's side and was scattered down and through,
-        // and the sky's comes from above, so a dome's top turned that way sees
-        // more of both than its underside (relief, on the scattered light;
-        // and more of the sky on a top turned up): each dome a lit cap and a
-        // shaded underside, in the shade as in the sun
-#ifdef FEAT_CBNEAR
-        float relief = clamp(1.0 + 0.8 * dot(leanT, normalize(Ls + vec3(0.0, 1.2, 0.0)).xy), 0.4, 1.6);
-        tcol *= (0.84 + 0.40 * nrm.y + 0.30 * leanT.y) * (1.0 - 0.5 * rec);
-#else
-        const float relief = 1.0;
         tcol *= (0.84 + 0.40 * nrm.y) * (1.0 - 0.5 * rec);
-#endif
         // The sun's share: what comes straight through, and what comes after
         // scattering many times over, as a second and a third much fainter
         // extinction — what keeps a fold a luminous grey rather than a hole,
@@ -4477,7 +4376,7 @@ void main() {
         // greyer than the 2D tower's from the foot to half way up. So the
         // shade has a floor of the scattered light, less where the sky is
         // shut out — a fold keeps its depth)
-        tcol += sunL * (0.48 * Tsun * mix(0.15, 1.0, wrap) * mix(1.0, ph, 0.25) + ((0.13 + 0.55 * (1.0 - Tsun)) * ms + 0.28 * (1.0 - Tsun) * (0.4 + 0.6 * ambVis)) * relief * (1.0 - 0.35 * rec))
+        tcol += sunL * (0.48 * Tsun * mix(0.15, 1.0, wrap) * mix(1.0, ph, 0.25) + ((0.13 + 0.55 * (1.0 - Tsun)) * ms + 0.28 * (1.0 - Tsun) * (0.4 + 0.6 * ambVis)) * (1.0 - 0.35 * rec))
               * powder * (1.0 - diffuse * 0.75);
         // and where the cloud is thin enough that the light comes on through
         // it toward the eye: the silver lining, hottest by the disc. Thin is
@@ -6538,14 +6437,6 @@ export const FEATURE = {
    * and only alongside CB (a sky without a tower shares the 2D variant)
    */
   CBVOL: 16384,
-  /**
-   * the volumetric tower drawn near: its coarsest lobes stand a hundred
-   * pixels and more across, and give way to an octave of domes over its
-   * florets. Not the state's but the frame's — how large the tower stands
-   * on the screen — so the renderer adds it to the key itself; only
-   * alongside CBVOL
-   */
-  CBNEAR: 32768,
 } as const;
 
 const FEATURE_DEFINES: [number, string][] = [
@@ -6564,27 +6455,15 @@ const FEATURE_DEFINES: [number, string][] = [
   [FEATURE.IRIDESCENCE, 'FEAT_IRIDESCENCE'],
   [FEATURE.MOONLIT, 'FEAT_MOONLIT'],
   [FEATURE.CBVOL, 'FEAT_CBVOL'],
-  [FEATURE.CBNEAR, 'FEAT_CBNEAR'],
 ];
 
 /**
  * every feature compiled in: the one program the renderer used to be. (Its
  * CBVOL bit swaps the 2D tower for the volumetric one rather than adding
  * anything, so a renderer compiling everything into one program takes that
- * bit from its own cumulonimbus option, not from here — and CBNEAR with it)
+ * bit from its own cumulonimbus option, not from here)
  */
-export const ALL_FEATURES = 65535;
-
-/**
- * How many pixels across the volumetric tower's coarsest lobes stand in a
- * frame `height` pixels tall seen through `fov`, with the storm at
- * `distance` (features.distance; cbScale in the shader stretches the sky by
- * the same curve) — what says whether a frame wants {@link FEATURE}.CBNEAR
- */
-export function cbLobePixels(height: number, fov: number, distance: number): number {
-  const scale = Math.exp(0.8515 * (Math.exp(2.585 * (distance - 0.65)) - 1));
-  return CBV_LOBE * height / Math.max(fov * scale, 1e-6);
-}
+export const ALL_FEATURES = 32767;
 
 /** how the cumulonimbus's towers are drawn — see {@link RendererOptions.cumulonimbus} */
 export type CumulonimbusMode = '2d' | 'volumetric';
@@ -6916,8 +6795,6 @@ export class AtmosphereRenderer {
   private cloudScaleWanted: number;
   private raysWanted: number;
   private cbMode: CumulonimbusMode;
-  // whether the last frame drew the volumetric tower near (FEATURE.CBNEAR)
-  private cbNear = false;
   // whether the program is the split variant: decided once, at construction
   private readonly split: boolean;
   private cloudSupport: boolean | null = null;   // null = not asked yet on this context
@@ -7022,10 +6899,9 @@ export class AtmosphereRenderer {
   /** the variant key a state is drawn with (null: the one that draws anything) */
   private keyFor(s: AtmosphereState | null): number {
     if (s === null || this.opts.variants === false) {
-      return (ALL_FEATURES & ~(FEATURE.CBVOL | FEATURE.CBNEAR)) | (this.cbMode === 'volumetric' ? FEATURE.CBVOL | FEATURE.CBNEAR : 0);
+      return (ALL_FEATURES & ~FEATURE.CBVOL) | (this.cbMode === 'volumetric' ? FEATURE.CBVOL : 0);
     }
-    const k = featureKey(s, this.rays, this.cbMode);
-    return this.cbNear && (k & FEATURE.CBVOL) ? k | FEATURE.CBNEAR : k;
+    return featureKey(s, this.rays, this.cbMode);
   }
 
   /**
@@ -7420,17 +7296,6 @@ export class AtmosphereRenderer {
     evo = 0,
   ): void {
     this.advanceSnow(timeSec, camera);
-    // Near or not, by how large the tower's coarse lobes stand in the pass
-    // the tower is drawn in (the cloud stack's, when it is split out): the
-    // domes come in from CB_NEAR_PX, so either variant draws the same under
-    // it, and the key changes there going up and five pixels short of it
-    // coming down, not back and forth on every frame of a slow zoom
-    if (this.cbMode === 'volumetric') {
-      const split = (this.cloudScale < 1 || this.rays > 0) && hasCloudStack(s.clouds);
-      const passH = split ? Math.max(1, Math.round(this.canvas.height * this.cloudScale)) : this.canvas.height;
-      const px = cbLobePixels(passH, camera.fov, s.features.distance);
-      this.cbNear = px > CB_NEAR_PX - (this.cbNear ? 5 : 0);
-    }
     const gl = this.bind(timeSec, s, windOff, evo);
     if (!gl) return;
     const u = this.u;
