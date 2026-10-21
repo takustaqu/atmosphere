@@ -4466,8 +4466,14 @@ void main() {
         // side. Read off the taps' extinction alone the lower body, under
         // the heads that shade it from a high sun, sank into a flat dark
         // grey band; so the shade takes more of the scattered light the
-        // less of the direct it has)
-        tcol += sunL * (0.48 * Tsun * mix(0.15, 1.0, wrap) * mix(1.0, ph, 0.25) + (0.13 + 0.55 * (1.0 - Tsun)) * ms * relief * (1.0 - 0.35 * rec))
+        // less of the direct it has. And not only the light the taps let
+        // through after many scatterings: the 2D tower's shade carries a
+        // third of the sun's light whatever stands over it, and read off
+        // the taps alone the vol's body under its heads stood a good tenth
+        // greyer than the 2D tower's from the foot to half way up. So the
+        // shade has a floor of the scattered light, less where the sky is
+        // shut out — a fold keeps its depth)
+        tcol += sunL * (0.48 * Tsun * mix(0.15, 1.0, wrap) * mix(1.0, ph, 0.25) + ((0.13 + 0.55 * (1.0 - Tsun)) * ms + 0.28 * (1.0 - Tsun) * (0.4 + 0.6 * ambVis)) * relief * (1.0 - 0.35 * rec))
               * powder * (1.0 - diffuse * 0.75);
         // and where the cloud is thin enough that the light comes on through
         // it toward the eye: the silver lining, hottest by the disc. Thin is
