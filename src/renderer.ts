@@ -1449,14 +1449,18 @@ void cloudLight(float dayF, float nightF, float sunsetF, vec3 cloudSun, float al
 // The moon's light carried on forward through a thin cloud in front of it,
 // and the corona that light is colored with: set per pixel in main, before
 // the cloud layers, from how far this ray is from the moon
+#ifdef FEAT_MOONLIT
 float g_moonFwd = 0.0;
 vec3 g_corona = vec3(1.0);
+#endif
 // and the sun's: how much of its light a thin water cloud this far from it
 // sends on forward, the corona round it, and how far out from its limb this
 // ray is, for the iridescence the cloud's own edges pick out
+#ifdef FEAT_IRIDESCENCE
 float g_sunFwd = 0.0;
 vec3 g_sunCorona = vec3(1.0);
 float g_sunLimb = 1.0;
+#endif
 
 // The corona: light diffracted round the moon by a water cloud's droplets —
 // a bluish-white aureole, a red-brown ring a couple of degrees out, then
@@ -1509,8 +1513,14 @@ vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, flo
   // the cloud in front of it into a lamp, bright at its thin edges while
   // the thick cores stand dark against it — colored by the corona on a
   // water cloud, plain on an ice one (alt 1)
+  // (each compiled only into the variants with a light there to carry —
+  // see FEATURE.MOONLIT and FEATURE.IRIDESCENCE)
+#if defined(FEAT_MOONLIT) || defined(FEAT_IRIDESCENCE)
   float through = (1.0 - clamp(thick, 0.0, 1.0) * 0.85) * (1.0 - den * 0.45);
+#endif
+#ifdef FEAT_MOONLIT
   c += vec3(0.80, 0.84, 0.92) * mix(g_corona, vec3(1.0), alt) * g_moonFwd * through;
+#endif
   // and near the sun, iridescence: the same diffraction by the droplets,
   // but where the moon's corona is rings round the moon, the sun's shows as
   // pastel pinks and greens laid along a thin cloud's edges. The droplets at
@@ -1520,6 +1530,7 @@ vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, flo
   // weaker on a low one, none on ice (alt 1), which gives a halo instead.
   // Kept modest: what makes it vivid in a photograph is the sun hidden
   // behind a roof, and here the sun is in the frame
+#ifdef FEAT_IRIDESCENCE
   float iriW = clamp(min(0.6 + 0.8 * alt, 2.0 - 2.0 * alt), 0.0, 1.0);
   float sunFwd = g_sunFwd * iriW * (1.0 - gloom);
   if (sunFwd > 0.0) {
@@ -1543,6 +1554,7 @@ vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, flo
     float amt = clamp(sunFwd * fringe * through * 1.7, 0.0, 0.85);
     c = mix(c, cloudSun * 0.94 * tint, amt);
   }
+#endif
   // silver lining (the edge glows on the sun side — only with direct light)
   float rim = den * (1.0 - den) * 4.0 * max(litE, 0.0) * (1.0 - diffuse);
   c += cloudSun * rim * 0.35 * max(dayF, sunsetF * 0.5);
@@ -2080,19 +2092,23 @@ void main() {
   // Measured from the limb, not the centre: the disc is drawn some ten times
   // its real size, and a glow peaking at its centre put a hot spot inside a
   // moon behind a cloud, with the corona's rings inside the disc
+#ifdef FEAT_MOONLIT
   float moonLimb = max(moonAng - 0.046, 0.0);
   g_moonFwd = moonUp * u_moon.z * nightF
             * (exp(-moonLimb / 0.03) * 1.6 + exp(-moonLimb / 0.13) * 0.65 + exp(-moonLimb / 0.40) * 0.12);
   g_corona = corona(moonLimb);
+#endif
   // the sun's, likewise from its limb (the drawn disc's flat core reaches
   // about 0.035 rad out) and not cut by the cover. Within ten degrees or so;
   // past fifteen there is nothing a thin cloud makes of it
+#ifdef FEAT_IRIDESCENCE
   float sunLimb = max(acos(clamp(dot(rd, sunDir), -1.0, 1.0)) - 0.035, 0.0);
   g_sunLimb = sunLimb;
   g_sunFwd = dayF * smoothstep(-0.02, 0.08, sunEl)
            * (exp(-sunLimb / 0.10) + exp(-sunLimb / 0.20) * 0.40)
            * smoothstep(0.30, 0.18, sunLimb);
   g_sunCorona = corona(sunLimb);
+#endif
   if (moonVis > 0.0 && skyLight) {
     float ang = moonAng;
     float moon = smoothstep(0.048, 0.043, ang);
@@ -2661,9 +2677,15 @@ void main() {
     // vertically while the sun is low, so a tower over it is dark to the
     // top; a high sun lights the heads from above, and then only what
     // actually crowds the disc is
+    // (a sky where no sun can light anything from behind is compiled
+    // without any of it, the four below held at nothing — FEATURE.BACKLIT)
+#ifdef FEAT_BACKLIT
     float apart = sunApart(rd, sunDir, mix(0.35, 1.0, smoothstep(0.15, 0.60, sunEl)));
     float gateB = backGate(sunDir);
     float back = (1.0 - smoothstep(0.26, 0.60, apart)) * gateB;
+#else
+    const float back = 0.0, backT = 0.0, backI = 0.0, side = 0.0;
+#endif
     // ── Side-lit ──
     // Under a low sun the backlight does not stop at a third of a radian.
     // A tower thirty or forty degrees round from a setting sun still shows
@@ -2682,10 +2704,12 @@ void main() {
     // keeps the narrow reach. The anvil's plate and the cap have no flank
     // to turn to the sun, only ice that is thick or thin, and theirs
     // (backI) ends where the tower's flank has taken most of it
+#ifdef FEAT_BACKLIT
     float lowS = 1.0 - smoothstep(0.20, 0.55, sunEl);
     float backT = (1.0 - smoothstep(mix(0.26, 0.90, lowS), mix(0.60, 1.65, lowS), apart)) * gateB;
     float backI = (1.0 - smoothstep(mix(0.26, 0.42, lowS), mix(0.60, 1.10, lowS), apart)) * gateB;
     float side = smoothstep(0.24, 0.72, apart) * lowS;
+#endif
     // the lining's color: the sun's own, run hot — at dusk past the orange
     // of the light itself toward gold, as anything blown out goes
     vec3 rimC = mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF);
@@ -2743,7 +2767,11 @@ void main() {
     // envelope has fallen far enough for nothing to show, nor the tower's
     // decay to be read, nor the glow round a backlit rim to reach (auraW:
     // the most of it there can be, at the envelope's own value — see aura)
+#ifdef FEAT_BACKLIT
     float auraW = back * exp(-sunAng * 3.0);
+#else
+    const float auraW = 0.0;
+#endif
     float hiY = capV + 0.005;
     float skMax = baseY + skGain + 0.03;
     float overF = max(hiY + 0.6 * hiY * hiY - hgt, (skMax - ty) * 2.5 - 0.03);
@@ -3274,10 +3302,12 @@ void main() {
         // just outside a backlit rim the air is not empty: the tower's last
         // wisps, too thin to see, scatter the sun forward into a soft glow that
         // hugs the silhouette. Laid under the tower, so the mass covers its inside
+#ifdef FEAT_BACKLIT
         float aura = smoothstep(-0.90, -0.11, field) * (1.0 - m) * auraW;
         if (aura > 0.001) {
           OVER(rimC * 1.2, aura * 0.45);
         }
+#endif
 
         if (m > 0.001) {
           vec4 pCoarse = blobPack(w * 0.62, 0.82);
@@ -3569,7 +3599,9 @@ void main() {
           // small is a far one; haze thickens it only a little, since the haze
           // wash at the end already paints the air's own color over everything
           vec3 airCol = skyWeather(airSky, dayF, gloom);
+#ifdef FEAT_BACKLIT
           airCol = mix(airCol, mix(ambient, cloudSun, mix(0.55, 0.30, side)) * gain, backT);
+#endif
           float far = mix(1.6, 1.0, smoothstep(0.20, 0.60, max(topV, skTop - baseY)));
           // (and a storm further off is behind more air — but mostly at its
           // foot. The haze is a layer near the ground: the line of sight to
@@ -3589,7 +3621,9 @@ void main() {
           // the sky's light. Round to the side the sky beyond is the bright
           // sunset's and the body the shade's, and washed as far as straight
           // against the sun it went back to the pale lavender
+#ifdef FEAT_BACKLIT
           air = mix(air, min(air * mix(1.0, 0.55, side), 0.55), backT);
+#endif
           tcol = mix(tcol, airCol, air);
           cbMask = clamp(m, 0.0, 1.0);
           OVER(tcol, cbMask);
@@ -3729,7 +3763,11 @@ void main() {
     // dusk), while a thin lump and every lump's margin glow with the light
     // coming through them. The thin ones carry the day here — a fair sky's
     // small cotton round the sun stays bright, only real cores darken
+#ifdef FEAT_BACKLIT
     float cuBack = backlit(rd, sunDir, mix(0.5, 1.0, smoothstep(0.15, 0.60, sunEl)));
+#else
+    const float cuBack = 0.0;
+#endif
     vec3 cuShade = vec3(0.0), cuRim = vec3(0.0);
     if (cuBack > 0.0) {
       vec3 ambient, glow, sunL, shade, moon, leaden;
@@ -4740,6 +4778,16 @@ export const FEATURE = {
    * overcast sky's frame some two fifths longer (an M2 Max, 1080p)
    */
   CB: 1024,
+  /**
+   * light from behind: the cumulus's and the cumulonimbus's backlit and
+   * side-lit shading, and the glow round a backlit tower's rim — only with a
+   * sun that is up and not taken by an overcast, and a cloud for it to light
+   */
+  BACKLIT: 2048,
+  /** iridescence: a thin water cloud colored near a sun that is up */
+  IRIDESCENCE: 4096,
+  /** a thin cloud lit through by the moon, colored by its corona */
+  MOONLIT: 8192,
 } as const;
 
 const FEATURE_DEFINES: [number, string][] = [
@@ -4754,10 +4802,13 @@ const FEATURE_DEFINES: [number, string][] = [
   [FEATURE.POLARIZER, 'FEAT_POLARIZER'],
   [FEATURE.SHAFTS, 'FEAT_SHAFTS'],
   [FEATURE.CB, 'FEAT_CB'],
+  [FEATURE.BACKLIT, 'FEAT_BACKLIT'],
+  [FEATURE.IRIDESCENCE, 'FEAT_IRIDESCENCE'],
+  [FEATURE.MOONLIT, 'FEAT_MOONLIT'],
 ];
 
 /** every feature compiled in: the one program the renderer used to be */
-export const ALL_FEATURES = 2047;
+export const ALL_FEATURES = 16383;
 
 /**
  * Which features a state needs drawn — the key of the shader variant that
@@ -4780,7 +4831,26 @@ export function featureKey(s: AtmosphereState, rays = 0): number {
   // a thunderstorm's tower rains whether or not it is raining here
   if (s.rain > 0.01 || (s.clouds.cumulonimbus > 0.05 && s.thunder > 0.001)) k |= FEATURE.SHAFTS;
   // the tower's own gate is this amount, less the gloom's share of it
-  if (s.clouds.cumulonimbus > 0.001) k |= FEATURE.CB;
+  const c = s.clouds;
+  if (c.cumulonimbus > 0.001) k |= FEATURE.CB;
+  // The three below are all lighting the clouds take from a sun or a moon
+  // that may not be there. Each gate is the shader's own, where its light
+  // falls to exactly nothing; the elevations are compared a hair early, so
+  // float rounding on the GPU can only ever find the feature compiled in
+  // and its light at nothing, never the other way round.
+  const sunY = Math.sin(s.sunElevation);
+  // the cumulus's gate, and a tower's
+  if (sunY > -0.0501 && s.cloudCover < 0.95 && (c.cumulus > 0.02 || c.cumulonimbus > 0.001)) {
+    k |= FEATURE.BACKLIT;
+  }
+  // the layers lit through cloudColor: water ones, and the cirrocumulus's ice
+  const water = c.altocumulus > 0.001 || c.stratocumulus > 0.001 || c.cumulus > 0.02 || c.stratus > 0.001;
+  if (sunY > -0.0201 && water) k |= FEATURE.IRIDESCENCE;
+  const eclipse = Math.min(Math.max(s.moonEclipse ?? 0, 0), 1);
+  if ((water || c.cirrocumulus > 0.001) && Math.sin(s.moonElevation) > -0.0301
+      && sunY < 0.1401 && s.moonPhase * (1 - 0.9 * eclipse) > 0) {
+    k |= FEATURE.MOONLIT;
+  }
   return k;
 }
 
