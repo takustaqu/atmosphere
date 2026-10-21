@@ -16,6 +16,7 @@
 // stay openable from the repo checkout with `pnpm playground`.
 import { build } from 'esbuild';
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -27,13 +28,27 @@ await mkdir('_site', { recursive: true });
 // against the deployed site, and minify keeps the shader-heavy bundles small.
 const common = { bundle: true, format: 'esm', target: 'es2022', minify: true };
 
+// Pages serves every file with a ten-minute max-age and the bundles keep the
+// same names from one deploy to the next, so a visitor who came by recently
+// is handed the new page with the old renderer. Each script tag is stamped
+// with a hash of the bundle it loads: a new build is a new URL.
+const stamp = async (file) =>
+  createHash('sha256').update(await readFile(file)).digest('hex').slice(0, 10);
+
 for (const name of ['playground', 'controller', 'bench']) {
   await build({
     ...common,
     entryPoints: [`examples/${name}/main.ts`],
     outfile: `_site/build/${name}/main.js`,
   });
-  await cp(`examples/${name}/index.html`, `_site/examples/${name}/index.html`);
+  const src = `../../build/${name}/main.js`;
+  const page = await readFile(`examples/${name}/index.html`, 'utf8');
+  if (!page.includes(`"${src}"`)) throw new Error(`build-site: examples/${name} no longer loads ${src}`);
+  await mkdir(`_site/examples/${name}`, { recursive: true });
+  await writeFile(
+    `_site/examples/${name}/index.html`,
+    page.replace(`"${src}"`, `"${src}?v=${await stamp(`_site/build/${name}/main.js`)}"`),
+  );
 }
 
 // The landing page is the site's root, so a missing one has to fail loudly:
@@ -72,7 +87,15 @@ const html = await readFile('site/index.html', 'utf8');
 if (!html.includes('<!--ZEN_OLD_MINCHO-->')) {
   throw new Error('build-site: the ZEN_OLD_MINCHO token is gone from site/index.html');
 }
-await writeFile('_site/index.html', html.replace('<!--ZEN_OLD_MINCHO-->', fontTag));
+if (!html.includes('"assets/site.js"')) {
+  throw new Error('build-site: site/index.html no longer loads assets/site.js');
+}
+await writeFile(
+  '_site/index.html',
+  html
+    .replace('<!--ZEN_OLD_MINCHO-->', fontTag)
+    .replace('"assets/site.js"', `"assets/site.js?v=${await stamp('_site/assets/site.js')}"`),
+);
 console.log(`hero subset: ${glyphs.length} glyphs`);
 
 console.log('_site/ written');
