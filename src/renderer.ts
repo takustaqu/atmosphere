@@ -2612,7 +2612,10 @@ void main() {
     // horizon. ceilN is its height without the undulation, for what must
     // agree across azimuths (the crown's shape, the anvil's plane)
     float ceilN = 0.44 + 0.11 * cbAmt;
-    float anvilTop = ceilN + (fbm4(acir * 1.6 + 11.0) - 0.5) * 0.07;
+    // (the undulation is read only where a tower or its skirt can stand:
+    // under a thinner mass nothing below asks where the tropopause is)
+    float anvilTop = ceilN;
+    if (mass > 0.20) anvilTop += (fbm4(acir * 1.6 + 11.0) - 0.5) * 0.07;
 
     // The silhouette is decided by one formula: "thrust − height".
     //
@@ -3582,7 +3585,9 @@ void main() {
     // tower, but heavily flattened vertically per cylindrical coordinate.
     // Round lobes stretch horizontally and overlap into a "flat mass",
     // giving it thickness variation and skin naturally.
-    if (u_cbFeat.y > 0.001) {
+    // (and only where the mass stands past the spread's cut below: anywhere
+    // else it spreads nothing, and the veil's height need not be read)
+    if (u_cbFeat.y > 0.001 && massE > 0.50) {
       // veil forms as a horizontal sheet at a stable layer, so its height
       // stays roughly constant regardless of azimuth. Scaling it with tower
       // height turns the veil into a zigzag tracing the ridgeline.
