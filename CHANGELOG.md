@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Changed
+
+- **The thunderhead is a cauliflower, not putty.** Its face was lit off
+  the lobes read as a smooth sum, plus a coarser scale wider than a turret
+  and soft pools of self-shadow: a few huge clay-like lumps under airbrushed
+  gradients, nothing finer than about thirty pixels on a tower drawn large,
+  and a uniform dull grey under a summer noon. The face is now lit off the
+  same lobes read as a pack — at each point the lobe in front gives the
+  normal, so where one meets the next the light turns over in a fold about
+  a pixel wide, antialiased, the lower floret's lit top laid against the
+  shaded underside of the one above. Below the finest lobes up to three more
+  octaves of florets are added for as long as they stay a few pixels across,
+  so a near or zoomed tower gets more detail, not bigger lumps. Each lobe
+  and floret casts a shadow on its neighbours (a ray tried against the
+  lobes as spheres), gaps and folds go to a cool blue-grey, the coarse
+  scale and its shadow pools are gone, and the darkening toward the base
+  covers its foot only rather than the lower 60% of the tower. Sunlit
+  faces are whiter, and a tower with a high sun behind it — the hero's
+  view toward the sun — glows a luminous blue-white with lit crowns instead
+  of a flat grey. A lobe's outline was also cut off along a circle short of
+  its widest swelling, which drew hard stair-stepped arcs inside the tower;
+  that is fixed, and the middle lobes' folds and outline wander at floret
+  scale instead of running in long smooth arcs. Outline, height, anvil, life,
+  backlit lining and fade-out are unchanged. It costs 4–8% more GPU time at
+  1080p on scenes with a tower (14% on a near storm); frame-to-frame changes
+  stay as smooth, with slightly more small change as the finer texture
+  drifts.
+
 ## 0.7.0 — 2026-10-21
 
 The thunderhead, rebuilt. The cumulonimbus is a cluster of turrets on a flat
@@ -123,31 +151,6 @@ on the sea and the rainbow's reflection.
   height, anvil and life are unchanged — the lobes stand where they stood —
   and sunlit crowns are a little whiter again. It costs 3–8% more GPU time
   on a scene with a tower; frame-to-frame steadiness is unchanged.
-- **The thunderhead is a cauliflower, not putty.** Its face was lit off
-  the lobes read as a smooth sum, plus a coarser scale wider than a turret
-  and soft pools of self-shadow: a few huge clay-like lumps under airbrushed
-  gradients, nothing finer than about thirty pixels on a tower drawn large,
-  and a uniform dull grey under a summer noon. The face is now lit off the
-  same lobes read as a pack — at each point the lobe in front gives the
-  normal, so where one meets the next the light turns over in a fold about
-  a pixel wide, antialiased, the lower floret's lit top laid against the
-  shaded underside of the one above. Below the finest lobes up to three more
-  octaves of florets are added for as long as they stay a few pixels across,
-  so a near or zoomed tower gets more detail, not bigger lumps. Each lobe
-  and floret casts a shadow on its neighbours (a ray tried against the
-  lobes as spheres), gaps and folds go to a cool blue-grey, the coarse
-  scale and its shadow pools are gone, and the darkening toward the base
-  covers its foot only rather than the lower 60% of the tower. Sunlit
-  faces are whiter, and a tower with a high sun behind it — the hero's
-  view toward the sun — glows a luminous blue-white with lit crowns instead
-  of a flat grey. A lobe's outline was also cut off along a circle short of
-  its widest swelling, which drew hard stair-stepped arcs inside the tower;
-  that is fixed, and the middle lobes' folds and outline wander at floret
-  scale instead of running in long smooth arcs. Outline, height, anvil, life,
-  backlit lining and fade-out are unchanged. It costs 4–8% more GPU time at
-  1080p on scenes with a tower (14% on a near storm); frame-to-frame changes
-  stay as smooth, with slightly more small change as the finer texture
-  drifts.
 
 ### Performance
 
