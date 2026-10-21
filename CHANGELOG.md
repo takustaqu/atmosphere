@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-10-21
+
+The thunderhead, rebuilt. The cumulonimbus is a cluster of turrets on a flat
+base, broad rather than pointed, lit as cloud with irregular lobes and a
+mixed soft-and-crisp outline; it moves without stepping and sinks away as a
+storm runs out. Lunar eclipses fall on their dates, and the sky gains rain
+shafts, cloud iridescence, the circumzenithal arc, whitecaps, cloud shadows
+on the sea and the rainbow's reflection.
+
 ### Changed
 
 - **The cumulonimbus is rebuilt**, in six passes measured against
