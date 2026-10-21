@@ -102,6 +102,19 @@
   The silhouette is unchanged, as are the cost and the frame-to-frame
   steadiness (a little steadier, if anything).
 
+- **The thunderhead's lobes are no longer spheres pressed into one
+  another.** Seen close, each lobe was still a perfect disc: a clean
+  circular seam where it overlapped the lobe behind, often stair-stepped on
+  the pixels, with a dark crescent along it and a smooth dome inside. Each
+  lobe's outline now swells into two, three and five smaller bulges, no two
+  lobes alike; its rim fades out over its margin instead of ending in a
+  line; the largest lobes are drawn a little smaller so they too can swell;
+  and the shadow a lobe casts on the one behind spreads over twice the
+  depth, soft and irregular rather than a crescent. The tower's outline,
+  height, anvil and life are unchanged — the lobes stand where they stood —
+  and sunlit crowns are a little whiter again. It costs 3–8% more GPU time
+  on a scene with a tower; frame-to-frame steadiness is unchanged.
+
 ### Performance
 
 - **Compiled out where it cannot show.** The cumulonimbus and everything
