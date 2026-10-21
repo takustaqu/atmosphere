@@ -4156,10 +4156,15 @@ void main() {
         float gain = mix(1.0, 0.82, dayF);
         // (the sky a face turned from a low sun sees is the far side of it,
         // the dim one: against the sun the mass goes dark, in the shade's
-        // color, as the 2D tower's does)
-        vec3 sky3 = mix(ambient + glow, shade * 0.75, backT);
+        // color, as the 2D tower's does.) With the sun down the sky's light
+        // is all there is, and the tower takes it as the 2D one does, half
+        // way to the shade's, the moon's a light share of it: lit by the
+        // whole sky and most of the moon, a tower at night came out as
+        // light as the glow over the horizon behind it, and stood in it
+        // as nothing at all
+        vec3 sky3 = mix(mix(ambient + glow, shade, 0.6 * (1.0 - dayF)), shade * 0.75, backT);
         vec3 deep = shade * mix(0.80, 0.50, backT);
-        vec3 tcol = mix(deep, sky3, ambVis) + moon * (0.3 + 0.4 * ambVis);
+        vec3 tcol = mix(deep, sky3, ambVis) + moon * (0.1 + 0.2 * ambVis);
         // The face's own turn, off the plane F gives: which way it looks (n:
         // across, up, toward the eye negative). The sky's light comes from
         // above, so a face turned up sees more of it than one turned down —
