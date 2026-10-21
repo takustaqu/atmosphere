@@ -974,6 +974,23 @@ float cbScale(float d) {
 float cbClock() { return u_evo * 0.12; }
 const float CB_LAG = 0.25;
 
+// How much of the storm stands, from the amount of cumulonimbus: 1 for any
+// real amount, falling to nothing as the amount runs out. The towers' size
+// barely depended on the amount — the thrust is the noise's, the amount
+// only its gain — so as a scene with a storm eased into one without, the
+// towers stood nearly whole until the amount fell past the gate below which
+// none is drawn, and went in a frame: whatever was left of them, and the
+// skirt round their feet a little before. So the towers sink into their
+// base as this falls (and rise out of it as it climbs), and the last of them
+// thins away: nothing is left to see by an amount of 0.03, long before the
+// gate. Read straight off the amount, from a third, where a storm is a
+// storm: an eased amount leaves 0 fast and arrives at 0 slowly, so read
+// off its logarithm the storm took the seconds a falling amount spends
+// near nothing to go, and a frame or two to come
+float cbLive() {
+  return smoothstep(0.0, 0.30, u_low.w);
+}
+
 #ifdef FEAT_CB
 // How high a cumulonimbus's thrust carries it: the height y solving
 // rise − (y + 0.6y²) − 1 = 0, the thrust's own reach before anything shapes it
@@ -2558,6 +2575,17 @@ void main() {
   // FEATURE.CB — and the layers below see an empty cbMask)
 #ifdef FEAT_CB
   if (cbAmt > 0.001 && stack) {
+    // how much of the storm stands (see cbLive, and the skyline below)
+    float stand = cbLive();
+    // and how big a storm it is. The towers' thrust grows with the amount,
+    // but only over the amounts a storm is drawn at: below a third it is
+    // held there, and what is left of the amount says how much of that
+    // storm still stands (stand). Raised by the amount right down to
+    // nothing, the thrust let each tower fall under its cut at an amount of
+    // its own, a weak one at a tenth and a strong one not until the gate —
+    // and an eased amount crosses a tenth in a second or two: a tower that
+    // collapsed while its neighbor stood whole, then went at a stroke
+    cbAmt = max(u_low.w, 0.30) * (1.0 - gloom * 0.6);
     float azw = az + u_windOff * 0.15;
     vec2 dirc = vec2(sin(azw), cos(azw));
     // ── How far off it stands ──
@@ -2786,7 +2814,7 @@ void main() {
     // decay to be read, nor the glow round a backlit rim to reach (auraW:
     // the most of it there can be, at the envelope's own value — see aura)
 #ifdef FEAT_BACKLIT
-    float auraW = back * exp(-sunAng * 3.0);
+    float auraW = back * exp(-sunAng * 3.0) * stand;
 #else
     const float auraW = 0.0;
 #endif
@@ -2811,6 +2839,18 @@ void main() {
       headY = max(turretRow(azT, ${TOWER_TURRETS.toFixed(1)}, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS), headY);
       skTop = max(baseY + turretRow(azT, ${SKIRT_TURRETS.toFixed(1)}, skGain, 1.0, cosEl, turT * 1.3, 17.0, ceilN, cbS), skTop);
     }
+    // ── Going, and coming ──
+    // As the storm runs out (stand, see cbLive) its skyline sinks into the
+    // base, the towers and their skirt alike, all of a piece: each turret
+    // keeps its place and its shape, only lower, and the low remnant thins
+    // away (the alpha, below) as the heads come down onto the base line —
+    // all of it before the amount reaches the gate, so nothing is left
+    // there to vanish. Rising, they climb out of it the same way
+    headY = min(headY, mix(baseY, headY, stand));
+    float skStood = skTop - baseY;
+    skTop = min(skTop, mix(baseY, skTop, stand));
+    // (and the shading reasons in the tower as it stands, sunk or not)
+    float topL = min(topV, mix(baseY, topV, stand));
 
     // ── Anvil (incus) ──
     // A tower with nowhere left to go at the tropopause spreads out under it:
@@ -3052,6 +3092,9 @@ void main() {
           // right over the tower the head itself stands in front: the plate
           // comes out from behind its crown rather than lying on it like a lid
           anvNear = smoothstep(D + 0.03, D - 0.06, rX) * smoothstep(0.06, 0.40, abs(sP));
+          // (and a plate needs a tower under it: as the towers sink it thins
+          // away, gone before they are)
+          anvA *= smoothstep(0.20, 0.80, stand);
           OVER(anvCol, anvA * (1.0 - anvNear));
         }
       }
@@ -3074,8 +3117,11 @@ void main() {
       // lower half, so every turret stands on the base
       float skH = max(skTop - baseY, 1e-3);
       // (a turret too low to tower over its own base is no congestus, only a
-      // flat grey smear along the horizon: none at all, then)
-      float skP = smoothstep(0.025, 0.06, skH);
+      // flat grey smear along the horizon: none at all, then. Judged by the
+      // height it stood to before the storm began to sink: sinking, it goes
+      // down with the towers and thins away with them, rather than being
+      // dropped on its own as it passes that height)
+      float skP = smoothstep(0.025, 0.06, skStood);
       // Every lobe below is laid on scaled by near or by skP, so where no
       // turret stands near and no skirt stands either they add nothing: the
       // field is the bare envelope, too far under the edge to draw (m is 0
@@ -3116,7 +3162,7 @@ void main() {
       // the height, so it lifts no scraps off it
       if (flank) {
         float headB = turretRow(azT + (bMid - 0.60) * 0.06 / (cosEl * cbS), ${TOWER_TURRETS.toFixed(1)}, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS);
-        headY = max(headY, mix(headY, headB, near));
+        headY = max(headY, mix(headY, min(headB, mix(baseY, headB, stand)), near));
       }
       // Nor does a turret run on far past the tropopause. Under an anvil
       // the ceiling below flattens it into the plate; a tower with no
@@ -3342,6 +3388,9 @@ void main() {
         float widePx = max(0.0016 * min(soft, 2.6) * pow(cbS, 0.4) / pxA, 2.5);
         float lo = -0.0275 + 0.0075 * growth - 0.03 * decay;
         float m = smoothstep(lo, lo + clamp(slope * widePx, 0.0425 - 0.01125 * growth + 0.03 * decay, 0.10 + 0.03 * decay), field);
+        // the last low remnant of a storm that is running out thins away
+        // rather than standing solid to its final sliver (see cbLive)
+        m *= smoothstep(0.03, 0.35, stand);
         // how deep inside the cloud this is, for the shading's rim terms (the
         // lining, the margin, how far the crease shadows reach). The field
         // itself only climbs slowly inward from the silhouette, and inside it
@@ -3506,7 +3555,7 @@ void main() {
           // tropopause's — a small tower or a skirt turret all within the
           // tropopause's reach of shade came out a dark grey lump on the
           // horizon, where its sunlit head should stay as white as the tower's
-          float cloudH = max(max(topV, skTop) - baseY, 0.04);
+          float cloudH = max(max(topL, skTop) - baseY, 0.04);
           float depth = 1.0 - smoothstep(baseY, baseY + min(cloudH * 0.6, max((anvilTop - baseY) * 0.65, 0.20)), ty);
           depth = mix(depth, 1.0 - smoothstep(baseY, skTop + 0.02, ty), skW);
 
@@ -3674,7 +3723,7 @@ void main() {
 #ifdef FEAT_BACKLIT
           airCol = mix(airCol, mix(ambient, cloudSun, mix(0.55, 0.30, side)) * gain, backT);
 #endif
-          float far = mix(1.6, 1.0, smoothstep(0.20, 0.60, max(topV, skTop - baseY)));
+          float far = mix(1.6, 1.0, smoothstep(0.20, 0.60, max(topL, skTop - baseY)));
           // (and a storm further off is behind more air — but mostly at its
           // foot. The haze is a layer near the ground: the line of sight to
           // a tower's head climbs out of it, crossing about as much of it
@@ -3743,7 +3792,7 @@ void main() {
         float vfield = (vb - 0.58) * 1.4 + (spread - 0.42) * 1.7 - abs(dY) * 21.0;
         // a thin veil, so the edge dissolves broadly into the sky
         // (a cap over a rising head: a dying tower loses it)
-        float v = smoothstep(-0.16, 0.40, vfield) * u_cbFeat.y * (1.0 - decay);
+        float v = smoothstep(-0.16, 0.40, vfield) * u_cbFeat.y * (1.0 - decay) * stand;
         if (v > 0.001) {
           // lean the same slightly-blue white as the tower's daytime hi —
           // a neutral-warm white here reads as cream against the other layers
@@ -4019,7 +4068,7 @@ void main() {
     float cbP = 0.0, cbBase = 0.12;
 #ifdef FEAT_CB
     if (u_low.w > 0.001) {
-      float cbAmtS = u_low.w * (1.0 - gloom * 0.6);
+      float cbAmtS = max(u_low.w, 0.30) * (1.0 - gloom * 0.6);
       float azT = azw - lean * max(sin(0.1304 / cbSS) - rd.y, 0.0);
       float massS = fbm4HQ(vec2(sin(azT), cos(azT)) * (0.85 * cbSS) + vec2(0.0, cbClock()));
       float riseS = pow(max(massS - 0.42, 0.0) * 4.6, 1.5) * (1.05 + 1.35 * cbAmtS);

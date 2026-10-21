@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_FEATURES, FEATURE, featureKey } from '../src/renderer.js';
 import { resolveConditions } from '../src/state.js';
+import { StateAnimator } from '../src/animator.js';
 
 describe('featureKey', () => {
   it('a clear suburban noon needs nothing optional', () => {
@@ -54,6 +55,29 @@ describe('featureKey', () => {
     const s = resolveConditions({ weather: { convection: 0.5 } });
     s.clouds.cumulonimbus = 0.001;
     expect(featureKey(s) & FEATURE.CB).toBe(0);
+  });
+
+  it('keeps the cumulonimbus compiled in for as long as any of it can show, easing away or in', () => {
+    // The towers sink into their base as the amount falls, and the last of
+    // them is gone by 0.03 (cbLive and the alpha's fade in the shader): the
+    // variant must not drop the tower before then, nor add it after it has
+    // begun to climb back out. Stepped as the hero eases one scene into the next
+    const storm = resolveConditions({ time: 13, weather: { cloudCover: 0.18, convection: 0.85, windSpeed: 3, visibility: 30 } });
+    const fair = resolveConditions({ time: 17.8, weather: 'fair' });
+    const visible = 0.03;
+    for (const [from, to] of [[storm, fair], [fair, storm]]) {
+      const an = new StateAnimator(from);
+      let dropped = false;
+      for (let i = 0; i < 30 * 30; i++) {
+        an.step(to, 1 / 30);
+        const cb = an.current.clouds.cumulonimbus;
+        const on = (featureKey(an.current) & FEATURE.CB) !== 0;
+        if (cb >= visible) expect(on).toBe(true);
+        if (!on) dropped = true;
+      }
+      // and it does let go of it, once the amount is all but gone
+      expect(dropped).toBe(to === fair);
+    }
   });
 
   it('compiles light from behind in only with a sun up, no overcast and a cloud to light', () => {
