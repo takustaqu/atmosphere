@@ -43,10 +43,32 @@
     did, so a sky is laid out as before at every clock.
   - Controller example: a "Distance" slider in the Cumulonimbus companion
     forms drawer.
-- Cost, 1080p on an M2 Max, against 0.6.0 plus the sky additions above: a
-  summer sky 9.1 → 11.8 ms, a thunderstorm 6.6 → 9.2 ms, a sunset against a
-  thunderhead 8.0 → 9.5 ms; a fair sky with no cumulonimbus 4.2 → 4.9 ms and
-  a clear noon 1.4 → 1.5 ms by the code's presence in the program alone.
+- **A sky towards the sun or the moon** — the tower's backlight carries round
+  to a low sun's side: a tower 25–45° off it has a gold sunward flank and a
+  blue-violet body instead of a pale lavender wash; small clouds in front of
+  a backlit tower take its tone with only a lit rim instead of reading as
+  pasted-on chips; and an anvil seen side-on has a bright top, a darker
+  underside and translucent, streaked margins.
+
+### Performance
+
+- **Compiled out where it cannot show.** The cumulonimbus and everything
+  that serves it (`FEATURE.CB`), light from behind on cloud near the sun
+  (`BACKLIT`), cloud iridescence (`IRIDESCENCE`) and moonlight carried
+  through thin cloud (`MOONLIT`) are each their own shader feature, set only
+  when their light can be above zero. A frame without them no longer pays
+  for their presence in the program.
+- **Fewer noise reads in the thunderhead.** A second noise texture holds
+  each texel's 2×2 block, so the high-precision noise is one fetch instead of
+  four; the turret rows and lobe stack are skipped where the ray is clear of
+  any tower, anvil plates check their geometry before reading noise, and a
+  few per-pixel reads are deferred to where they can act.
+- At 1080p on an M2 Max, against 0.6.0 with the additions above: fair sky
+  3.9 → 3.0 ms, overcast 5.2 → 4.0, thunderstorm 5.6 → 5.0, night with a moon
+  halo 2.0 → 1.9, typhoon at sea 2.6 → 2.2 — faster than before. With a
+  cumulonimbus in view the rebuild still costs more: a summer sky 5.5 → 8.8,
+  towers at mid-distance 7.0 → 7.9, a sunset against a thunderhead 7.7 → 8.8.
+  The output is unchanged by these within 1/255.
 
 ### Added
 
