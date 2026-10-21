@@ -18,7 +18,7 @@ import {
   PROBE_FACE, PROBE_SUB, probeLayout, summarizeProbe,
   type LightMeasurement, type ProbeLayout,
 } from './light.js';
-import { NOISE_SIZE, noiseLattice } from './noise.js';
+import { NOISE_SIZE, noiseLattice, noiseQuads } from './noise.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
 const VERT = `
@@ -68,6 +68,9 @@ precision mediump sampler2D;
 // texel's: at the default lowp a filtered fetch comes back in ~1/128 steps and
 // every cloud edge terraces. The texels themselves are only 8-bit endpoints.
 uniform sampler2D u_noise;   // the baked value-noise lattice — see noise.ts
+#ifdef FEAT_CB
+uniform sampler2D u_noiseQ;  // the same lattice, each texel's square of four in rgba (vnoiseHQ)
+#endif
 
 uniform vec4  u_frame;     // the viewport being drawn: origin xy, size zw (pixels)
 uniform float u_aspect;    // width / height of the picture this viewport stands for
@@ -911,17 +914,18 @@ vec4 blobPack(vec2 p, float radius) {
 // sits: every column of the flank shifted on its own, and the edge broke up
 // into vertical hairline streaks. Reading the four corners at their texel
 // centers (vnoise of an integer point is exactly one texel) and mixing them
-// in full float precision gives the same field without the staircase, for
-// four fetches instead of one — so only the few azimuth-only reads use it,
-// and only for the two coarse octaves: a step is a fixed fraction of a
-// cell, so each finer octave's staircase is twice as fine and half as tall
-// again, and past the second it no longer shows
+// in full float precision gives the same field without the staircase. The
+// four corners come in one fetch, from a copy of the lattice with each
+// texel's square of four in its channels (u_noiseQ, see noiseQuads) — the
+// same 8-bit values the four reads of vnoise found — and still only the few
+// azimuth-only reads use it, and only for the two coarse octaves: a step is
+// a fixed fraction of a cell, so each finer octave's staircase is twice as
+// fine and half as tall again, and past the second it no longer shows
 float vnoiseHQ(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
-  float a = vnoise(i), b = vnoise(i + vec2(1.0, 0.0));
-  float c = vnoise(i + vec2(0.0, 1.0)), d = vnoise(i + vec2(1.0, 1.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  vec4 q = NOISEQ_FETCH((i + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)});
+  return mix(mix(q.x, q.y, f.x), mix(q.z, q.w, f.x), f.y);
 }
 float fbm4HQ(vec2 p) {
   vec2 p1 = p * 2.03 + vec2(17.3, 9.1);
@@ -4638,7 +4642,9 @@ function fragSource(explicitLod: boolean, split: boolean, key: number): string {
   return (explicitLod
     ? '#extension GL_EXT_shader_texture_lod : enable\n'
       + '#define NOISE_FETCH(uv) texture2DLodEXT(u_noise, (uv), 0.0)\n'
+      + '#define NOISEQ_FETCH(uv) texture2DLodEXT(u_noiseQ, (uv), 0.0)\n'
     : '#define NOISE_FETCH(uv) texture2D(u_noise, (uv))\n'
+      + '#define NOISEQ_FETCH(uv) texture2D(u_noiseQ, (uv))\n'
   ) + (explicitLod
     // the composite's read of the cloud stack sits in a branch too; same reason
     ? '#define CLOUD_FETCH(uv) texture2DLodEXT(u_clouds, (uv), 0.0)\n'
@@ -4803,7 +4809,7 @@ const POLL_MS = 16;
 type Uniforms = Record<string, WebGLUniformLocation | null>;
 
 const UNIFORM_NAMES = [
-  'u_noise',
+  'u_noise', 'u_noiseQ',
   'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun', 'u_moon', 'u_moonEclipse',
   'u_cover', 'u_high', 'u_mid', 'u_low',
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
@@ -4972,6 +4978,8 @@ export class AtmosphereRenderer {
   private explicitLod = false;
   private buffer: WebGLBuffer | null = null;
   private noise: WebGLTexture | null = null;
+  // the lattice again, each texel's square of four in rgba: unit 2, for vnoiseHQ
+  private noiseQ: WebGLTexture | null = null;
   // the light probe's offscreen target, made on first use and resized to the layout
   private probeFbo: WebGLFramebuffer | null = null;
   private probeTex: WebGLTexture | null = null;
@@ -5129,6 +5137,7 @@ export class AtmosphereRenderer {
       : gl.getExtension('KHR_parallel_shader_compile');
 
     this.noise = this.createNoise(gl);
+    this.noiseQ = this.createNoiseQuads(gl);
 
     // a fullscreen triangle. Every variant binds a_pos to attribute 0 before
     // it links, so this is set up once for all of them
@@ -5295,6 +5304,26 @@ export class AtmosphereRenderer {
   }
 
   /**
+   * The lattice's squares of four (noiseQuads), on unit 2. Read only at texel
+   * centers, so unfiltered: what comes back is the texel, nothing blended in
+   */
+  private createNoiseQuads(gl: WebGLRenderingContext): WebGLTexture | null {
+    const tex = gl.createTexture();
+    if (!tex) return null;
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, NOISE_SIZE, NOISE_SIZE, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, noiseQuads());
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.activeTexture(gl.TEXTURE0);
+    return tex;
+  }
+
+  /**
    * Carry the snow's fall forward to this frame. A frame that does not follow
    * on from the last (the first, a jump in the clock, its wrap) starts the
    * fall over as if it had always been in this direction, so a one-off frame
@@ -5330,6 +5359,7 @@ export class AtmosphereRenderer {
     // texture each unit holds is context state, and render() re-establishes that
     gl.uniform1i(v.u.u_noise, 0);
     gl.uniform1i(v.u.u_clouds, 1);
+    gl.uniform1i(v.u.u_noiseQ, 2);
     v.linked = true;
     if (!this.reported && v.key === this.wanted) {
       this.reported = true;
@@ -5351,10 +5381,12 @@ export class AtmosphereRenderer {
     if (gl) {
       for (const o of this.variants.values()) if (o.linked) gl.deleteProgram(o.program);
       if (this.noise) gl.deleteTexture(this.noise);
+      if (this.noiseQ) gl.deleteTexture(this.noiseQ);
     }
     this.variants = new Map();
     this.current = null;
     this.noise = null;
+    this.noiseQ = null;
     this.gl = null;
     this.notifyReady(false);
   }
@@ -5615,6 +5647,8 @@ export class AtmosphereRenderer {
     // bind every frame rather than only at init: another renderer sharing this
     // canvas (or anything else touching the context) may have swapped programs
     gl.useProgram(v.program);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.noiseQ);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.noise);
     const u = this.u;
@@ -5722,6 +5756,7 @@ export class AtmosphereRenderer {
       for (const v of this.variants.values()) if (!v.failed) gl.deleteProgram(v.program);
       if (this.buffer) gl.deleteBuffer(this.buffer);
       if (this.noise) gl.deleteTexture(this.noise);
+      if (this.noiseQ) gl.deleteTexture(this.noiseQ);
       this.freeProbe(gl);
       this.freeClouds(gl);
       for (const p of this.pending) this.timer?.deleteQueryEXT(p.q);
@@ -5735,5 +5770,6 @@ export class AtmosphereRenderer {
     this.current = null;
     this.buffer = null;
     this.noise = null;
+    this.noiseQ = null;
   }
 }

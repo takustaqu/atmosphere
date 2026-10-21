@@ -81,3 +81,34 @@ export function noiseLattice(): Uint8Array {
   cached = data;
   return data;
 }
+
+let cachedQuads: Uint8Array | null = null;
+
+/**
+ * The same lattice with each texel's square of four in its channels: r the
+ * texel itself, g the one to its right, b the one above, a the one above and
+ * right, wrapping at the edges as the lattice tiles.
+ *
+ * For `vnoiseHQ`, which blends the four corners of a cell itself rather than
+ * let the filter do it (see there) and so read them as four separate fetches.
+ * Read from here they are one, and the very same 8-bit values.
+ */
+export function noiseQuads(): Uint8Array {
+  if (cachedQuads) return cachedQuads;
+  const l = noiseLattice();
+  const n = NOISE_SIZE;
+  const data = new Uint8Array(n * n * 4);
+  for (let y = 0; y < n; y++) {
+    const y1 = (y + 1) % n;
+    for (let x = 0; x < n; x++) {
+      const x1 = (x + 1) % n;
+      const o = (y * n + x) * 4;
+      data[o] = l[y * n + x];
+      data[o + 1] = l[y * n + x1];
+      data[o + 2] = l[y1 * n + x];
+      data[o + 3] = l[y1 * n + x1];
+    }
+  }
+  cachedQuads = data;
+  return data;
+}
