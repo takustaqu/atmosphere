@@ -1604,8 +1604,8 @@ float smaxK(float a, float b, float k) {
 //          the pixel's own height (w)
 //   g_cbN  where the pixel's column is in the lobes' noise, and the
 //          directions across it and through it there
-vec4 g_cbT0, g_cbT1, g_cbT2, g_cbT3, g_cbT4;
-vec4 g_cbS0, g_cbS1, g_cbS2, g_cbS3, g_cbS4;
+vec4 g_cbT0, g_cbT1, g_cbT2, g_cbT3;
+vec4 g_cbS0, g_cbS1, g_cbS2, g_cbS3;
 // (the height the skirt's turrets reach no higher than, with room to spare:
 // over it they are not read at all — see where they are looked up, in main)
 float g_cbSkY;
@@ -1693,19 +1693,17 @@ float cbBare(vec3 p) {
   vec3 q = p;
   q.xz += cbSway(p.y, p.x);
   // (written out turret by turret: kept in an array and read in a loop, the
-  // ten of them went through memory at every read of the body, and the
+  // eight of them went through memory at every read of the body, and the
   // march reads it some forty times a pixel)
   f = smaxK(f, cbColumn(q, g_cbT0, 0.0), 0.05);
   f = smaxK(f, cbColumn(q, g_cbT1, 0.0), 0.05);
   f = smaxK(f, cbColumn(q, g_cbT2, 0.0), 0.05);
   f = smaxK(f, cbColumn(q, g_cbT3, 0.0), 0.05);
-  f = smaxK(f, cbColumn(q, g_cbT4, 0.0), 0.05);
   if (p.y < g_cbSkY) {
     f = smaxK(f, cbColumn(q, g_cbS0, g_cbQ.x), 0.03);
     f = smaxK(f, cbColumn(q, g_cbS1, g_cbQ.x), 0.03);
     f = smaxK(f, cbColumn(q, g_cbS2, g_cbQ.x), 0.03);
     f = smaxK(f, cbColumn(q, g_cbS3, g_cbQ.x), 0.03);
-    f = smaxK(f, cbColumn(q, g_cbS4, g_cbQ.x), 0.03);
   }
   return f;
 }
@@ -1717,7 +1715,7 @@ float cbBare(vec3 p) {
 // a storm unit of where the ray met the surface, where the bare body is as
 // good as a plane (a turret is a dozen hundredths across): each takes the
 // body from that plane and lays the cap and the lobes on it as cbBody does,
-// so the ten turrets are read once for all of them rather than once each
+// so the eight turrets are read once for all of them rather than once each
 // (two smooth maxima's gradient: each side weighted by how much of the
 // blend it holds)
 vec2 smaxW(float a, float b, float k) {
@@ -1756,13 +1754,11 @@ vec4 cbBodyG(vec3 p) {
   c = cbColumnG(q, g_cbT1, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
   c = cbColumnG(q, g_cbT2, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
   c = cbColumnG(q, g_cbT3, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbT4, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
   if (p.y < g_cbSkY) {
     c = cbColumnG(q, g_cbS0, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
     c = cbColumnG(q, g_cbS1, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
     c = cbColumnG(q, g_cbS2, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
     c = cbColumnG(q, g_cbS3, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-    c = cbColumnG(q, g_cbS4, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
   }
   // q.x = p.x + 0.035 sin(a1), q.z = p.z + 0.035 sin(a2)
   vec3 gp = vec3(gq.x * (1.0 + 9.0 * cs.x) - 7.0 * gq.z * cs.y,
@@ -1781,7 +1777,7 @@ vec4 cbBodyG(vec3 p) {
 // lobes' noise is read: the march reads the body a dozen or two times a
 // pixel, and each read is the bare body and the lobes over it and nothing
 // else. (The taps that leave the ray, above, read it whole)
-vec3 g_cbR0, g_cbR1, g_cbR2, g_cbR3, g_cbR4, g_cbK0, g_cbK1, g_cbK2, g_cbK3, g_cbK4;
+vec3 g_cbR0, g_cbR1, g_cbR2, g_cbR3, g_cbK0, g_cbK1, g_cbK2, g_cbK3;
 float g_cbBody;
 // g_cbY: the ray's own (cap under the ceiling, lift, base), g_cbM where in
 // the lobes' noise the ray is at depth 0
@@ -1797,13 +1793,11 @@ float cbRayBare(float z) {
   f = smaxK(f, cbRayCol(z, g_cbR1), 0.05);
   f = smaxK(f, cbRayCol(z, g_cbR2), 0.05);
   f = smaxK(f, cbRayCol(z, g_cbR3), 0.05);
-  f = smaxK(f, cbRayCol(z, g_cbR4), 0.05);
   if (g_cbQ.w < g_cbSkY) {
     f = smaxK(f, cbRayCol(z, g_cbK0), 0.03);
     f = smaxK(f, cbRayCol(z, g_cbK1), 0.03);
     f = smaxK(f, cbRayCol(z, g_cbK2), 0.03);
     f = smaxK(f, cbRayCol(z, g_cbK3), 0.03);
-    f = smaxK(f, cbRayCol(z, g_cbK4), 0.03);
   }
   return mix(f, -smaxK(-f, -g_cbY.x, 0.04), g_cbP.z);
 }
@@ -3852,8 +3846,8 @@ void main() {
                   * smoothstep(0.3, 0.7, cbAmt);
 
       // ── The turrets, in depth ──
-      // The tower's row and the skirt's, a turret either side of this
-      // pixel's own and one more: each as the 2D skyline takes it — eased
+      // The tower's row and the skirt's, the four turrets nearest this
+      // pixel in each: each as the 2D skyline takes it — eased
       // into a dome over the tropopause, carried up into the anvil's root
       // where it feeds one, sunk with the storm as it runs out — standing at
       // a depth of its own, the skirt's a little nearer the eye. Where the
@@ -3861,7 +3855,15 @@ void main() {
       // the nearest one's front and the most the lobes can swell it (A),
       // nor further than the furthest one's back, and not at all if no
       // turret comes within that of this pixel (fUp, which is also what the
-      // glow round a backlit rim reads, with no march)
+      // glow round a backlit rim reads, with no march).
+      //
+      // Four, not five: a turret is at most a cell and a third across at its
+      // flared foot, and the lobes reach some two fifths of a cell past it,
+      // so one whose cell is centred two cells off — the fifth nearest is
+      // never nearer than that, less its jitter — cannot meet the ray. Five
+      // to a row read the same picture and held a fifth more of the state
+      // every read of the body works from, live the whole way through the
+      // tower: the shader ran a tenth slower for it
       float fp = u_cam.z / u_frame.w * cbS;
       cbLobeSetup(fp, lobe);
       g_cbQ = vec4(baseY, fp, lobe, ty);
@@ -3888,8 +3890,8 @@ void main() {
       // in height, a ray started inside the body all along the foot of the
       // tower, and lit there what it found, one flat grey band)
       float fUp = bodyD, zLo = bodyD > -reach ? -sqrt(max(bodyD, 0.0) / CBV_BODYZ) - reach : 0.0, zHi = -zLo;
-      for (int j = 0; j < 5; j++) {
-        vec4 t = cbTurret(floor(cT) + float(j - 2), cT, nT, 1.0, cellT);
+      for (int j = 0; j < 4; j++) {
+        vec4 t = cbTurret(floor(cT - 0.5) + float(j - 1), cT, nT, 1.0, cellT);
         float yk = t.y;
         float hv = clamp(0.5 + 0.5 * (capV - yk) / 0.10, 0.0, 1.0);
         yk = mix(capV, yk, hv) - 0.05 * hv * (1.0 - hv);
@@ -3899,8 +3901,7 @@ void main() {
         float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * cbHead(T, 0.0), d2 = dx * dx + dy * dy;
         vec3 R = vec3(d2, T.w * (1.0 + CBV_FLARE * cbFlare(T.y - ty)), cbLean(ty, T, 0.0) - sw.y);
         if (j == 0) { g_cbT0 = T; g_cbR0 = R; } else if (j == 1) { g_cbT1 = T; g_cbR1 = R; }
-        else if (j == 2) { g_cbT2 = T; g_cbR2 = R; } else if (j == 3) { g_cbT3 = T; g_cbR3 = R; }
-        else { g_cbT4 = T; g_cbR4 = R; }
+        else if (j == 2) { g_cbT2 = T; g_cbR2 = R; } else { g_cbT3 = T; g_cbR3 = R; }
         fUp = max(fUp, R.y - sqrt(d2));
         float re = R.y + reach;
         if (re * re > d2) { float h = sqrt(re * re - d2); zLo = min(zLo, R.z - h); zHi = max(zHi, R.z + h); }
@@ -3913,18 +3914,17 @@ void main() {
       // the bare body under a lobe can sit a few hundredths inside the
       // surface, and a turret melted into it from just under that reach
       // still moved it, a line ruled across the tower where they dropped out)
-      g_cbS0 = g_cbS1 = g_cbS2 = g_cbS3 = g_cbS4 = vec4(0.0, -10.0, 0.0, 0.001);
-      g_cbK0 = g_cbK1 = g_cbK2 = g_cbK3 = g_cbK4 = vec3(1.0, -1.0, 0.0);
+      g_cbS0 = g_cbS1 = g_cbS2 = g_cbS3 = vec4(0.0, -10.0, 0.0, 0.001);
+      g_cbK0 = g_cbK1 = g_cbK2 = g_cbK3 = vec3(1.0, -1.0, 0.0);
       g_cbSkY = ty < skMax + reach + 0.08 ? skMax + reach + 0.08 : -10.0;
-      if (g_cbSkY > 0.0) for (int j = 0; j < 5; j++) {
-        vec4 t = cbTurret(floor(cS) + float(j - 2), cS, nS, 2.0, cellS);
+      if (g_cbSkY > 0.0) for (int j = 0; j < 4; j++) {
+        vec4 t = cbTurret(floor(cS - 0.5) + float(j - 1), cS, nS, 2.0, cellS);
         float yk = baseY + t.y * stand;
         vec4 T = vec4(t.x, yk - max(CBV_DOME * (yk - baseY), t.z / CBV_HEAD), -CBV_ZS + (t.w - 0.5) * CBV_ZT, t.z);
         float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * cbHead(T, baseY), d2 = dx * dx + dy * dy;
         vec3 R = vec3(d2, T.w * (1.0 + CBV_FLARE * cbFlare(T.y - ty)), cbLean(ty, T, baseY) - sw.y);
         if (j == 0) { g_cbS0 = T; g_cbK0 = R; } else if (j == 1) { g_cbS1 = T; g_cbK1 = R; }
-        else if (j == 2) { g_cbS2 = T; g_cbK2 = R; } else if (j == 3) { g_cbS3 = T; g_cbK3 = R; }
-        else { g_cbS4 = T; g_cbK4 = R; }
+        else if (j == 2) { g_cbS2 = T; g_cbK2 = R; } else { g_cbS3 = T; g_cbK3 = R; }
         fUp = max(fUp, R.y - sqrt(d2));
         float re = R.y + reach;
         if (re * re > d2) { float h = sqrt(re * re - d2); zLo = min(zLo, R.z - h); zHi = max(zHi, R.z + h); }
