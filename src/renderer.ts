@@ -6968,13 +6968,15 @@ export class AtmosphereRenderer {
    * volumetric tower, which the middle distance every sky is set at takes)
    */
   private keysFor(s: AtmosphereState | null): { key: number; share: number }[] {
-    if (s === null) {
-      const vol = this.cbMode !== '2d';
-      return [{ key: (ALL_FEATURES & ~FEATURE.CBVOL) | (vol ? FEATURE.CBVOL : 0), share: 1 }];
-    }
+    const all = (ALL_FEATURES & ~FEATURE.CBVOL) | (this.cbMode !== '2d' ? FEATURE.CBVOL : 0);
+    if (s === null) return [{ key: all, share: 1 }];
     const ks = featureKeys(s, this.rays, this.cbMode);
     if (this.opts.variants === false) {
-      // everything in one program — but which tower is the key's own
+      // everything in one program — the one above for a sky without a tower,
+      // which either tower's program draws alike (asked for by its own key,
+      // a fair tile in a gallery drawn with the volumetric program waited on
+      // a second compile and came out blank); with one, the key's own tower
+      if (!(ks[0].key & FEATURE.CB)) return [{ key: all, share: 1 }];
       for (const k of ks) k.key = (ALL_FEATURES & ~FEATURE.CBVOL) | (k.key & FEATURE.CBVOL);
     }
     return ks;
