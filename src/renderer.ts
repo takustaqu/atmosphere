@@ -4357,7 +4357,20 @@ void main() {
         // out, where one on a bulge has open air
         float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 2.0, w2));
         float u3 = smoothstep(-0.006 - wE, 0.006 + wE, F.x + 0.006 * F.z - 0.02 * F.w);
-        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3));
+        // (Where the light slides from a turret behind onto the edge of one
+        // in front of it, cF, the point it is read at stands in the crease
+        // between them, off both surfaces: the taps toward the sky find the
+        // edge in front overhanging it, and the face's turn there is the
+        // crease's, turned away from the eye — a dark blue-grey line drawn
+        // down the seams of a tower, darkest lit from the front. A crease
+        // the eye only grazes on its way from one face to the other is lit
+        // as those faces are: half way through the slide the sky's taps hold
+        // back nothing and the turn is pulled back toward the eye. Not the
+        // sun's taps: the slide's light lightened from them as well came and
+        // went with the march's steps, and under a high sun drew the seams
+        // in thin white lines)
+        float slide = 2.0 * cF * (1.0 - cF);
+        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3) * (1.0 - slide));
         // ...and how much cloud lies behind the surface along the eye's own
         // ray: little at a grazing margin, where the light comes through
         float v1 = smoothstep(-0.003 - wE, 0.003 + wE, F.x + 0.010 * F.w);
@@ -4412,7 +4425,7 @@ void main() {
         // back toward the eye: a cloud's rim is its thin outer skin, lit
         // through rather than shaded as a ball's limb is, and taken edge-on
         // every turret's rim came out a dark line drawn round it)
-        float wrap = smoothstep(-0.55, 1.05, dot(normalize(nrm + vec3(0.0, 0.0, -1.0)), Ls));
+        float wrap = smoothstep(-0.55, 1.05, dot(normalize(nrm + vec3(0.0, 0.0, -1.0) * (1.0 + 2.0 * slide)), Ls));
         // A dome over the florets is a hundred pixels across, and most of a
         // near tower's face is in the shade of the heads over it, where the
         // sun's tilt across it does nothing: tilted only that way it was a
