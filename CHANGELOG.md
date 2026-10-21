@@ -46,6 +46,14 @@
 
 ### Changed
 
+- **A trace of stratocumulus no longer streaks a thunderhead.** The layer
+  crossed a tower at its own translucency — a few percent of cloud in every
+  grain at the amounts a summer sky carries — and toward the horizon, where
+  the towers stand, its rolls are drawn out flat: the mass came out ruled
+  with faint pale and grey streaks, over either tower, the volumetric one's
+  smooth faces most. Over a tower now only what is nearly opaque crosses
+  it, in the tower's tone, as the cumulus's lumps already did.
+
 - **Every turret worked out once a frame.** The turret table the shader
   looks the thunderhead's turrets up in now carries each turret whole — its
   height, where in its cell it stands and its hashes — rather than only its

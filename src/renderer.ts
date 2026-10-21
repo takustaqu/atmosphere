@@ -5410,7 +5410,22 @@ void main() {
   if (u_low.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightM, sunsetF, flash, gloom, 1.05, cloudSun, 0.0);
-    OVER(col, g.x * u_low.y * 0.95 * horizonFade);
+    float scA = g.x * u_low.y * 0.95 * horizonFade;
+    // Over a tower, as the cumulus's fringes (below): only what is nearly
+    // opaque crosses it, in the tower's own tone. Here it is the amount
+    // that makes a grain translucent, not its edge — a trace of the layer
+    // is a few percent of cloud in every grain — and toward the horizon,
+    // where the towers stand, its rolls are drawn out flat: laid across the
+    // tower as they were, a sky with a trace of it in had the mass ruled
+    // with faint pale and grey streaks, a smear across the cauliflower
+    // (the volumetric tower's smooth shaded faces showed it most)
+#ifdef FEAT_CB
+    if (cbMask > 0.001) {
+      scA *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, scA)) * 0.92;
+      col = overTower(col, 1.0 - g.x, cbMask, cbCol, cbBack, mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF));
+    }
+#endif
+    OVER(col, scA);
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
   if (u_low.z > 0.02 && above && stack) {
