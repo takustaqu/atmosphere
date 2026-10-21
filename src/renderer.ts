@@ -19,7 +19,7 @@ import {
   type LightMeasurement, type ProbeLayout,
 } from './light.js';
 import { NOISE_SIZE, noiseLattice, noiseQuads } from './noise.js';
-import { SKIRT_TURRETS, TOWER_TURRETS, TURRET_SLOTS, turretTable } from './storm.js';
+import { SKIRT_TURRETS, TOWER_TURRETS, TURRET_ROWS, TURRET_SLOTS, stormAmount, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
 const VERT = `
@@ -71,7 +71,7 @@ precision mediump sampler2D;
 uniform sampler2D u_noise;   // the baked value-noise lattice — see noise.ts
 #ifdef FEAT_CB
 uniform sampler2D u_noiseQ;  // the same lattice, each texel's square of four in rgba (vnoiseHQ)
-uniform sampler2D u_turrets; // each turret's thrust this frame, read on the CPU (turretThrust)
+uniform sampler2D u_turrets; // each turret's thrust, height, center and hashes this frame, worked out on the CPU (turretThrust, rowTurret)
 #endif
 
 uniform vec4  u_frame;     // the viewport being drawn: origin xy, size zw (pixels)
@@ -1290,24 +1290,12 @@ float cbUnshape(float h, float ceil) {
   return x / 0.70;
 }
 
-// Cell k of a row of n round the sky (k counted on from cell 0, any
-// number of times round): its id, its center in the row's own count (on
-// k's side of the seam, so distances to it can be taken straight), and how
-// much of a turret it holds. n need not be whole: the cells are a whole
-// cell wide but the last, which takes what is left over, and its turret
-// fades out as that runs to nothing — and back in, where it reaches a
-// whole cell, at the center and size a whole cell's would have
-vec3 rowCell(float k, float n, float seed) {
-  float nI = floor(n), nf = n - nI;
-  // (a whole number of cells has no narrow one)
-  float m = nf > 0.0 ? nI + 1.0 : nI;
-  float wrap = floor(k / m);
-  float id = k - wrap * m;
-  float jit = (hash12(vec2(id, seed)) - 0.5) * 0.4;
-  bool part = id > nI - 0.5;
-  float ctr = part ? nI + nf * (0.5 + jit) : id + 0.5 + jit;
-  return vec3(id, wrap * n + ctr, part ? smoothstep(0.0, 0.6, nf) : 1.0);
-}
+// The cells of a row of n round the sky (rowCell: laid out on the CPU, see
+// rowCenter in storm.ts, and read back by rowTurret below). Each holds a
+// turret at a jittered place in it; n need not be whole: the cells are a
+// whole cell wide but the last, which takes what is left over, and its
+// turret fades out as that runs to nothing — and back in, where it reaches
+// a whole cell, at the center and size a whole cell's would have
 
 // The skyline of a row of turrets standing side by side round the horizon,
 // the way a cumulonimbus's head is a cluster of them: how high the cloud
@@ -1322,17 +1310,19 @@ vec3 rowCell(float k, float n, float seed) {
 // the turret's own center: read per pixel, the height changes from one
 // column of pixels to the next and the cap is no longer round. One read per
 // turret is a constant across it, so it is read once a frame for every
-// turret, on the CPU, and looked up here (turretThrust; see storm.ts —
-// read through the texture filter here, it stepped in time with the
-// storm's clock, the whole head at once). kind 0
-// raises the thrust into a tower top as the thrust itself does (gain is
-// its gain, ceil the tropopause cbShape gathers the crown under), a
-// quarter higher (see the turrets in main); kind 1, a
-// congestus skirt, only needs the thrust's two coarse octaves to say
-// whether a tower is near (gain is the skirt's height).
+// turret, on the CPU, and looked up here (rowTurret; see storm.ts — read
+// through the texture filter here, it stepped in time with the storm's
+// clock, the whole head at once). The tower's row (row 1) raises the thrust
+// into a tower top as the thrust itself does, by the storm's gain, under the
+// tropopause cbShape gathers the crown under, a quarter higher (see the
+// turrets in main); the congestus skirt's (row 2) only needs the thrust's
+// two coarse octaves to say whether a tower is near, times the skirt's
+// height. Each grows and slumps on a clock of its own — by a quarter, not
+// more: a turret that drops to half its neighbors' height leaves the tallest
+// standing alone over the crown as a spire. All of that is the same for every
+// pixel of the turret, and comes worked out in the table.
 //   n0     turrets round the whole sky at the middle distance
 //   cosEl  how much screen a radian of azimuth spans at this elevation
-//   live   the clock the turrets grow and slump to
 //   sc     the storm's scale (cbScale): n0·sc turrets round the sky
 //
 // n0·sc is rarely a whole number, so the row closes on itself through one
@@ -1342,39 +1332,41 @@ vec3 rowCell(float k, float n, float seed) {
 // since it may hold next to nothing (turretStep is one turret)
 
 // Turret id's thrust as the CPU read it this frame (u_turrets, see
-// storm.ts), two bytes to a number. row 0 is the tower's row: x its thrust,
-// the full fbm4 at its center; y the thrust as it stood CB_LAG ago (the
-// coarse pair then, the fine pair now). row 1 is the skirt's: x the
-// thrust's two coarse octaves
-vec2 turretThrust(float id, float row) {
-  vec4 t = TURRET_FETCH(vec2((id + 0.5) * ${(1 / TURRET_SLOTS).toFixed(10)}, row * 0.5 + 0.25));
+// storm.ts, row 0), two bytes to a number: x its thrust, the full fbm4 at
+// its center; y the thrust as it stood CB_LAG ago (the coarse pair then,
+// the fine pair now)
+vec2 turretThrust(float id) {
+  vec4 t = TURRET_FETCH(vec2((id + 0.5) * ${(1 / TURRET_SLOTS).toFixed(10)}, ${(0.5 / TURRET_ROWS).toFixed(4)}));
   return vec2(t.x + t.y * (1.0 / 255.0), t.z + t.w * (1.0 / 255.0));
+}
+// Turret k of a row of n round the sky (k a whole number, counted on from
+// cell 0 any number of times round — rowCell's count), as the CPU laid it
+// out this frame: x its id, y its center in the row's own count (on k's side
+// of the seam, so distances to it can be taken straight), z how high it
+// stands, w how broad (its hash, 0..1); and aux its two hashes, for its
+// breadth and the depth it stands at. row 1 is the tower's, 2 the skirt's.
+// (The row is m cells to a turn, the narrow one included; k's turn is read
+// half a cell on, where a whole k can never round to the wrong side of it)
+vec4 rowTurret(float k, float n, float row, out vec2 aux) {
+  float m = ceil(n);
+  float wrap = floor((k + 0.5) / m);
+  float id = k - wrap * m;
+  float u = (id + 0.5) * ${(1 / TURRET_SLOTS).toFixed(10)};
+  vec4 t = TURRET_FETCH(vec2(u, (row + 0.5) * ${(1 / TURRET_ROWS).toFixed(4)}));
+  vec4 h = TURRET_FETCH(vec2(u, ${((TURRET_ROWS - 0.5) / TURRET_ROWS).toFixed(4)}));
+  aux = row < 1.5 ? h.xy : h.zw;
+  return vec4(id, wrap * n + id + t.z + t.w * (1.0 / 255.0), (t.x + t.y * (1.0 / 255.0)) * 2.0, aux.x);
 }
 
 // one turret of the row (cell kk, read from c along it), laid onto the
 // skyline so far
-float turretStep(float sky, float kk, float c, float n, float gain, float kind,
-                 float cell, float live, float seed, float ceil) {
+float turretStep(float sky, float kk, float c, float n, float row, float cell) {
   float k = 0.6 * cell;
-  vec3 rc = rowCell(kk, n, seed);
-  float id = rc.x;
-  float h2 = hash12(vec2(id, seed + 3.1));
-  float h3 = hash12(vec2(id, seed + 7.7));
-  float ctr = rc.y;
-  float top;
-  if (kind < 0.5) {
-    float rk = pow(max(turretThrust(id, 0.0).x - 0.42, 0.0) * 4.6, 1.5) * gain + 0.25;
-    top = cbShape(cbReach(rk), ceil);
-  } else {
-    float mk = turretThrust(id, 1.0).x + 0.094;
-    top = smoothstep(0.35, 0.47, mk) * gain;
-  }
-  float R = (0.80 + 0.25 * h2) * cell;
-  // each grows and slumps on a clock of its own — by a quarter, not
-  // more: a turret that drops to half its neighbors' height leaves the
-  // tallest standing alone over the crown as a spire
-  float yk = top * (0.74 + 0.26 * (0.5 + 0.5 * sin(live * (0.7 + 0.6 * h2) + h3 * 6.2831853))) * rc.z;
-  float d = abs(c - ctr) * cell;
+  vec2 aux;
+  vec4 tr = rowTurret(kk, n, row, aux);
+  float R = (0.80 + 0.25 * tr.w) * cell;
+  float yk = tr.z;
+  float d = abs(c - tr.y) * cell;
   // the head is a broad dome, nearly level across its middle, and the
   // flanks steepen as they fall, down to half the turret's height at R —
   // where the body they share takes over — and past that steeply: a
@@ -1385,22 +1377,21 @@ float turretStep(float sky, float kk, float c, float n, float gain, float kind,
   float hm = clamp(0.5 + 0.5 * (t - sky) / k, 0.0, 1.0);
   return mix(sky, t, hm) + k * hm * (1.0 - hm) * 0.5;
 }
-float turretRow(float a, float n0, float gain, float kind,
-                float cosEl, float live, float seed, float ceil, float sc) {
+float turretRow(float a, float n0, float row, float cosEl, float sc) {
   float n = n0 * sc;
   float c = mod(a, 6.2831853) * n / 6.2831853;
   float ic = floor(c);
   float cell = 6.2831853 / n0 * cosEl;
   float sky = 0.0;
   for (int j = -1; j <= 1; j++) {
-    sky = turretStep(sky, ic + float(j), c, n, gain, kind, cell, live, seed, ceil);
+    sky = turretStep(sky, ic + float(j), c, n, row, cell);
   }
   // and beside a narrow cell the one past it: in cell 0 the one two back,
   // in the two cells before the seam the one two on. (Only while there
   // is a narrow cell at all: at the middle distance there is none, and
   // the row reads its three as it always did)
   if (fract(n) > 0.0 && (c < 1.0 || c >= floor(n) - 1.0)) {
-    sky = turretStep(sky, c < 1.0 ? ic - 2.0 : ic + 2.0, c, n, gain, kind, cell, live, seed, ceil);
+    sky = turretStep(sky, c < 1.0 ? ic - 2.0 : ic + 2.0, c, n, row, cell);
   }
   return sky;
 }
@@ -1588,25 +1579,14 @@ float cbLobes3(float f, vec3 N, float lift, float oct, float win) {
   return f;
 }
 
-// One turret of a row, read as turretStep reads it (the same cell, thrust,
-// clock and size): x its center across from the pixel's place c in the
-// row (storm units), y its top, z its radius, w a hash of its own
-vec4 cbTurret(float kk, float c, float n, float gain, float kind, float cell,
-              float live, float seed, float ceil) {
-  vec3 rc = rowCell(kk, n, seed);
-  float id = rc.x;
-  float h2 = hash12(vec2(id, seed + 3.1));
-  float h3 = hash12(vec2(id, seed + 7.7));
-  float top;
-  if (kind < 0.5) {
-    float rk = pow(max(turretThrust(id, 0.0).x - 0.42, 0.0) * 4.6, 1.5) * gain + 0.25;
-    top = cbShape(cbReach(rk), ceil);
-  } else {
-    float mk = turretThrust(id, 1.0).x + 0.094;
-    top = smoothstep(0.35, 0.47, mk) * gain;
-  }
-  float yk = top * (0.74 + 0.26 * (0.5 + 0.5 * sin(live * (0.7 + 0.6 * h2) + h3 * 6.2831853))) * rc.z;
-  return vec4((rc.y - c) * cell, yk, (0.80 + 0.25 * h2) * cell, hash12(vec2(id, seed + 5.3)));
+// One turret of a row, read as turretStep reads it (the same cell, height
+// and size, out of the table): x its center across from the pixel's place c
+// in the row (storm units), y its top, z its radius, w the hash it stands in
+// depth by
+vec4 cbTurret(float kk, float c, float n, float row, float cell) {
+  vec2 aux;
+  vec4 tr = rowTurret(kk, n, row, aux);
+  return vec4((tr.y - c) * cell, tr.z, (0.80 + 0.25 * tr.w) * cell, aux.y);
 }
 
 // a smooth max: two fields melted together over k, as two turrets' heads
@@ -1972,10 +1952,13 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
       float ic = floor(cQ);
       for (int j = -2; j <= 2; j++) {
         // the turret: the same cell, center and thrust turretRow reads
-        vec3 rc = rowCell(ic + float(j), N, 0.0);
-        float id = rc.x;
-        float h2 = hash12(vec2(id, 3.1));
-        float cc = rc.y;
+        vec2 aux;
+        vec4 tr = rowTurret(ic + float(j), N, 1.0, aux);
+        float id = tr.x;
+        float h2 = aux.x;
+        float cc = tr.y;
+        // (how much of a turret its cell holds: the narrow one's is less)
+        float rcz = id > floor(N) - 0.5 ? smoothstep(0.0, 0.6, fract(N)) : 1.0;
         float ak = cc * 6.2831853 / N;
         // (faded out toward the ends of the window read, or where the
         // window moves on a turret would drop out of it at a stroke and
@@ -2016,10 +1999,10 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
         // longest for a plate that is not young, and a loose plate's
         // margins move by at most |fib − 0.5| · 0.6
         float reachM = L * (0.85 + 0.30 * fib) * (0.85 + 0.30 * h2);
-        if (winC * rc.z > 0.0 && s > -0.10 - wA && s < reachM * 1.12
+        if (winC * rcz > 0.0 && s > -0.10 - wA && s < reachM * 1.12
             && q - abs(fib - 0.5) * 0.6 < 1.05) {
           // (the turret's own thrust, as the CPU read it: see turretThrust)
-          vec2 thr = turretThrust(id, 0.0);
+          vec2 thr = turretThrust(id);
           float riseC = pow(max(thr.x - 0.42, 0.0) * 4.6, 1.5) * gain;
           // ── The anvil's life ──
           // and where it stood a while ago (CB_LAG). A turret that reaches
@@ -2033,7 +2016,7 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
           float fN = smoothstep(1.7, 2.3, riseC), fP = smoothstep(1.7, 2.3, riseP);
           float cut = fP * (1.0 - fN);
           float young = fN * (1.0 - fP);
-          float feedC = sqrt(max(fN, fP)) * winC * rc.z;
+          float feedC = sqrt(max(fN, fP)) * winC * rcz;
           if (feedC > 0.01) {
             float reach = L * (0.85 + 0.30 * fib) * (0.85 + 0.30 * h2) * (1.0 - 0.55 * young);
             // (cut loose, its root has drifted off downwind of the turret)
@@ -3539,7 +3522,6 @@ void main() {
     // and a cap whose skyline drops as the rows climb leaves a gap under its
     // head. Taken at the head's own height instead
     float cosEl = sqrt(1.0 - min(topV * topV * 0.5, 0.5));
-    float turT = u_evo * 0.35;
     float azT = azw;
     // height, with a quadratic term that tapers the tower as it climbs:
     // too strong, it pinches the upper half into a needle — a real tower's
@@ -3580,8 +3562,8 @@ void main() {
       // neck: a finger poking up out of the crown. So it dies out well
       // below the heads)
       azT = azw + wob * 0.08 / (cosEl * cbS) * smoothstep(0.70, 0.40, ty / max(topV, 0.05));
-      headY = max(turretRow(azT, ${TOWER_TURRETS.toFixed(1)}, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS), headY);
-      skTop = max(baseY + turretRow(azT, ${SKIRT_TURRETS.toFixed(1)}, skGain, 1.0, cosEl, turT * 1.3, 17.0, ceilN, cbS), skTop);
+      headY = max(turretRow(azT, ${TOWER_TURRETS.toFixed(1)}, 1.0, cosEl, cbS), headY);
+      skTop = max(baseY + turretRow(azT, ${SKIRT_TURRETS.toFixed(1)}, 2.0, cosEl, cbS), skTop);
     }
     // ── Going, and coming ──
     // As the storm runs out (stand, see cbLive) its skyline sinks into the
@@ -3884,7 +3866,6 @@ void main() {
       cbLobeSetup(fp, lobe);
       g_cbQ = vec4(baseY, fp, lobe, ty);
       float A = cbLobeRest(0.0);
-      float gainT = 1.05 + 1.35 * cbAmt;
       float nT = ${TOWER_TURRETS.toFixed(1)} * cbS, nS = ${SKIRT_TURRETS.toFixed(1)} * cbS;
       float aT = mod(azT, 6.2831853) / 6.2831853;
       float cT = aT * nT, cS = aT * nS;
@@ -3908,7 +3889,7 @@ void main() {
       // tower, and lit there what it found, one flat grey band)
       float fUp = bodyD, zLo = bodyD > -reach ? -sqrt(max(bodyD, 0.0) / CBV_BODYZ) - reach : 0.0, zHi = -zLo;
       for (int j = 0; j < 5; j++) {
-        vec4 t = cbTurret(floor(cT) + float(j - 2), cT, nT, gainT, 0.0, cellT, turT, 0.0, ceilN);
+        vec4 t = cbTurret(floor(cT) + float(j - 2), cT, nT, 1.0, cellT);
         float yk = t.y;
         float hv = clamp(0.5 + 0.5 * (capV - yk) / 0.10, 0.0, 1.0);
         yk = mix(capV, yk, hv) - 0.05 * hv * (1.0 - hv);
@@ -3936,7 +3917,7 @@ void main() {
       g_cbK0 = g_cbK1 = g_cbK2 = g_cbK3 = g_cbK4 = vec3(1.0, -1.0, 0.0);
       g_cbSkY = ty < skMax + reach + 0.08 ? skMax + reach + 0.08 : -10.0;
       if (g_cbSkY > 0.0) for (int j = 0; j < 5; j++) {
-        vec4 t = cbTurret(floor(cS) + float(j - 2), cS, nS, skGain, 1.0, cellS, turT * 1.3, 17.0, ceilN);
+        vec4 t = cbTurret(floor(cS) + float(j - 2), cS, nS, 2.0, cellS);
         float yk = baseY + t.y * stand;
         vec4 T = vec4(t.x, yk - max(CBV_DOME * (yk - baseY), t.z / CBV_HEAD), -CBV_ZS + (t.w - 0.5) * CBV_ZT, t.z);
         float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * cbHead(T, baseY), d2 = dx * dx + dy * dy;
@@ -4421,7 +4402,7 @@ void main() {
       // on the flank comes loose. Over a level head the push barely changes
       // the height, so it lifts no scraps off it
       if (flank) {
-        float headB = turretRow(azT + (bMid - 0.60) * 0.06 / (cosEl * cbS), ${TOWER_TURRETS.toFixed(1)}, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS);
+        float headB = turretRow(azT + (bMid - 0.60) * 0.06 / (cosEl * cbS), ${TOWER_TURRETS.toFixed(1)}, 1.0, cosEl, cbS);
         headY = max(headY, mix(headY, min(headB, mix(baseY, headB, stand)), near));
       }
       // Nor does a turret run on far past the tropopause. Under an anvil
@@ -6645,7 +6626,7 @@ export class AtmosphereRenderer {
   // each turret's thrust (storm.ts): unit 3, refilled when the storm's clock
   // or distance moves; turretKey is what it was last filled for
   private turrets: WebGLTexture | null = null;
-  private turretData = new Uint8Array(TURRET_SLOTS * 2 * 4);
+  private turretData = new Uint8Array(TURRET_SLOTS * TURRET_ROWS * 4);
   private turretKey = '';
   // the light probe's offscreen target, made on first use and resized to the layout
   private probeFbo: WebGLFramebuffer | null = null;
@@ -7010,7 +6991,7 @@ export class AtmosphereRenderer {
   }
 
   /**
-   * The turrets' thrust (turretTable), on unit 3: TURRET_SLOTS × 2, read at
+   * The turrets (turretTable), on unit 3: TURRET_SLOTS × TURRET_ROWS, read at
    * texel centers and so unfiltered. Filled per frame by updateTurrets
    */
   private createTurrets(gl: WebGLRenderingContext): WebGLTexture | null {
@@ -7019,7 +7000,7 @@ export class AtmosphereRenderer {
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, TURRET_SLOTS, 2, 0,
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, TURRET_SLOTS, TURRET_ROWS, 0,
       gl.RGBA, gl.UNSIGNED_BYTE, this.turretData);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -7039,12 +7020,14 @@ export class AtmosphereRenderer {
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this.turrets);
     if (!this.turrets || !(s.clouds.cumulonimbus > 0)) return;
-    const key = s.features.distance + ' ' + evo;
+    // (the storm's size sets how high the thrust carries each turret)
+    const amount = stormAmount(s.clouds.cumulonimbus, s.rain, s.snow, s.wind);
+    const key = s.features.distance + ' ' + evo + ' ' + amount;
     if (key === this.turretKey) return;
     this.turretKey = key;
-    turretTable(s.features.distance, evo, this.turretData);
+    turretTable(s.features.distance, evo, amount, this.turretData);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, TURRET_SLOTS, 2, gl.RGBA, gl.UNSIGNED_BYTE, this.turretData);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, TURRET_SLOTS, TURRET_ROWS, gl.RGBA, gl.UNSIGNED_BYTE, this.turretData);
   }
 
   /**
