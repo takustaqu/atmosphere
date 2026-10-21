@@ -50,6 +50,20 @@
   pasted-on chips; and an anvil seen side-on has a bright top, a darker
   underside and translucent, streaked margins.
 
+- **The thunderhead moves smoothly, with a softer edge.** As it evolved it
+  rattled: some reads moved slowly with the storm's clock through the noise
+  texture's bilinear filter, which keeps only about 8 bits of position
+  between texels, so they held still for a few frames and then jumped — the
+  anvil plate spread in steps, each turret's head jumped as a whole every
+  ten frames or so, and a sunset flank flickered column by column. Each
+  turret's thrust is now computed once a frame on the CPU at full precision
+  and handed over as a small table, and the per-azimuth thrust blends all its
+  octaves in float. The edge fades over a couple of pixels rather than a
+  fixed width of the field, so it no longer reads as a cut-out or crawls at
+  a low resolution: tightest at the crown, wider down the flanks, wider again
+  on far storms and dying towers. Frame-to-frame change in a tower is now
+  steady (its variation 0.76 → 0.04), at no extra cost.
+
 ### Performance
 
 - **Compiled out where it cannot show.** The cumulonimbus and everything
