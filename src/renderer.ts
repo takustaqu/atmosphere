@@ -4230,28 +4230,13 @@ void main() {
         float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 2.0, w2));
         float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 2.0, 0.050));
         float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 1.0, 0.120));
-        // (Where the light slides from the turret behind onto the edge of
-        // the one in front of it (cF), the point it is read at stands in the
-        // crease between them, and the taps toward the sun and the sky pass
-        // through that edge, read as a solid body though a turret's edge is
-        // its thinnest, most broken-up cloud, which the light gets through
-        // and round: the slide went dark blue-grey in the front turret's
-        // shadow, a thin dark line drawn down every seam of a tower lit from
-        // the front. So what the edge holds back fades out there, half of
-        // it (all of it, and the slide stood out light where it had stood
-        // out dark, under a high sun). Not on the
-        // edge itself, which keeps its own: taken off it too, every seam was
-        // drawn in a thin white line. Nor against the sun, where the edge is
-        // what lines the seam, and taken off it lit the seams in thin gold
-        // lines)
-        float seam = 4.0 * cF * (1.0 - cF) * (1.0 - backT);
-        float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4) * (1.0 - 0.5 * seam);
+        float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
         // ...and the sky's: up, a lobe off, and back toward the eye — a point
         // in a crease has lobe standing over it and in front of it on the way
         // out, where one on a bulge has open air
         float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 2.0, w2));
         float u3 = smoothstep(-0.006 - wE, 0.006 + wE, F.x + 0.006 * F.z - 0.02 * F.w);
-        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3) * (1.0 - 0.5 * seam));
+        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3));
         // ...and how much cloud lies behind the surface along the eye's own
         // ray: little at a grazing margin, where the light comes through
         float v1 = smoothstep(-0.003 - wE, 0.003 + wE, F.x + 0.010 * F.w);
