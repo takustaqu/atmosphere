@@ -4009,8 +4009,53 @@ void main() {
                        + 0.30 * underC + (smoothstep(0.30, 0.70, edgeN) - 0.5) * 1.2, 0.0, 1.0);
       float wE = fp * (2.6 + 4.0 * sv);
 
+      // ── The florets ──
+      // Past the surface's two scales the cauliflower goes on in the light
+      // alone, as the 2D tower's does past its finest lobes: its buds
+      // (budPack), octave after octave down to a few pixels across — the
+      // same packed florets turning over at a fold a pixel or so wide, read in
+      // the same sky (cyl), drifting up as the lobes do. Each tilts the
+      // face (lean, along the azimuth and up) and its gaps are recesses
+      // (rec), seeing less of the sky and of the light scattered round
+      // inside the cloud.
+      //
+      // And on the outline they stand out against the sky, as the 2D
+      // tower's finest lobes fray its silhouette: each bud is a dome as
+      // high as half its cell, falling away to its rim as its own squared
+      // fall-off (bump: the domes of every octave stacked, in storm units),
+      // which the fade at the outline reads as that much more cloud. No
+      // steeper than that: where a dome climbed faster than the outline
+      // falls away, its top stood out past the outline on its own, a speck
+      // of cloud in the sky. Taken from the two scales of surface alone the
+      // outline was a smooth, rolling line a lobe or two across, where the
+      // 2D tower's is cauliflower down to a few pixels; and taken as more
+      // scales of surface, the march could not find their rims to within a
+      // pixel, and they sparkled as they drifted. Read in the sky, as the
+      // light reads them, they stand still on the screen but for their
+      // drift, and the fade a few pixels wide takes them in smoothly. (Less
+      // on a soft margin, which has its own thin, ragged edge. And only on
+      // the outline against the sky: laid on the edge of a turret in front
+      // of another too, it took the light from the face behind to the edge
+      // in front over a ragged band where the march's nearest pass came and
+      // went, and the seams sparkled)
+      float fpc = u_cam.z / u_frame.w * length(cyl) / sqrt(max(1.0 - rd.y * rd.y, 1e-4));
+      vec2 wfB = cyl - dirc * (u_evo * 0.026);
+      // (and under a storm's gloom, which takes all but a sixth of the
+      // tower's own light, not at all)
+      vec2 lean = vec2(0.0);
+      float rec = 0.0, bump = 0.0;
+      float budW = lobe * (1.0 - smoothstep(0.5, 0.9, gloom));
+      // (how far off the outline the march must look: the fade, and the
+      // most the florets can stand out past it — the octaves' domes of a
+      // cell at most fifty pixels high stacked, at their highest at once.
+      // They are read only once the march says the ray came that near:
+      // read for every ray the march takes, a band a lobe's reach wide
+      // round the whole tower read them for nothing)
+      float bumpS = 0.55 * fp * (1.0 - 0.6 * sv) * budW;
+      float wF = wE + 51.0 * bumpS;
+
       float m = 0.0, zL = 0.0, cF = 0.0;
-      if (fUp > -wE) {
+      if (fUp > -wF) {
         // ── The march ──
         // In from the near side, a step at a time by about as far as the
         // surface can be (the field is a distance to it, the lobes' slopes
@@ -4090,14 +4135,38 @@ void main() {
             cF = smoothstep(-wE, 0.0, gmax);
             zL = mix(zL, zg, cF);
           }
-        } else if (fmax > -wE) {
+        }
+        // (three octaves of them, the coarsest the first under 46 pixels a
+        // cell — fading out from 30, as the finest fades in from 5 to 8 —
+        // so a near or narrow view gets finer florets, not bigger ones:
+        // three octaves fixed at the coarse end left a close view of the
+        // tower with nothing under twenty pixels)
+        if (hit || fmax > -wF) {
+          float k0 = max(0.0, ceil(log(1.0 / (46.0 * 7.6 * fpc)) * 1.3478));
+          for (int j = 0; j < 3; j++) {
+            float k = k0 + float(j);
+            float fq = 7.6 * pow(2.1, k);
+            float cellPx = 1.0 / (fpc * fq);
+            float wB = smoothstep(5.0, 8.0, cellPx) * (1.0 - smoothstep(30.0, 46.0, cellPx)) * budW;
+            if (wB > 0.0) {
+              vec3 bud = budPack(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc);
+              lean += bud.xy * ((0.75 - 0.12 * float(j)) * wB);
+              rec += bud.z * (0.14 * wB);
+              float q = max(1.0 - sqrt(bud.z), 0.0);
+              bump += q * q * cellPx * (wB / max(budW, 1e-3));
+            }
+          }
+          rec = clamp(rec, 0.0, 1.0);
+          bump *= bumpS;
+        }
+        if (!hit && fmax > -wE - bump) {
           // (a ray that grazed the outline: how near it came, read exactly.
           // Through the filter the nearest pass moved in its steps as the
           // lobes drifted, and the fade at the outline with it)
           zL = gmax >= fmax ? zg : zmax;
           fmax = cbRay(zL);
         }
-        m = smoothstep(-wE, 0.0, min(fmax, g_cbY.z));
+        m = smoothstep(-wE, 0.0, min(fmax + bump, g_cbY.z));
       }
       // just outside a backlit rim the tower's last wisps, too thin to see,
       // scatter the sun forward into a glow hugging the silhouette — read off
@@ -4204,40 +4273,6 @@ void main() {
         // read off the taps alone, a face square to the sun was one flat white
         float gl = length(F.yzw);
         vec3 nrm = gl > 1e-4 ? -F.yzw / gl : vec3(0.0, 0.0, -1.0);
-        // ── The florets ──
-        // Past the surface's two scales the cauliflower goes on in the light
-        // alone, as the 2D tower's does past its finest lobes: its buds
-        // (budPack), octave after octave down to a few pixels across — the
-        // same packed florets turning over at a fold a pixel or so wide, read in
-        // the same sky (cyl), drifting up as the lobes do. Each tilts the
-        // face (lean, along the azimuth and up) and its gaps are recesses
-        // (rec), seeing less of the sky and of the light scattered round
-        // inside the cloud
-        float fpc = u_cam.z / u_frame.w * length(cyl) / sqrt(max(1.0 - rd.y * rd.y, 1e-4));
-        vec2 wfB = cyl - dirc * (u_evo * 0.026);
-        // (and under a storm's gloom, which takes all but a sixth of the
-        // tower's own light, not at all)
-        vec2 lean = vec2(0.0);
-        float rec = 0.0;
-        float budW = lobe * (1.0 - smoothstep(0.5, 0.9, gloom));
-        // (three octaves of them, the coarsest the first under 46 pixels a
-        // cell — fading out from 30, as the finest fades in from 5 to 8 —
-        // so a near or narrow view gets finer florets, not bigger ones:
-        // three octaves fixed at the coarse end left a close view of the
-        // tower with nothing under twenty pixels)
-        float k0 = max(0.0, ceil(log(1.0 / (46.0 * 7.6 * fpc)) * 1.3478));
-        for (int j = 0; j < 3; j++) {
-          float k = k0 + float(j);
-          float fq = 7.6 * pow(2.1, k);
-          float cellPx = 1.0 / (fpc * fq);
-          float wB = smoothstep(5.0, 8.0, cellPx) * (1.0 - smoothstep(30.0, 46.0, cellPx)) * budW;
-          if (wB > 0.0) {
-            vec3 bud = budPack(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc);
-            lean += bud.xy * ((0.75 - 0.12 * float(j)) * wB);
-            rec += bud.z * (0.14 * wB);
-          }
-        }
-        rec = clamp(rec, 0.0, 1.0);
         nrm = normalize(nrm + vec3(dot(lean, vec2(dirc.y, -dirc.x)), dot(lean, dirc), 0.0));
         // (the sun's fall-off across a dome read off the face half turned
         // back toward the eye: a cloud's rim is its thin outer skin, lit
