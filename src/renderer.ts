@@ -936,14 +936,15 @@ float cbScale(float d) {
 // born where the drift raises the mass over the cut, grows as it climbs,
 // spreads its anvil while it stands at the tropopause, and decays as the
 // drift carries the mass down again — so this is the clock every tower
-// lives by, each at its own stage of the same drift. Half the speed it
-// used to run at, so a tower lives about four minutes at the default
-// evolution speed; the offset keeps the sky the animator opens on (evo
-// 7.3) as it was. CB_LAG is how far back a tower's past is read: what it
-// was doing about a minute ago says whether it is growing or dying, how
-// long its anvil has been spreading, and whether an anvil it fed has been
-// cut loose
-float cbClock() { return 0.438 + u_evo * 0.06; }
+// lives by, each at its own stage of the same drift. It runs at the speed
+// the storm always drifted at, so every clock lays the sky out where it
+// always stood: run at half that, with an offset that kept only the
+// opening sky in place, every other clock moved, and a tower that stood
+// square in front of a setting sun was gone from it, a low bank in its
+// place. CB_LAG is how far back a tower's past is read: what it was doing
+// a little while ago says whether it is growing or dying, how long its
+// anvil has been spreading, and whether an anvil it fed has been cut loose
+float cbClock() { return u_evo * 0.12; }
 const float CB_LAG = 0.25;
 
 // How high a cumulonimbus's thrust carries it: the height y solving
@@ -2801,14 +2802,27 @@ void main() {
           float backA = backlit(rd, sunDir, mix(0.35, 1.0, smoothstep(0.15, 0.60, sunEl)));
           if (backA > 0.0) {
             float fwd = exp(-sunAng * 5.0);
-            vec3 dark = (shade * 0.80 + moon * 0.3) * gainA;
+            // (as dark as the tower's own heart where it is thick, over the
+            // tower, so the two read as one silhouette)
+            vec3 dark = (shade * mix(0.80, 0.55, smoothstep(0.30, 0.80, thick)) + moon * 0.3) * gainA;
             vec3 rimA = mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF);
-            // (thin as the eye sees it: how much ice the ray itself crosses,
+            // Thin as the eye sees it: how much ice the ray itself crosses,
             // not how thick the plate is there — a plate crossed near its
-            // edge, or far out where it is a veil, lets the light through)
-            float thinB = max(thin * thin, exp(-tau * 0.35));
+            // edge, or far out where it is a veil, lets the light through.
+            // Thin ice in front of the sun glows, and goes on glowing well
+            // into the depth at which it would hide a disc; only thick ice
+            // goes dark. Read as a straight blend between the two (and
+            // floored by the plate's own thinness), a plate of middling
+            // depth over the tower's crown came out a half-lit grey-brown
+            // band: neither the anvil's dark nor its lining
+            float thinB = smoothstep(0.05, 0.55, exp(-tau * 0.35));
             vec3 bcol = mix(dark, rimA * (1.25 + 0.9 * fwd), thinB * mix(0.65, 1.0, fwd));
             anvCol = mix(anvCol, bcol, backA);
+            // and a dark veil is no veil: ice the light does not come through
+            // stands as solid as the tower, and where it is too little to be
+            // solid it is too little to darken the sky — a half-covering of
+            // dark ice laid a grey film over the crown and its lining
+            anvA *= mix(1.0, smoothstep(0.30, 0.80, anvA), (1.0 - thinB) * backA);
           }
           anvCol = mix(anvCol, leaden, gloom * 0.85);
           anvCol += flash * vec3(0.75, 0.80, 1.0) * 0.45;
@@ -2914,8 +2928,16 @@ void main() {
         float riseN = pow(max(mass - 0.42, 0.0) * 4.6, 1.5) * gain0;
         float riseP = pow(max(massP - 0.42, 0.0) * 4.6, 1.5) * gain0;
         float here = smoothstep(0.40, 0.46, mass) * smoothstep(-0.15, -0.10, envT);
-        decay = smoothstep(0.05, 0.45, riseP - riseN) * here;
-        growth = smoothstep(0.05, 0.45, riseN - riseP) * here;
+        // Measured against the tower's own size, and dying only once it
+        // has lost a good part of itself: read as a bare difference, a big
+        // tower moved past the threshold at the least change, so every one
+        // was either climbing or sinking — half the storm dying at any
+        // moment, and a tower soft and slumped from the moment it passed
+        // its peak. A grown tower holds its height a while; it is the
+        // shrinking remnant of one, late in its life, that wastes away
+        float rel = (riseN - riseP) / max(max(riseN, riseP), 0.8);
+        decay = smoothstep(0.30, 0.65, -rel) * here;
+        growth = smoothstep(0.08, 0.35, rel) * here;
       }
       // (a dying tower's lobes slump: shallower, all of them)
       near *= 1.0 - 0.45 * decay;
@@ -3325,6 +3347,12 @@ void main() {
         // kilometres off still stands white over a foot sunk in the haze)
         float airD = mix(pow(cbS, 0.6), 1.0, smoothstep(baseY, ceilN, ty));
         float air = 1.0 - exp(-(0.35 + 0.40 * u_haze) * 0.12 * far * airD / max(rd.y, 0.02));
+        // Against the sun the air's color is the glow round the disc, far
+        // brighter than the tower, and a far storm's foot, deep in the haze,
+        // went all the way to it: the silhouette sank into a bright band.
+        // Haze in front of a dark mass lends it some of the sky's light; it
+        // does not turn it into the sky
+        air = mix(air, min(air, 0.55), back);
         tcol = mix(tcol, airCol, air);
         cbMask = clamp(m, 0.0, 1.0);
         OVER(tcol, cbMask);
