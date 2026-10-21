@@ -1854,10 +1854,22 @@ float cbRay(float z) {
 // The light's nearest taps — a hundredth or two of a storm unit off — read
 // the body from the plane this gives instead of reading it again each
 // (one scale of lobes: its swell, and the swell's slope)
-vec4 cbLobeG(vec4 F, vec4 n, vec3 g, float a) {
+//
+// The crease where a scale's noise crosses its middle turns the surface over
+// in a line no wider than the noise is fine: under a pixel, the light read
+// off this plane flipped from one side of it to the other there, and as the
+// lobes drifted the line crawled. So the slope turns over across three
+// pixels instead (lam: the scale's size, in storm units — its noise climbs
+// some three times its range across one of them)
+vec4 cbLobeG(vec4 F, vec4 n, vec3 g, float a, float lam) {
   float s = 2.0 * n.x - 1.0;
   float b = abs(s) - 0.30;
-  vec3 gb = sign(s) * 2.0 * g;
+  float e = 9.0 * g_cbQ.y / lam;
+  // (and a scale under ten pixels across turns the light with less of its
+  // slope, none under four: a floret a few pixels wide turned its pixels
+  // lit and unlit one by one as it drifted, a sparkle over the face. Its
+  // swell stays — the outline and the taps further off still see it)
+  vec3 gb = s * inversesqrt(s * s + e * e) * 2.0 * g * smoothstep(4.0, 10.0, lam / g_cbQ.y);
   if (b < 0.0) return F + a * vec4(b, gb);
   float t = clamp(F.x / a + 1.0, 0.0, 1.0);
   float S = t * t * (3.0 - 2.0 * t), dS = 6.0 * t * (1.0 - t) / a;
@@ -1875,27 +1887,27 @@ vec4 cbFieldG(float z, vec4 B) {
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
   vec4 n = vnoise3d(p + g_cbE0);
   vec3 gN = n.yzw * (1.0 / CBV_L0);
-  F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.x);
+  F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.x, CBV_L0);
   if (g_cbA.y > 0.0) {
     p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
     n = vnoise3d(p + g_cbE1);
     gN = n.wyz * (2.03 / CBV_L0);
-    F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.y);
+    F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.y, CBV_L0 * 0.5);
     if (g_cbA.z > 0.0) {
       p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
       n = vnoise3d(p + g_cbE2);
       gN = n.zwy * (4.1209 / CBV_L0);
-      F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.z);
+      F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.z, CBV_L0 * 0.25);
       if (g_cbA.w > 0.0) {
         p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
         n = vnoise3d(p + g_cbE3);
         gN = n.yzw * (8.3654 / CBV_L0);
-        F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.w);
+        F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.w, CBV_L0 * 0.125);
         if (g_cbA4 > 0.0) {
           p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
           n = vnoise3d(p + g_cbE4);
           gN = n.wyz * (16.982 / CBV_L0);
-          F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA4);
+          F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA4, CBV_L0 * 0.0625);
         }
       }
     }
@@ -3929,10 +3941,13 @@ void main() {
       // stands higher than its own top, skMax at most, and over it the field
       // falls away at least as fast as the height climbs — and the light's
       // taps all climb from here toward a sun over the horizon. Higher up the
-      // tower they stand nowhere, and are not looked up)
+      // tower they stand nowhere, and are not looked up — with room to spare:
+      // the bare body under a lobe can sit a few hundredths inside the
+      // surface, and a turret melted into it from just under that reach
+      // still moved it, a line ruled across the tower where they dropped out)
       g_cbS0 = g_cbS1 = g_cbS2 = g_cbS3 = g_cbS4 = vec4(0.0, -10.0, 0.0, 0.0);
       g_cbK0 = g_cbK1 = g_cbK2 = g_cbK3 = g_cbK4 = vec3(1.0, -1.0, 0.0);
-      if (ty < skMax + reach) for (int j = 0; j < 5; j++) {
+      if (ty < skMax + reach + 0.08) for (int j = 0; j < 5; j++) {
         vec4 t = cbTurret(floor(cS) + float(j - 2), cS, nS, skGain, 1.0, cellS, turT * 1.3, 17.0, ceilN);
         float yk = baseY + t.y * stand;
         vec4 T = vec4(t.x, yk - t.z / CBV_HEAD, -CBV_ZS + (t.w - 0.5) * CBV_ZT, t.z);
@@ -4060,24 +4075,17 @@ void main() {
         // sky at every one of them and is lit; one in the fold behind it
         // looks through the bulge and is not. That is the cauliflower's
         // modelling — bright domes over blue folds — which no tilt of a
-        // painted normal gave
-        // (the long ones count for less than their length: over a turret's
-        // width the light has scattered round whatever lobe stood in its way)
-        // ...and the sky's: up, a lobe off, and back toward the eye — a point
-        // in a crease has lobe standing over it and in front of it on the way
-        // out, where one on a bulge has open air
-        // ...and how much cloud lies behind the surface along the eye's own
-        // ray: little at a grazing margin, where the light comes through
+        // painted normal gave. (The long ones count for less than their
+        // length: over a turret's width the light has scattered round
+        // whatever lobe stood in its way.)
         //
-        // The nearest of them — a floret's and a lobe's toward the sun, a
-        // floret's up and toward the eye, and a floret's behind — lie within
-        // a hundredth or two of the surface, where it is as good as the plane
-        // it touches: they read the body off that plane (F, the whole body
-        // and its slope where the ray met it), and only the ones a lobe or a
-        // turret off read it again. A turret's width or more toward the sun
-        // the other turrets are what stands in the way, and there the bare
-        // body is read whole; a lobe off the bare body is still the plane it
-        // touches here (B), with the coarse lobes laid on it
+        // The nearest of them lie within a hundredth or two of the surface,
+        // where it is as good as the plane it touches: they read the body off
+        // that plane (F, the whole body and its slope where the ray met it).
+        // A lobe off, the bare body is still the plane it touches here (B),
+        // with the coarse lobes laid on it; only a turret's width or more
+        // toward the sun, where the other turrets are what stands in the way,
+        // is the bare body read whole
         vec4 B = cbBodyG(P);
         vec4 F = cbFieldG(zL, B);
         float w2 = 0.012 + wE;
@@ -4087,11 +4095,27 @@ void main() {
         float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 2.0, 0.050));
         float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 1.0, 0.120));
         float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
+        // ...and the sky's: up, a lobe off, and back toward the eye — a point
+        // in a crease has lobe standing over it and in front of it on the way
+        // out, where one on a bulge has open air
         float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 3.0, w2));
         float u3 = smoothstep(-0.006 - wE, 0.006 + wE, F.x + 0.006 * F.z - 0.02 * F.w);
         float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3));
+        // ...and how much cloud lies behind the surface along the eye's own
+        // ray: little at a grazing margin, where the light comes through
         float v1 = smoothstep(-0.003 - wE, 0.003 + wE, F.x + 0.010 * F.w);
         float alphaV = 1.0 - exp(-CBV_SIGV * (0.003 + 0.020 * v1));
+        // ...and whether another turret stands behind this one, a few
+        // hundredths further along the ray (the bare turrets). How near the
+        // outline this is (bare) is how near the ray passes the turrets'
+        // axes, which is small along the seam where a turret in front meets
+        // one behind as well as at the true outline: there the margin let
+        // the sky through, and the lining lit up, in thin lines down the
+        // inside of the tower. (Read off the turrets as bodies, which the
+        // light holds anyway: read along the ray, as the march reads them,
+        // the march's own numbers had to be kept to here, and the whole
+        // shader ran a sixth slower for the room they took)
+        float behind = smoothstep(-0.02, 0.04, cbBare(P + vec3(0.0, 0.0, 0.06)));
 
         // ── Its light ──
         // The palette is the 2D tower's (cloudLight), at the same authored
@@ -4107,6 +4131,20 @@ void main() {
         vec3 sky3 = mix(ambient + glow, shade * 0.75, backT);
         vec3 deep = shade * mix(0.80, 0.50, backT);
         vec3 tcol = mix(deep, sky3, ambVis) + moon * (0.3 + 0.4 * ambVis);
+        // The face's own turn, off the plane F gives: which way it looks (n:
+        // across, up, toward the eye negative). The sky's light comes from
+        // above, so a face turned up sees more of it than one turned down —
+        // what still models a floret the sun does not reach, and the taps,
+        // all of them a floret or more off, cannot tell from one pixel to
+        // the next; and the sun's falls off across a dome as it turns away,
+        // past the terminator the taps find (wrapped, as a cloud's light is,
+        // through its outer hundred metres). So every lobe keeps a lit cap and
+        // a dimmer flank even where nothing stands between it and the sun:
+        // read off the taps alone, a face square to the sun was one flat white
+        float gl = length(F.yzw);
+        vec3 nrm = gl > 1e-4 ? -F.yzw / gl : vec3(0.0, 0.0, -1.0);
+        float wrap = smoothstep(-0.55, 1.05, dot(nrm, Ls));
+        tcol *= 0.88 + 0.30 * nrm.y;
         // The sun's share: what comes straight through, and what comes after
         // scattering many times over, as a second and a third much fainter
         // extinction — what keeps a fold a luminous grey rather than a hole,
@@ -4125,7 +4163,15 @@ void main() {
         // back than the cloud under it, a slightly darker rim just inside a
         // sunlit edge — only where the light comes from the eye's side
         float powder = mix(1.0, 0.75 + 0.25 * alphaV, 1.0 - smoothstep(-0.2, 0.6, cosT));
-        tcol += sunL * (0.38 * Tsun * mix(1.0, ph, 0.25) + 0.13 * ms) * powder * (1.0 - diffuse * 0.75);
+        // (and in the shade the light scattered many times over is most of
+        // what there is: the 2D tower's shaded faces carry a third of the
+        // sun's light, the luminous blue-white of a sunlit tower's shadow
+        // side. Read off the taps' extinction alone the lower body, under
+        // the heads that shade it from a high sun, sank into a flat dark
+        // grey band; so the shade takes more of the scattered light the
+        // less of the direct it has)
+        tcol += sunL * (0.46 * Tsun * mix(0.45, 1.0, wrap) * mix(1.0, ph, 0.25) + (0.13 + 0.55 * (1.0 - Tsun)) * ms)
+              * powder * (1.0 - diffuse * 0.75);
         // and where the cloud is thin enough that the light comes on through
         // it toward the eye: the silver lining, hottest by the disc. Thin is
         // the outermost of the outline — the lobes standing out past the bare
@@ -4134,7 +4180,7 @@ void main() {
         // find the thin skin there but not the forward-scattered glow that
         // spreads a little way in from it, so that is laid on by how near
         // the outline is
-        float rimW = 1.0 - smoothstep(-0.01, 0.05, bare);
+        float rimW = (1.0 - smoothstep(-0.01, 0.05, bare)) * (1.0 - behind);
         rimW *= rimW;
         tcol += rimC * min(hgF / 0.40, 8.0) * (0.10 * Tsun * (1.0 - alphaV * 0.85) + 0.10 * rimW * exp(-0.12 * tau))
               * (1.0 - diffuse);
@@ -4143,16 +4189,59 @@ void main() {
         // Less light reaches lower down a column kilometres thick than any
         // few taps can find: it comes in at the top and the sun side and is
         // spent on the way down. So, as the 2D tower does, the color sinks
-        // toward the sky-lit base over the lower part of the cloud
+        // toward the sky-lit base — but only over the foot of the cloud, the
+        // last few hundred metres over the base in the shadow of the rest.
+        // Run over the lower half and more, as it was, the whole body sank
+        // into one long smooth grey band under white heads
         float cloudH = max(max(topL, skTop) - baseY, 0.04);
-        float depth = 1.0 - smoothstep(baseY, baseY + min(cloudH * 0.6, max((anvilTop - baseY) * 0.65, 0.20)), ty);
-        depth = mix(depth, 1.0 - smoothstep(baseY, skTop + 0.02, ty), skW);
+        float depth = 1.0 - smoothstep(baseY, baseY + min(cloudH * 0.30, max((anvilTop - baseY) * 0.35, 0.10)), ty);
+        depth = mix(depth, 1.0 - smoothstep(baseY, baseY + (skTop + 0.02 - baseY) * 0.6, ty), skW);
         vec3 base = (mix(ambient, shade, 0.5) + moon * 0.3) * gain;
-        tcol = mix(tcol, base, depth * depth * 0.6);
+        tcol = mix(tcol, base, depth * depth * 0.8);
         // and right over the base the underside itself, flat and turned away
         // from the sky: the darkest band of the whole cloud
         float under = 1.0 - smoothstep(baseY, baseY + min(0.028, cloudH * 0.25), ty);
         tcol = mix(tcol, deep * gain * 0.95, under * 0.70);
+#ifdef FEAT_BACKLIT
+        // ── Against the sun ── (as the 2D tower's: see there)
+        // The face turned this way is in the tower's own shadow, and what
+        // comes through it has crossed kilometres of cloud: the mass goes
+        // dark in the shade's color, its florets still told apart by which
+        // way each turns to the sun, and only the rim — the outermost of the
+        // outline, where the light has little cloud left to cross — blazes in
+        // the sun's own color. Read off the taps alone a tower over a low sun
+        // came out a flat lavender-grey, the multiply scattered light the
+        // taps let through lighting the whole face evenly. With the sun round
+        // to the side the lining keeps to the edge that faces it, and the
+        // flank turned to the sun takes it straight, gold over the shade
+        if (backT > 0.0) {
+          // how far the light had to come: deep in the outline and low down
+          // (bare, how far inside the turrets this is), less in a fold
+          float through = clamp(smoothstep(0.0, 0.10, bare) * (0.62 + depth * 0.35) - (1.0 - ambVis) * 0.30, 0.0, 1.0);
+          vec3 dark = (shade * mix(0.95, mix(0.55, 0.66, side), through) + moon * 0.3) * gain;
+          float latL = max(length(Ls.xy), 1e-3);
+          float toSun = dot(nrm.xy, Ls.xy) / latL;
+          dark *= mix(0.84, 1.16, smoothstep(-0.45, 0.60, toSun)) * mix(0.72, 1.0, ambVis);
+          float fwd = exp(-sunAng * 5.0);
+          // the turrets' own turn, with no lobe on it: the flank's side
+          float bl = length(B.yzw);
+          vec3 nB = bl > 1e-4 ? -B.yzw / bl : vec3(0.0, 0.0, -1.0);
+          float edgeS = dot(normalize(nB.xy + vec2(1e-4, 0.0)), Ls.xy / latL);
+          float margin = (1.0 - smoothstep(0.0, 0.06, bare)) * (1.0 - behind);
+          float rimB = (1.0 - smoothstep(-0.01, 0.07, bare)) * (1.0 - behind);
+          rimB *= rimB * mix(0.70, 1.0, fwd);
+          rimB *= mix(0.55, 1.0, smoothstep(-0.45, 0.60, toSun)) * mix(0.70, 1.0, ambVis);
+          rimB *= mix(1.0, smoothstep(-0.15, 0.70, edgeS), side);
+          dark += cloudSun * fwd * fwd * 0.25 * (1.0 - through * 0.7);
+          vec3 bcol = mix(dark, rimC * (1.7 + 0.8 * fwd), rimB);
+          float facing = max(edgeS, 0.0);
+          float flank = side * max(smoothstep(0.45, 0.85, smoothstep(-0.32, 0.48, dot(nB, Ls))),
+                                   margin * smoothstep(0.05, 0.45, facing));
+          vec3 litF = (shade * 0.35 + sunL * (0.80 + 0.40 * facing) + moon * 0.3) * gain;
+          bcol = mix(bcol, litF, flank * (1.0 - rimB));
+          tcol = mix(tcol, bcol, backT);
+        }
+#endif
         tcol = mix(tcol, leaden, gloom * 0.85);
         tcol += flash * vec3(0.75, 0.80, 1.0) * 0.55;
 
@@ -4174,7 +4263,7 @@ void main() {
         // remnant of a storm that is running out thins away (see cbLive)
         // (only at the outline itself: a thin edge well inside it has more of
         // the tower behind it, and through it the sky showed as cracks)
-        m *= mix(1.0, alphaV, (0.3 + 0.7 * sv) * (1.0 - smoothstep(0.0, 0.03, bare)));
+        m *= mix(1.0, alphaV, (0.3 + 0.7 * sv) * (1.0 - smoothstep(0.0, 0.03, bare)) * (1.0 - behind));
         m *= smoothstep(0.03, 0.35, stand);
         cbMask = clamp(m, 0.0, 1.0);
         OVER(tcol, cbMask);
