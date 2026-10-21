@@ -1494,8 +1494,13 @@ const float CBV_AMP = 0.80;
 // how far apart the turrets may stand in depth, and the skirt's in front
 const float CBV_ZT = 0.26;
 const float CBV_ZS = 0.10;
-// how much flatter than a ball a turret's head is
+// how much flatter than a ball a turret's head is, at the flattest
 const float CBV_HEAD = 1.30;
+// how fast the broad body the turrets stand on rounds off through its
+// depth (its height falls by this times the depth squared): a ridge a
+// turret or so deep. Twice as deep, its smooth front stood out before the
+// turrets' feet all along the lower tower, a grey band ruled across it
+const float CBV_BODYZ = 20.0;
 // the extinction the march's light sees: toward the sun, from the sky
 // overhead, and back along the eye's own ray
 const float CBV_SIGL = 110.0;
@@ -1503,57 +1508,68 @@ const float CBV_SIGA = 9.0;
 const float CBV_SIGV = 220.0;
 
 // The cauliflower: lobes on lobes, each scale half the size of the one
-// before, five of them at most. Each scale is billowed value noise, |2n − 1|:
-// rounded where the noise is high or low and creased sharp where it crosses
-// the middle — a dome between two folds, which a sum of smooth noise is not
-// (it swells and sags as softly as it rises, and a face of it reads as
-// putty). Centred on its mean (0.30), so the surface swells and creases about
-// the body rather than inflating past it, and each scale swells only within
-// its own reach of the surface the coarser ones left: a floret sits on a lobe
-// and a lobe on the body, and none stands clear of it with sky beneath
-// (lobeLayer's rule, in three dimensions). Where no lobe may rise (lift: the
-// anvil's flat) they only crease.
+// before. Each scale is billowed value noise, |2n − 1|: rounded where the
+// noise is high or low and creased sharp where it crosses the middle — a
+// dome between two folds, which a sum of smooth noise is not (it swells and
+// sags as softly as it rises, and a face of it reads as putty). Centred on
+// its mean (0.30), so the surface swells and creases about the body rather
+// than inflating past it, and each scale swells only within its own reach
+// of the surface the coarser ones left: a floret sits on a lobe and a lobe
+// on the body, and none stands clear of it with sky beneath (lobeLayer's
+// rule, in three dimensions). Where no lobe may rise (lift: the anvil's
+// flat) they only crease.
 //
-// Each scale is laid on only where the screen can hold it, fading in from
-// two pixels to five (fp: storm units to a pixel), so the detail on screen
-// stays about as fine however near the storm or narrow the view, and a
-// scale never shimmers at the size of a pixel. And the lobes evolve: each
+// Only the two coarse scales are the surface itself; the finer ones, as
+// the 2D tower's florets past its micro lobes (budPack), are in its light
+// alone. The field climbs as steeply through every scale of lobes as
+// through the first — each swells by four fifths of its own size — so the
+// florets' rims were cliffs a march could not find to within a pixel
+// without stepping a pixel at a time, and taken as surface they sparkled
+// along every rim and crawled along the outline as they drifted, three
+// scales of them five times over what two did. Laid on the light only,
+// every one of them is read once a pixel, where the ray met the body.
+//
+// Each scale is laid on only where the screen can hold it — the surface's
+// from two pixels to five, the light's from a floret three pixels across to
+// six (fp: storm units to a pixel) — so the detail on screen stays about as
+// fine however near the storm or narrow the view, and a near storm gets
+// more florets, not bigger and smoother ones. And the lobes evolve: each
 // scale drifts slowly up the tower, as a growing tower's lobes rise and roll
 // over, and boils in place — the noise slid through the depth, so lobes
 // swell out of the face and sink back into it — the finer the faster.
 //
 // What a scale swells by and where it has got to in its evolution are the
 // same for every read of the body a pixel makes, so they are set once per
-// pixel (cbLobeSetup): g_cbA the swell of the coarsest four scales (the
-// lobes' weight, the fade and the size folded in), g_cbA4 the fifth's, and
-// g_cbE0..4 each scale's drift. Each scale is the one before taken twice as
-// fine with its axes turned (yzx), so up, which is y at the coarsest, is x,
-// z, y and x in the finer ones, and through, z, is y, x, z and y
-vec4 g_cbA, g_cbRest;
-float g_cbA4;
-vec3 g_cbE0, g_cbE1, g_cbE2, g_cbE3, g_cbE4;
+// pixel (cbLobeSetup): g_cbA the swell of the two scales of surface (the
+// lobes' weight, the fade and the size folded in), g_cbW the weight of the
+// four finer ones in the light, and g_cbE0..5 each scale's drift. Each
+// scale is the one before taken twice as fine with its axes turned (yzx),
+// so up, which is y at the coarsest, is x, z, y, x and z in the finer ones,
+// and through, z, is y, x, z, y and x
+vec2 g_cbA;
+vec4 g_cbW;
+vec3 g_cbE0, g_cbE1, g_cbE2, g_cbE3, g_cbE4, g_cbE5;
 void cbLobeSetup(float fp, float lobe) {
-  vec4 lam = CBV_L0 * vec4(1.0, 0.5, 0.25, 0.125);
+  vec2 lam = CBV_L0 * vec2(1.0, 0.5);
   g_cbA = CBV_AMP * lam * smoothstep(2.0, 5.0, lam / fp) * lobe;
-  g_cbA4 = CBV_AMP * CBV_L0 * 0.0625 * smoothstep(2.0, 5.0, CBV_L0 * 0.0625 / fp) * lobe;
-  // (what the scales after the first, second, third and fourth can still
-  // move the surface by, all told: see cbLobes3's win)
-  g_cbRest = 0.70 * vec4(g_cbA.y + g_cbA.z + g_cbA.w + g_cbA4, g_cbA.z + g_cbA.w + g_cbA4, g_cbA.w + g_cbA4, g_cbA4);
+  vec4 lamF = CBV_L0 * vec4(0.25, 0.125, 0.0625, 0.03125);
+  g_cbW = smoothstep(3.0, 6.0, 0.5 * lamF / fp) * lobe;
   // (rising a hundredth of a storm unit for every unit of evolution,
   // whatever the scale; boiling faster the finer it is)
-  vec4 r = u_evo * 0.010 / lam;
-  vec4 m = u_evo * vec4(0.20, 0.30, 0.40, 0.50);
-  g_cbE0 = vec3(0.0, -r.x, m.x);
-  g_cbE1 = vec3(-r.y, m.y, 0.0);
-  g_cbE2 = vec3(m.z, 0.0, -r.z);
-  g_cbE3 = vec3(0.0, -r.w, m.w);
-  g_cbE4 = vec3(-u_evo * 0.010 / (CBV_L0 * 0.0625), u_evo * 0.60, 0.0);
+  vec2 r = u_evo * 0.010 / lam;
+  vec4 rF = u_evo * 0.010 / lamF;
+  vec4 m = u_evo * vec4(0.40, 0.50, 0.60, 0.70);
+  g_cbE0 = vec3(0.0, -r.x, u_evo * 0.20);
+  g_cbE1 = vec3(-r.y, u_evo * 0.30, 0.0);
+  g_cbE2 = vec3(m.x, 0.0, -rF.x);
+  g_cbE3 = vec3(0.0, -rF.y, m.y);
+  g_cbE4 = vec3(-rF.z, m.z, 0.0);
+  g_cbE5 = vec3(m.w, 0.0, -rF.w);
 }
-// what the scales from the one numbered from on can add at most, so a
-// march reading only the coarse ones knows how near the surface could be
+// the most the lobes can move the surface by, all told (the second scale
+// alone, for a march that has read the first)
 float cbLobeRest(float from) {
-  vec4 on = step(vec4(0.0, 1.0, 2.0, 3.0), vec4(from - 0.5));
-  return 0.70 * (dot(g_cbA, 1.0 - on) + g_cbA4);
+  return 0.70 * (from < 0.5 ? g_cbA.x + g_cbA.y : g_cbA.y);
 }
 // one scale laid on the surface f: q is where in its noise, a its swell
 float cbLobe(float f, vec3 q, float a, float lift) {
@@ -1567,33 +1583,21 @@ float cbLobeF(float f, vec3 q, float a, float lift) {
 }
 //   f     the surface so far (storm units, > 0 inside)
 //   N     where in the lobes' noise (storm units)
-//   oct   how many scales to read (taps a long way off need few)
+//   oct   how many scales to read (taps a long way off need one)
 //   win   how near the surface the caller can still tell one value from
 //         another: a tap reads its value through a smoothstep that far
 //         either side. Once the surface so far stands further than that
-//         from zero and the scales left can no longer bring it back
-//         (g_cbRest), they would not change what the caller sees, and are
-//         not read — exactly: a tap deep in the cloud or well out in the
-//         air reads only the coarse scales
+//         from zero and the scales left can no longer bring it back, they
+//         would not change what the caller sees, and are not read —
+//         exactly: a tap deep in the cloud or well out in the air reads
+//         only the coarse scale, or none
 float cbLobes3(float f, vec3 N, float lift, float oct, float win) {
-  if (abs(f) > win + g_cbRest.x + 0.70 * g_cbA.x) return f;
+  if (abs(f) > win + 0.70 * (g_cbA.x + g_cbA.y)) return f;
   vec3 p = N * (1.0 / CBV_L0);
   f = cbLobeF(f, p + g_cbE0, g_cbA.x, lift);
-  if (oct > 1.5 && g_cbA.y > 0.0 && abs(f) < win + g_cbRest.x) {
+  if (oct > 1.5 && g_cbA.y > 0.0 && abs(f) < win + 0.70 * g_cbA.y) {
     p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
     f = cbLobeF(f, p + g_cbE1, g_cbA.y, lift);
-    if (oct > 2.5 && g_cbA.z > 0.0 && abs(f) < win + g_cbRest.y) {
-      p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-      f = cbLobeF(f, p + g_cbE2, g_cbA.z, lift);
-      if (oct > 3.5 && g_cbA.w > 0.0 && abs(f) < win + g_cbRest.z) {
-        p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-        f = cbLobeF(f, p + g_cbE3, g_cbA.w, lift);
-        if (oct > 4.5 && g_cbA4 > 0.0 && abs(f) < win + g_cbRest.w) {
-          p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-          f = cbLobeF(f, p + g_cbE4, g_cbA4, lift);
-        }
-      }
-    }
   }
   return f;
 }
@@ -1651,15 +1655,45 @@ vec3 g_cbN, g_cbTg, g_cbRad;
 // base, and in the shadow each threw on the next the tower came out a
 // bundle of organ pipes. And each widens a little toward its foot
 // (CBV_FLARE a storm unit down): plumb, its walls stood square to a high
-// sun and every lobe on them threw its shadow straight down the wall
+// sun and every lobe on them threw its shadow straight down the wall.
+//
+// The lean runs over twice the height of the head's center over the base —
+// about the turret's whole height — eased in and out (where it stopped short
+// the face turned over in a line ruled across the turret, and the line
+// climbed it as the turret grew), and only the tower's own turrets lean:
+// run over the head's center alone, now the head is a tall dome, a column
+// leaning toward the eye overhung its foot as steeply as a roof, and the
+// skirt's short ones (ref > 0, see cbHead) were all overhang — a band of
+// faces turned to the ground along the whole foot of the tower, the sun's
+// light gone from them. The skirt stands in front at its own depths, plumb
 const float CBV_FLARE = 0.6;
-float cbLean(float y, vec4 T) {
-  float l = clamp((y - g_cbQ.x) / max(T.y - g_cbQ.x, 0.02), 0.0, 1.0);
-  return T.z * l * l;
+// (the flare starts under the head's middle, eased in over a twentieth of
+// a storm unit: begun at a stroke, the wall turned over there in a line)
+float cbFlare(float h) {
+  return h > 0.05 ? h - 0.025 : max(h, 0.0) * max(h, 0.0) * 10.0;
 }
-float cbColumn(vec3 p, vec4 T) {
-  float r = T.w * (1.0 + CBV_FLARE * max(T.y - p.y, 0.0));
-  return r - length(vec3(p.x - T.x, max(p.y - T.y, 0.0) * CBV_HEAD, p.z - cbLean(p.y, T)));
+float cbLeanH(vec4 T) {
+  return 1.0 / max(2.0 * (T.y - g_cbQ.x), 0.10);
+}
+float cbLean(float y, vec4 T, float ref) {
+  float l = clamp((y - g_cbQ.x) * cbLeanH(T), 0.0, 1.0);
+  return ref > 0.0 ? T.z : T.z * l * l * (3.0 - 2.0 * l);
+}
+// The head is as tall as the turret stands over the body it rises from (ref
+// under its center: the horizon for the tower's row, as the 2D skyline
+// measures it, the base for the skirt's) — a dome two fifths of the turret's
+// height deep, near enough turretStep's, which falls to half at its radius:
+// taller than it is wide on a big turret. (Half, the tallest stood as
+// fingers, the lobes on their narrow crowns piled up like grapes.) Heads a little flatter than a ball on columns run
+// down to the base stood as a row of drums, their tops level with one
+// another: a mesa, and from the side a ledge ruled along it
+const float CBV_DOME = 0.40;
+float cbHead(vec4 T, float ref) {
+  return T.w / max((T.y - ref) * (CBV_DOME / (1.0 - CBV_DOME)), T.w / CBV_HEAD);
+}
+float cbColumn(vec3 p, vec4 T, float ref) {
+  float r = T.w * (1.0 + CBV_FLARE * cbFlare(T.y - p.y));
+  return r - length(vec3(p.x - T.x, max(p.y - T.y, 0.0) * cbHead(T, ref), p.z - cbLean(p.y, T, ref)));
 }
 // How far the columns sway at a height (across, through): a turret does not
 // climb plumb, and two plumb columns melted together meet in a crease ruled
@@ -1686,22 +1720,22 @@ float cbFinish(float f, vec3 p, float oct, float win) {
 float cbBare(vec3 p) {
   // the broad body, rounded off through its depth (and taken as a distance:
   // divided by how steeply it climbs there)
-  float f = (g_cbP.x - p.y - 5.0 * p.z * p.z) / sqrt(1.0 + 100.0 * p.z * p.z);
+  float f = (g_cbP.x - p.y - CBV_BODYZ * p.z * p.z) / sqrt(1.0 + 4.0 * CBV_BODYZ * CBV_BODYZ * p.z * p.z);
   vec3 q = p;
   q.xz += cbSway(p.y, p.x);
   // (written out turret by turret: kept in an array and read in a loop, the
   // ten of them went through memory at every read of the body, and the
   // march reads it some forty times a pixel)
-  f = smaxK(f, cbColumn(q, g_cbT0), 0.05);
-  f = smaxK(f, cbColumn(q, g_cbT1), 0.05);
-  f = smaxK(f, cbColumn(q, g_cbT2), 0.05);
-  f = smaxK(f, cbColumn(q, g_cbT3), 0.05);
-  f = smaxK(f, cbColumn(q, g_cbT4), 0.05);
-  f = smaxK(f, cbColumn(q, g_cbS0), 0.03);
-  f = smaxK(f, cbColumn(q, g_cbS1), 0.03);
-  f = smaxK(f, cbColumn(q, g_cbS2), 0.03);
-  f = smaxK(f, cbColumn(q, g_cbS3), 0.03);
-  f = smaxK(f, cbColumn(q, g_cbS4), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbT0, 0.0), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbT1, 0.0), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbT2, 0.0), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbT3, 0.0), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbT4, 0.0), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbS0, g_cbQ.x), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbS1, g_cbQ.x), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbS2, g_cbQ.x), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbS3, g_cbQ.x), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbS4, g_cbQ.x), 0.03);
   return f;
 }
 
@@ -1720,23 +1754,23 @@ vec2 smaxW(float a, float b, float k) {
   float wa = 0.5 + 0.5 * sign(a - b) * (1.0 - h);
   return vec2(max(a, b) + h * h * k * 0.25, wa);
 }
-vec4 cbColumnG(vec3 q, vec4 T) {
-  float hy = q.y - T.y;
-  float inv = 1.0 / max(T.y - g_cbQ.x, 0.02);
+vec4 cbColumnG(vec3 q, vec4 T, float ref) {
+  float hy = q.y - T.y, hd = cbHead(T, ref);
+  float inv = ref > 0.0 ? 0.0 : cbLeanH(T);
   float l = (q.y - g_cbQ.x) * inv;
-  float lc = clamp(l, 0.0, 1.0);
-  vec3 v = vec3(q.x - T.x, max(hy, 0.0) * CBV_HEAD, q.z - T.z * lc * lc);
+  float lc = ref > 0.0 ? 1.0 : clamp(l, 0.0, 1.0);
+  vec3 v = vec3(q.x - T.x, max(hy, 0.0) * hd, q.z - T.z * lc * lc * (3.0 - 2.0 * lc));
   float len = max(length(v), 1e-5);
-  float r = T.w * (1.0 + CBV_FLARE * max(-hy, 0.0));
+  float r = T.w * (1.0 + CBV_FLARE * cbFlare(-hy));
   // d(lean)/dy, inside the stretch the lean runs over
-  float dl = l > 0.0 && l < 1.0 ? 2.0 * T.z * lc * inv : 0.0;
-  float dy = (hy < 0.0 ? -T.w * CBV_FLARE : 0.0) - (v.y * (hy > 0.0 ? CBV_HEAD : 0.0) - v.z * dl) / len;
+  float dl = 6.0 * T.z * lc * (1.0 - lc) * inv;
+  float dy = -T.w * CBV_FLARE * clamp(-hy * 20.0, 0.0, 1.0) - (v.y * (hy > 0.0 ? hd : 0.0) - v.z * dl) / len;
   return vec4(r - len, -v.x / len, dy, -v.z / len);
 }
 vec4 cbBodyG(vec3 p) {
-  float s = sqrt(1.0 + 100.0 * p.z * p.z);
-  float nb = g_cbP.x - p.y - 5.0 * p.z * p.z;
-  vec3 gb = vec3(0.0, -1.0 / s, (-10.0 * p.z - nb * 100.0 * p.z / (s * s)) / s);
+  float s = sqrt(1.0 + 4.0 * CBV_BODYZ * CBV_BODYZ * p.z * p.z);
+  float nb = g_cbP.x - p.y - CBV_BODYZ * p.z * p.z;
+  vec3 gb = vec3(0.0, -1.0 / s, (-2.0 * CBV_BODYZ * p.z - nb * 4.0 * CBV_BODYZ * CBV_BODYZ * p.z / (s * s)) / s);
   // the sway moves the point the turrets are read at: its Jacobian
   float a1 = p.y * 14.0 + p.x * 9.0 + 1.7, a2 = p.y * 11.0 - p.x * 7.0 + 4.2;
   vec2 sw = 0.035 * vec2(sin(a1), sin(a2));
@@ -1747,16 +1781,16 @@ vec4 cbBodyG(vec3 p) {
   float f = nb / s, wB = 1.0;
   vec3 gq = vec3(0.0);
   vec4 c; vec2 m;
-  c = cbColumnG(q, g_cbT0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbT1); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbT2); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbT3); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbT4); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbS0); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbS1); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbS2); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbS3); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
-  c = cbColumnG(q, g_cbS4); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbT0, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbT1, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbT2, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbT3, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbT4, 0.0); m = smaxW(f, c.x, 0.05); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbS0, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbS1, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbS2, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbS3, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
+  c = cbColumnG(q, g_cbS4, g_cbQ.x); m = smaxW(f, c.x, 0.03); f = m.x; wB *= m.y; gq = gq * m.y + c.yzw * (1.0 - m.y);
   // q.x = p.x + 0.035 sin(a1), q.z = p.z + 0.035 sin(a2)
   vec3 gp = vec3(gq.x * (1.0 + 9.0 * cs.x) - 7.0 * gq.z * cs.y,
                  gq.y + 14.0 * gq.x * cs.x + 11.0 * gq.z * cs.y,
@@ -1785,7 +1819,7 @@ float cbRayCol(float z, vec3 R) {
 }
 // the bare body along the ray, capped as cbFinish caps it
 float cbRayBare(float z) {
-  float f = (g_cbBody - 5.0 * z * z) / sqrt(1.0 + 100.0 * z * z);
+  float f = (g_cbBody - CBV_BODYZ * z * z) / sqrt(1.0 + 4.0 * CBV_BODYZ * CBV_BODYZ * z * z);
   f = smaxK(f, cbRayCol(z, g_cbR0), 0.05);
   f = smaxK(f, cbRayCol(z, g_cbR1), 0.05);
   f = smaxK(f, cbRayCol(z, g_cbR2), 0.05);
@@ -1798,33 +1832,17 @@ float cbRayBare(float z) {
   f = smaxK(f, cbRayCol(z, g_cbK4), 0.03);
   return mix(f, -smaxK(-f, -g_cbY.x, 0.04), g_cbP.z);
 }
-// the two coarse scales of lobes on it (q: where the third scale's noise is
-// read, for cbRayFine to go on from), and the finer ones over those
-float cbRayCoarse(float f, float z, out vec3 q) {
+// the lobes on it, through the filter: what the march reads
+float cbRayLobes(float f, float z) {
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
   f = cbLobeF(f, p + g_cbE0, g_cbA.x, g_cbY.y);
   p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
   if (g_cbA.y > 0.0) f = cbLobeF(f, p + g_cbE1, g_cbA.y, g_cbY.y);
-  q = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
   return f;
 }
-float cbRayFine(float f, vec3 p) {
-  if (g_cbA.z > 0.0) {
-    f = cbLobeF(f, p + g_cbE2, g_cbA.z, g_cbY.y);
-    if (g_cbA.w > 0.0) {
-      p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-      f = cbLobeF(f, p + g_cbE3, g_cbA.w, g_cbY.y);
-      if (g_cbA4 > 0.0) {
-        p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-        f = cbLobeF(f, p + g_cbE4, g_cbA4, g_cbY.y);
-      }
-    }
-  }
-  return f;
-}
-// the whole of it at depth z, every scale on — and read exactly, not
-// through the filter: this is where the surface is put, and where the
-// march's nearest pass is taken from for the fade at the outline
+// the whole of it at depth z — and read exactly, not through the filter:
+// this is where the surface is put, and where the march's nearest pass is
+// taken from for the fade at the outline
 float cbRay(float z) {
   float f = cbRayBare(z);
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
@@ -1832,20 +1850,8 @@ float cbRay(float z) {
   if (g_cbA.y > 0.0) {
     p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
     f = cbLobe(f, p + g_cbE1, g_cbA.y, g_cbY.y);
-    if (g_cbA.z > 0.0) {
-      p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-      f = cbLobe(f, p + g_cbE2, g_cbA.z, g_cbY.y);
-      if (g_cbA.w > 0.0) {
-        p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-        f = cbLobe(f, p + g_cbE3, g_cbA.w, g_cbY.y);
-        if (g_cbA4 > 0.0) {
-          p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-          f = cbLobe(f, p + g_cbE4, g_cbA4, g_cbY.y);
-        }
-      }
-    }
   }
-  return min(f, g_cbY.z);
+  return f;
 }
 
 // The whole body where the ray met it, at depth z, and which way it climbs
@@ -1876,6 +1882,18 @@ vec4 cbLobeG(vec4 F, vec4 n, vec3 g, float a, float lam) {
   float l = a * g_cbY.y;
   return vec4(F.x + l * b * S, F.yzw + l * (S * gb + b * dS * F.yzw));
 }
+// The florets past the surface's two scales, in its light only (see the
+// cauliflower, above): each turns the face by its own slope — the crease
+// between two of them turned over across three pixels, as cbLobeG's —
+// without moving it, and a crease is a recess, a little of the cloud deeper
+// in showing through (g_cbRec, how much of this point is one)
+float g_cbRec;
+vec4 cbBump(vec4 F, vec4 n, vec3 g, float w, float lam) {
+  float s = 2.0 * n.x - 1.0;
+  float e = 9.0 * g_cbQ.y / lam;
+  g_cbRec += w * (1.0 - smoothstep(0.0, 0.35, abs(s)));
+  return vec4(F.x, F.yzw + w * CBV_AMP * lam * s * inversesqrt(s * s + e * e) * 2.0 * g);
+}
 vec4 cbFieldG(float z, vec4 B) {
   // the cap (a smooth minimum with the ceiling, which falls as y climbs)
   vec2 c = smaxW(-B.x, -g_cbY.x, 0.04);
@@ -1888,26 +1906,35 @@ vec4 cbFieldG(float z, vec4 B) {
   vec4 n = vnoise3d(p + g_cbE0);
   vec3 gN = n.yzw * (1.0 / CBV_L0);
   F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.x, CBV_L0);
+  p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+  g_cbRec = 0.0;
   if (g_cbA.y > 0.0) {
-    p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
     n = vnoise3d(p + g_cbE1);
     gN = n.wyz * (2.03 / CBV_L0);
     F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.y, CBV_L0 * 0.5);
-    if (g_cbA.z > 0.0) {
+    g_cbRec += 0.5 * (1.0 - smoothstep(0.0, 0.35, abs(2.0 * n.x - 1.0)));
+  }
+  // and the florets, the light's alone
+  if (g_cbW.x > 0.0) {
+    p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+    n = vnoise3d(p + g_cbE2);
+    gN = n.zwy * (4.1209 / CBV_L0);
+    F = cbBump(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbW.x, CBV_L0 * 0.25);
+    if (g_cbW.y > 0.0) {
       p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-      n = vnoise3d(p + g_cbE2);
-      gN = n.zwy * (4.1209 / CBV_L0);
-      F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.z, CBV_L0 * 0.25);
-      if (g_cbA.w > 0.0) {
+      n = vnoise3d(p + g_cbE3);
+      gN = n.yzw * (8.3654 / CBV_L0);
+      F = cbBump(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbW.y, CBV_L0 * 0.125);
+      if (g_cbW.z > 0.0) {
         p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-        n = vnoise3d(p + g_cbE3);
-        gN = n.yzw * (8.3654 / CBV_L0);
-        F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.w, CBV_L0 * 0.125);
-        if (g_cbA4 > 0.0) {
+        n = vnoise3d(p + g_cbE4);
+        gN = n.wyz * (16.982 / CBV_L0);
+        F = cbBump(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbW.z, CBV_L0 * 0.0625);
+        if (g_cbW.w > 0.0) {
           p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
-          n = vnoise3d(p + g_cbE4);
-          gN = n.wyz * (16.982 / CBV_L0);
-          F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA4, CBV_L0 * 0.0625);
+          n = vnoise3d(p + g_cbE5);
+          gN = n.zwy * (34.473 / CBV_L0);
+          F = cbBump(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbW.w, CBV_L0 * 0.03125);
         }
       }
     }
@@ -3901,7 +3928,6 @@ void main() {
       cbLobeSetup(fp, lobe);
       g_cbQ = vec4(baseY, fp, lobe, ty);
       float A = cbLobeRest(0.0);
-      float Ar = cbLobeRest(2.0);
       float gainT = 1.05 + 1.35 * cbAmt;
       float nT = ${TOWER_TURRETS.toFixed(1)} * cbS, nS = ${SKIRT_TURRETS.toFixed(1)} * cbS;
       float aT = mod(azT, 6.2831853) / 6.2831853;
@@ -3919,7 +3945,12 @@ void main() {
       // marched in from its whole front it stepped all the way along the
       // flank in the small steps a grazing ray takes)
       float reach = 0.6 * A + 0.0125;
-      float fUp = bodyD, zLo = -sqrt(max(bodyD + 0.6 * A, 0.0) / 5.0), zHi = -zLo;
+      // (the broad body's front, and the lobes' reach on before it: the body is
+      // read as a distance along its own slope, which through its depth is
+      // steep, so the reach is laid on in depth, not in its height — taken
+      // in height, a ray started inside the body all along the foot of the
+      // tower, and lit there what it found, one flat grey band)
+      float fUp = bodyD, zLo = bodyD > -reach ? -sqrt(max(bodyD, 0.0) / CBV_BODYZ) - reach : 0.0, zHi = -zLo;
       for (int j = 0; j < 5; j++) {
         vec4 t = cbTurret(floor(cT) + float(j - 2), cT, nT, gainT, 0.0, cellT, turT, 0.0, ceilN);
         float yk = t.y;
@@ -3927,9 +3958,9 @@ void main() {
         yk = mix(capV, yk, hv) - 0.05 * hv * (1.0 - hv);
         yk = mix(yk, max(yk, anvilTop), feed * smoothstep(anvilTop - 0.20, anvilTop - 0.08, yk));
         yk = min(yk, mix(baseY, yk, stand));
-        vec4 T = vec4(t.x, yk - t.z / CBV_HEAD, (t.w - 0.5) * CBV_ZT, t.z);
-        float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * CBV_HEAD, d2 = dx * dx + dy * dy;
-        vec3 R = vec3(d2, T.w * (1.0 + CBV_FLARE * max(T.y - ty, 0.0)), cbLean(ty, T) - sw.y);
+        vec4 T = vec4(t.x, yk - max(CBV_DOME * yk, t.z / CBV_HEAD), (t.w - 0.5) * CBV_ZT, t.z);
+        float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * cbHead(T, 0.0), d2 = dx * dx + dy * dy;
+        vec3 R = vec3(d2, T.w * (1.0 + CBV_FLARE * cbFlare(T.y - ty)), cbLean(ty, T, 0.0) - sw.y);
         if (j == 0) { g_cbT0 = T; g_cbR0 = R; } else if (j == 1) { g_cbT1 = T; g_cbR1 = R; }
         else if (j == 2) { g_cbT2 = T; g_cbR2 = R; } else if (j == 3) { g_cbT3 = T; g_cbR3 = R; }
         else { g_cbT4 = T; g_cbR4 = R; }
@@ -3945,14 +3976,14 @@ void main() {
       // the bare body under a lobe can sit a few hundredths inside the
       // surface, and a turret melted into it from just under that reach
       // still moved it, a line ruled across the tower where they dropped out)
-      g_cbS0 = g_cbS1 = g_cbS2 = g_cbS3 = g_cbS4 = vec4(0.0, -10.0, 0.0, 0.0);
+      g_cbS0 = g_cbS1 = g_cbS2 = g_cbS3 = g_cbS4 = vec4(0.0, -10.0, 0.0, 0.001);
       g_cbK0 = g_cbK1 = g_cbK2 = g_cbK3 = g_cbK4 = vec3(1.0, -1.0, 0.0);
       if (ty < skMax + reach + 0.08) for (int j = 0; j < 5; j++) {
         vec4 t = cbTurret(floor(cS) + float(j - 2), cS, nS, skGain, 1.0, cellS, turT * 1.3, 17.0, ceilN);
         float yk = baseY + t.y * stand;
-        vec4 T = vec4(t.x, yk - t.z / CBV_HEAD, -CBV_ZS + (t.w - 0.5) * CBV_ZT, t.z);
-        float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * CBV_HEAD, d2 = dx * dx + dy * dy;
-        vec3 R = vec3(d2, T.w * (1.0 + CBV_FLARE * max(T.y - ty, 0.0)), cbLean(ty, T) - sw.y);
+        vec4 T = vec4(t.x, yk - max(CBV_DOME * (yk - baseY), t.z / CBV_HEAD), -CBV_ZS + (t.w - 0.5) * CBV_ZT, t.z);
+        float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * cbHead(T, baseY), d2 = dx * dx + dy * dy;
+        vec3 R = vec3(d2, T.w * (1.0 + CBV_FLARE * cbFlare(T.y - ty)), cbLean(ty, T, baseY) - sw.y);
         if (j == 0) { g_cbS0 = T; g_cbK0 = R; } else if (j == 1) { g_cbS1 = T; g_cbK1 = R; }
         else if (j == 2) { g_cbS2 = T; g_cbK2 = R; } else if (j == 3) { g_cbS3 = T; g_cbK3 = R; }
         else { g_cbS4 = T; g_cbK4 = R; }
@@ -3994,27 +4025,55 @@ void main() {
                        + 0.30 * underC + (smoothstep(0.30, 0.70, edgeN) - 0.5) * 1.2, 0.0, 1.0);
       float wE = fp * (2.6 + 4.0 * sv);
 
-      float m = 0.0, zL = 0.0;
+      float m = 0.0, zL = 0.0, zH = 0.0, zF = 0.0, cF = 0.0;
       if (fUp > -wE) {
         // ── The march ──
         // In from the near side, a step at a time by about as far as the
         // surface can be (the field is a distance to it, the lobes' slopes
-        // aside), reading only the two coarse scales and the most the rest
-        // could add while the surface is still well off. The nearest the
+        // aside), the lobes read through the texture filter. The nearest the
         // ray comes to the surface is kept: a ray that grazes the outline
         // without meeting it is the fade at the silhouette
+        //
+        // ...and so is the nearest it came to a turret in front before it
+        // met the one behind (gmax, at zg: the last step it was still
+        // closing on the surface before it drew off again). That is the
+        // front one's edge, inside the outline, and it wants the same fade
+        // the outline has: taken pixel by pixel as met or missed, the edge
+        // between a turret and the one behind it stepped a whole pixel at a
+        // time as the tower drifted, the whole contrast between a lit face
+        // and a shaded one changing at once. So the point the light is read
+        // at slides from the face behind to the edge in front across the
+        // same few pixels the outline fades over, and the light with it.
+        //
+        // The base is no part of where the ray meets the body, only of how
+        // much of it shows: flat, ruled across the tower, it is the same
+        // height all along the ray, and cut into the field the march read
+        // there a ray just under it came within a hair of the surface the
+        // whole way through, and crawled the length of the tower in its
+        // finest steps
+        //
+        // Where that nearest pass lies is read off the parabola through the
+        // step before, the step itself and the one after, not off the step:
+        // a floret's edge is a few steps deep, and the steps fall at depths
+        // that slide as the tower does, so the nearest step to the edge came
+        // nearer and drew off again from frame to frame and the fade along
+        // the edge sparkled
         float z = zLo, zp = z, fpv = -1.0, fmax = -1.0, zmax = z;
+        float gmax = -1.0, zg = z, zpp = z - 0.003, fpp = -1.0;
         bool hit = false;
         for (int i = 0; i < 28; i++) {
           if (z > zHi) break;
-          // (the finer scales go on from the coarse ones, the bare body
-          // under them read once)
-          vec3 q;
-          float fc = cbRayCoarse(cbRayBare(z), z, q);
-          float f = min(fc, g_cbY.z) + Ar;
-          if (Ar > 0.0 && f > -wE) f = min(cbRayFine(fc, q), g_cbY.z);
+          float f = cbRayLobes(cbRayBare(z), z);
           if (f > fmax) { fmax = f; zmax = z; }
           if (f > 0.0) { hit = true; break; }
+          if (f < fpv && fpv > gmax) {
+            gmax = fpv;
+            float d1 = max(zp - zpp, 1e-5), d2 = max(z - zp, 1e-5);
+            float s1 = (fpv - fpp) / d1, s2 = (f - fpv) / d2;
+            float cv = (s2 - s1) / (d1 + d2), sl = (s1 * d2 + s2 * d1) / (d1 + d2);
+            zg = clamp(zp - sl / min(2.0 * cv, -1e-5), zp - d1, zp + d2);
+          }
+          zpp = zp; fpp = fpv;
           zp = z; fpv = f;
           // (finely where the ray grazes the surface, so the nearest it comes
           // is read to within a little of a pixel: read coarsely, the fade at
@@ -4040,14 +4099,23 @@ void main() {
             if (fm > 0.0) { zb = zm; fb = fm; } else { za = zm; fa = fm; }
           }
           zL = mix(za, zb, clamp(-fa / max(fb - fa, 1e-5), 0.0, 1.0));
-          fmax = max(fmax, 0.0);
+          fmax = 0.0;
+          // (the edge in front, read exactly as the outline is)
+          if (gmax > -wE) {
+            gmax = cbRay(zg);
+            cF = smoothstep(-wE, 0.0, gmax);
+            zF = zg; zH = zL;
+            zL = mix(zL, zg, cF);
+          }
         } else if (fmax > -wE) {
           // (a ray that grazed the outline: how near it came, read exactly.
           // Through the filter the nearest pass moved in its steps as the
           // lobes drifted, and the fade at the outline with it)
-          fmax = cbRay(zmax);
+          zL = gmax >= fmax ? zg : zmax;
+          fmax = cbRay(zL);
         }
-        m = smoothstep(-wE, 0.0, fmax);
+        m = smoothstep(-wE, 0.0, min(fmax, g_cbY.z));
+        if (cF <= 0.0) zH = zL;
       }
       // just outside a backlit rim the tower's last wisps, too thin to see,
       // scatter the sun forward into a glow hugging the silhouette — read off
@@ -4086,19 +4154,29 @@ void main() {
         // with the coarse lobes laid on it; only a turret's width or more
         // toward the sun, where the other turrets are what stands in the way,
         // is the bare body read whole
-        vec4 B = cbBodyG(P);
+        // (across the edge of a turret in front the turrets' own turn is
+        // taken from both sides and blended, as the point is: read only at
+        // the point between them, in the air, it swung from one turret's
+        // side to the other's within the blend, and the light with it)
+        vec4 B = cbBodyG(vec3(0.0, ty, zH));
+        if (cF > 0.0) B = mix(B, cbBodyG(vec3(0.0, ty, zF)), cF);
         vec4 F = cbFieldG(zL, B);
+        // (a point the ray only came near — the outline, or the edge of a
+        // turret in front of another — is lit as the surface it nearly
+        // touched: the plane through it, at the slope the field has there)
+        float sh = min(F.x, 0.0);
+        F.x -= sh; B.x -= sh;
         float w2 = 0.012 + wE;
         float t0 = smoothstep(-0.002 - wE, 0.002 + wE, F.x + 0.005 * dot(F.yzw, Ls));
         float t1 = smoothstep(-0.005 - wE, 0.005 + wE, F.x + 0.015 * dot(F.yzw, Ls));
-        float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 3.0, w2));
+        float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 2.0, w2));
         float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 2.0, 0.050));
         float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 1.0, 0.120));
         float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
         // ...and the sky's: up, a lobe off, and back toward the eye — a point
         // in a crease has lobe standing over it and in front of it on the way
         // out, where one on a bulge has open air
-        float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 3.0, w2));
+        float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 2.0, w2));
         float u3 = smoothstep(-0.006 - wE, 0.006 + wE, F.x + 0.006 * F.z - 0.02 * F.w);
         float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3));
         // ...and how much cloud lies behind the surface along the eye's own
@@ -4263,7 +4341,8 @@ void main() {
         // remnant of a storm that is running out thins away (see cbLive)
         // (only at the outline itself: a thin edge well inside it has more of
         // the tower behind it, and through it the sky showed as cracks)
-        m *= mix(1.0, alphaV, (0.3 + 0.7 * sv) * (1.0 - smoothstep(0.0, 0.03, bare)) * (1.0 - behind));
+        // (and never where the march met a turret behind the edge it passed)
+        m *= mix(1.0, alphaV, (0.3 + 0.7 * sv) * (1.0 - smoothstep(0.0, 0.03, bare)) * (1.0 - behind) * step(cF, 0.0));
         m *= smoothstep(0.03, 0.35, stand);
         cbMask = clamp(m, 0.0, 1.0);
         OVER(tcol, cbMask);
