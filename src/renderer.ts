@@ -3449,8 +3449,14 @@ void main() {
           // the lobes ride on that face, bumps on bumps, each tilting the normal
           // by its own dome. The middle scale carries the modelling — it is the
           // size the eye reads as "the lobes"; the coarse one only swells the
-          // face, the fine one breaks each lobe into florets
-          vec3 n = normalize(vec3(nT.xy * 1.3 + nCo * 0.30 + nMi * 0.60 + nFi * 0.35, nT.z));
+          // face, the fine one breaks each lobe into florets.
+          // (Tilted as gently as they were, a lobe turned the face by a few
+          // degrees: under a sun from behind the eye or from above, which
+          // light every face of the tower about alike, the lobes were a faint
+          // mottle on a smooth grey mountain. A lobe of real cumulus is a
+          // ball, its flanks turned well away from its crown, and the florets
+          // on it are balls again)
+          vec3 n = normalize(vec3(nT.xy * 1.3 + nCo * 0.30 + nMi * 0.90 + nFi * 0.75, nT.z));
           float ndlT = dot(nT, vec3(lt, lu, lz));
           float ndl = dot(n, vec3(lt, lu, lz));
 
@@ -3478,9 +3484,10 @@ void main() {
           // the crease sees less of the sky as well as less of the sun
           // (read off the sums, not the dome heights: a dome's height drops
           // to nothing at its rim like a cliff, and a crease cut there has a
-          // hard edge; the sum fades out smoothly between its spheres)
-          float ao = mix(0.55, 1.0, smoothstep(0.02, 0.55, bMid))
-                   * mix(0.88, 1.0, smoothstep(0.02, 0.50, bFine))
+          // hard edge; the sum fades out smoothly between its spheres). The
+          // florets' folds are folds too, nearly as deep for their size
+          float ao = mix(0.48, 1.0, smoothstep(0.02, 0.55, bMid))
+                   * mix(0.72, 1.0, smoothstep(0.02, 0.40, bFine))
                    * mix(0.80, 1.0, smoothstep(0.05, 0.60, bCoarse));
           // a crease needs lobes on both sides of it. At the silhouette the
           // sums run low only because the cloud is ending, and darkening there
@@ -3540,20 +3547,32 @@ void main() {
           // a front-lit tower would lose its lobes. Then what the bulges
           // sunward let through. Overcast light comes from everywhere and
           // flattens it all
-          float sunVis = smoothstep(-1.10, 0.40, ndlT) + (ndl - ndlT) * 0.95;
+          float sunVis = smoothstep(-1.10, 0.40, ndlT) + (ndl - ndlT) * 1.20;
           sunVis = clamp(sunVis + core * 0.15, 0.0, 1.0) * (1.0 - shadow * 0.55);
           sunVis = mix(sunVis, 0.62 + core * 0.4, diffuse * 0.55);
-          vec3 tcol = mix(mix(deep, lo, ao), hi, sunVis * mix(1.0, ao, 0.35));
+          // (and a fold keeps its shadow in the sun as well: the sun reaches
+          // into it no better than the sky does. Lifted to the lit face by the
+          // sun alone, the creases closed up wherever the light was strong,
+          // and a sunlit head was the smoothest part of the tower)
+          vec3 tcol = mix(mix(deep, lo, ao), hi, sunVis * mix(1.0, ao, 0.60));
+          // A crown turned square to the sun is the brightest thing in the
+          // cloud, a step past the face around it — what makes each lobe of a
+          // sunlit head stand out from the next
+          tcol *= 1.0 + 0.10 * smoothstep(0.45, 0.95, ndl) * max(dayF, sunsetF * 0.6) * (1.0 - diffuse);
           // the sky's own light comes from above, so whatever the sun does the
-          // top of each lobe sees more of it than the underside. Small, but it
-          // is what still models a tower with the sun square behind the eye
-          tcol *= 0.94 + 0.10 * n.y;
+          // top of each lobe sees more of it than the underside. It is what
+          // still models a tower with the sun square behind the eye
+          tcol *= 0.95 + 0.14 * n.y;
           // apply grain by **multiplication**, last. Adding it into the tonal
           // values instead saturates and disappears in the bright areas;
           // multiplying leaves skin even on a face right at the edge of blowout.
           // multiplicative grain acts at the same ratio whether bright or dark,
           // so it adds "skin" without raising overall contrast
-          tcol *= 1.0 + micro * 0.13 + (wisp - 0.5) * 0.09;
+          tcol *= 1.0 + micro * 0.24 + (wisp - 0.5) * 0.12;
+          // and each floret is a little ball of its own: lit on its crown and
+          // dimmer round its rim, where it tucks under its neighbors. (Not at
+          // the silhouette, whose rim is the cloud's edge, not a floret's)
+          tcol *= mix(1.0, 0.90 + 0.16 * smoothstep(0.10, 0.60, pFine.w), smoothstep(0.05, 0.50, depthIn));
           // sink continuously toward the cloud base (never in discrete steps).
           // The base is in the tower's own shadow: no sun reaches it, and no
           // afterglow either — that comes from the sun's side of the sky — so
@@ -3599,7 +3618,7 @@ void main() {
             vec3 dark = (shade * mix(0.95, mix(0.55, 0.66, side), through) + moon * 0.3) * gain;
             // the lobes still show, faintly: their thin margins pass a little
             // more, and the creases between them stay darker still
-            dark *= (1.0 + micro * 0.10 + (wisp - 0.5) * 0.08) * mix(0.85, 1.0, ao);
+            dark *= (1.0 + micro * 0.16 + (wisp - 0.5) * 0.10) * mix(0.72, 1.0, ao);
             float fwd = exp(-sunAng * 5.0);
             // the rim is read off the field, not the alpha: the alpha's ramp is
             // a pixel or two wide, and a lining only that wide never shows. Not
