@@ -18,7 +18,14 @@
   crease behind a turret's edge is lit as the faces either side; a tower at
   night or before dawn stands dark against the glow over the horizon as the
   2D one does; against a low sun only the flanks the light reaches past the
-  other turrets take it gold. Every lobe keeps a lit cap and a dimmer flank,
+  other turrets take it gold. The cap draped over the heads (velum) takes
+  the turrets' own light where it lies across them and shows as a collar
+  only past their flanks, the anvil's plate passes behind the turrets'
+  crowns, and the glow round a backlit rim follows the outline without
+  being ruled off up the sky — before, a summer tower toward a high sun
+  (the gallery's 夏空) had a grey, streaked, glassy band laid across its
+  white turrets half way up, cutting each one off flat, a green one at
+  dusk, and a pale panel by the sun. Every lobe keeps a lit cap and a dimmer flank,
   and the shade is the luminous blue-grey of light scattered through the
   cloud, as light under the heads as the 2D tower's. The new
   `cumulonimbus` option (and `sky.cumulonimbus`, live) picks the tower:

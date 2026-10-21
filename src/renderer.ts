@@ -3870,7 +3870,25 @@ void main() {
           // (and a plate needs a tower under it: as the towers sink it thins
           // away, gone before they are)
           anvA *= smoothstep(0.20, 0.80, stand);
+#ifdef FEAT_CBVOL
+          // The volumetric tower's crowns stand in front of all of it. The
+          // near side is laid over the head for the 2D tower, which reaches
+          // the plate's plane only where it feeds it, and there the plate
+          // comes out from behind its crown (sP). The march's turrets are
+          // eased under the same cap but round, wide, a dome on each and the
+          // lobes on that, and they stand up into the band of the plate's
+          // near edge all along the row, not only at the root: laid over
+          // them, the plate's lower margin cut each one off flat half way up
+          // its head under a translucent grey slab, ruled along the wind by
+          // its fibres. A plate nearer the eye than the ring stands higher
+          // in the sky than its towers' tops, at the plane's height, and
+          // where it hangs overhead there is no tower in front of it — so
+          // behind the turrets, all of it
+          OVER(anvCol, anvA);
+          anvA = 0.0;
+#else
           OVER(anvCol, anvA * (1.0 - anvNear));
+#endif
         }
       }
     }
@@ -3957,6 +3975,10 @@ void main() {
       // lobes are read along: see g_cbU)
       float wU = exp(min(bodyD, 0.30) * 66.7), wSum = wU;
       vec2 uS = vec2(0.0, inversesqrt(1.0 + 80.0 * max(bodyD, 0.0))) * wU;
+      // (and the glow round a backlit rim its own reading of the same: see
+      // aura, below)
+      float fA = bodyD;
+      float wT = fract(cTw - 0.5), wS = fract(cS - 0.5);
       for (int j = 0; j < 4; j++) {
         vec4 t = cbTurret(floor(cTw - 0.5) + float(j - 1), cTw, nT, 1.0, cellT);
         float yk = t.y;
@@ -3970,6 +3992,7 @@ void main() {
         if (j == 0) { g_cbT0 = T; g_cbR0 = R; } else if (j == 1) { g_cbT1 = T; g_cbR1 = R; }
         else if (j == 2) { g_cbT2 = T; g_cbR2 = R; } else { g_cbT3 = T; g_cbR3 = R; }
         fUp = max(fUp, R.y - sqrt(d2));
+        fA = max(fA, R.y - sqrt(d2) - 0.30 * (j == 0 ? wT : j == 3 ? 1.0 - wT : 0.0));
         float re = R.y + reach;
         if (re * re > d2) { float h = sqrt(re * re - d2); zLo = min(zLo, R.z - h); zHi = max(zHi, R.z + h); }
         wU = exp(min(R.y - sqrt(d2), 0.30) * 66.7);
@@ -3996,6 +4019,8 @@ void main() {
         if (j == 0) { g_cbS0 = T; g_cbK0 = R; } else if (j == 1) { g_cbS1 = T; g_cbK1 = R; }
         else if (j == 2) { g_cbS2 = T; g_cbK2 = R; } else { g_cbS3 = T; g_cbK3 = R; }
         fUp = max(fUp, R.y - sqrt(d2));
+        fA = max(fA, R.y - sqrt(d2) - 0.30 * (j == 0 ? wS : j == 3 ? 1.0 - wS : 0.0)
+                     - 0.30 * smoothstep(g_cbSkY - 0.06, g_cbSkY, ty));
         float re = R.y + reach;
         if (re * re > d2) { float h = sqrt(re * re - d2); zLo = min(zLo, R.z - h); zHi = max(zHi, R.z + h); }
         wU = exp(min(R.y - sqrt(d2), 0.30) * 66.7);
@@ -4217,9 +4242,25 @@ void main() {
       }
       // just outside a backlit rim the tower's last wisps, too thin to see,
       // scatter the sun forward into a glow hugging the silhouette — read off
-      // how near the ray could come to it, and laid under the tower
+      // how near the ray could come to it, and laid under the tower.
+      //
+      // Read three tenths out, which is further than the turrets this pixel
+      // looks up are exact: the four nearest in a row are, out to a cell
+      // and a half, and the march needs no more — but the glow reaches out
+      // past that, and as the next turret along took the place of the one
+      // two cells off, the nearest the ray came jumped by a tenth or two
+      // where the glow was still half on. Against a high sun, round to the
+      // side of a turret, it was a pale panel laid over the blue, ruled
+      // off up the sky where the window moved on and across it where the
+      // skirt's turrets stop being looked up. So the glow reads the turrets
+      // from fA: the same distances, each of the two at the ends of the
+      // window drawn off by the whole of the glow's reach as it nears
+      // leaving (the skirt's too as the height they stop at comes up),
+      // and it falls to nothing under the base and where no turret
+      // stands, before the tower stops being read there at all
 #ifdef FEAT_BACKLIT
-      float aura = smoothstep(-0.30, 0.0, fUp) * (1.0 - m) * auraW;
+      float aura = smoothstep(-0.30, 0.0, min(fA + 0.6 * A + 0.0125, 10.0 * (ty - baseY)))
+                 * smoothstep(0.0, 0.02, max(headY - baseY, skTop - baseY - 0.004)) * (1.0 - m) * auraW;
       if (aura > 0.001) {
         OVER(rimC * 1.2, aura * 0.45);
       }
@@ -5340,6 +5381,23 @@ void main() {
             vec3 vback = mix(rimC * mix(1.25, 0.80, side), vdark, max(cbMask, smoothstep(0.20, 0.70, v)));
             vcol = mix(vcol, vback * (1.0 + vFray * 0.22), backI);
           }
+#ifdef FEAT_CBVOL
+          // Across the volumetric tower the cap is a sheet the turrets have
+          // risen through, wrapped round them: what of it lies in front of
+          // a turret lies against its face, a few hundred metres of cloud
+          // on kilometres, lit as the face is — by the sun from above when
+          // the face is, in its shade when it is not. So there it takes the
+          // tower's own light, and shows as the cap only where it stands
+          // out past the flanks, a collar in open sky. Its colour above is
+          // authored for the 2D tower, a flat white or, against the sun,
+          // that tower's shade: laid on the march's turrets — lit from
+          // above under a high sun however far round it stands, and taking
+          // a low sun's rose — it was a grey band (green at dusk) across
+          // white or pink turrets half way up, drawn out in streaks by its
+          // skin, and its top edge cut each one flat. (A little of its own
+          // is kept, the collar's smoothness over the florets)
+          vcol = mix(vcol, cbCol, cbMask * 0.85);
+#endif
           OVER(vcol, v * 0.70 * horizonFade);
         }
       }
