@@ -4054,7 +4054,7 @@ void main() {
       float bumpS = 0.55 * fp * (1.0 - 0.6 * sv) * budW;
       float wF = wE + 51.0 * bumpS;
 
-      float m = 0.0, zL = 0.0, cF = 0.0;
+      float m = 0.0, zL = 0.0, cF = 0.0, crack = 0.0;
       if (fUp > -wF) {
         // ── The march ──
         // In from the near side, a step at a time by about as far as the
@@ -4167,6 +4167,18 @@ void main() {
           fmax = cbRay(zL);
         }
         m = smoothstep(-wE, 0.0, min(fmax + bump, g_cbY.z));
+        // A ray that passes inside a turret's bare column and still misses
+        // has only gone through a crease the lobes cut through the column's
+        // edge, where nothing stood behind it: a crack of sky, a pixel or two
+        // wide, down a seam of the tower. The lobes' creases are folds in the
+        // surface, not slots through it, so it is cloud, lit as the surface
+        // the ray came nearest (but not lined: see behind). Not where the
+        // cap under a spreading anvil or the base cuts the columns: a ray
+        // there misses them rightly
+        if (!hit) {
+          crack = smoothstep(0.003, 0.015, min(mix(bare, min(bare, g_cbY.x), g_cbP.z), g_cbY.z));
+          m = max(m, crack);
+        }
       }
       // just outside a backlit rim the tower's last wisps, too thin to see,
       // scatter the sun forward into a glow hugging the silhouette — read off
@@ -4218,13 +4230,28 @@ void main() {
         float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 2.0, w2));
         float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 2.0, 0.050));
         float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 1.0, 0.120));
-        float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
+        // (Where the light slides from the turret behind onto the edge of
+        // the one in front of it (cF), the point it is read at stands in the
+        // crease between them, and the taps toward the sun and the sky pass
+        // through that edge, read as a solid body though a turret's edge is
+        // its thinnest, most broken-up cloud, which the light gets through
+        // and round: the slide went dark blue-grey in the front turret's
+        // shadow, a thin dark line drawn down every seam of a tower lit from
+        // the front. So what the edge holds back fades out there, half of
+        // it (all of it, and the slide stood out light where it had stood
+        // out dark, under a high sun). Not on the
+        // edge itself, which keeps its own: taken off it too, every seam was
+        // drawn in a thin white line. Nor against the sun, where the edge is
+        // what lines the seam, and taken off it lit the seams in thin gold
+        // lines)
+        float seam = 4.0 * cF * (1.0 - cF) * (1.0 - backT);
+        float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4) * (1.0 - 0.5 * seam);
         // ...and the sky's: up, a lobe off, and back toward the eye — a point
         // in a crease has lobe standing over it and in front of it on the way
         // out, where one on a bulge has open air
         float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 2.0, w2));
         float u3 = smoothstep(-0.006 - wE, 0.006 + wE, F.x + 0.006 * F.z - 0.02 * F.w);
-        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3));
+        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3) * (1.0 - 0.5 * seam));
         // ...and how much cloud lies behind the surface along the eye's own
         // ray: little at a grazing margin, where the light comes through
         float v1 = smoothstep(-0.003 - wE, 0.003 + wE, F.x + 0.010 * F.w);
@@ -4241,6 +4268,7 @@ void main() {
         // shader ran a sixth slower for the room they took.) Only near the
         // outline: everything that reads it is gone 0.07 inside
         float behind = bare < 0.07 ? smoothstep(-0.02, 0.04, cbBare(P + vec3(0.0, 0.0, 0.06))) : 1.0;
+        behind = max(behind, crack);
 
         // ── Its light ──
         // The palette is the 2D tower's (cloudLight), at the same authored
@@ -4370,9 +4398,18 @@ void main() {
           dark += cloudSun * fwd * fwd * 0.25 * (1.0 - through * 0.7);
           vec3 bcol = mix(dark, rimC * (1.7 + 0.8 * fwd), rimB);
           float facing = max(edgeS, 0.0);
-          float flank = side * max(smoothstep(0.45, 0.85, smoothstep(-0.32, 0.48, dot(nB, Ls))),
+          // (Every turret has a flank turned to the sun, where the 2D tower
+          // has the one, its outermost: so a turret's takes the sun only as
+          // far as the light gets to it past the turrets standing between
+          // it and the sun, which the taps read. Taken off its own turn
+          // alone, the inner turrets' flanks lit up as broad, smooth gold
+          // fields the color of the sky round the sun, and read as the sky
+          // showing through the tower in arches. And its florets still turn
+          // it, as they turn the shade round it)
+          float flank = side * max(smoothstep(0.45, 0.85, smoothstep(-0.32, 0.48, dot(nB, Ls))) * smoothstep(0.10, 0.55, Tsun),
                                    margin * smoothstep(0.05, 0.45, facing));
-          vec3 litF = (shade * 0.35 + sunL * (0.80 + 0.40 * facing) + moon * 0.3) * gain;
+          vec3 litF = (shade * 0.35 + sunL * (0.80 + 0.40 * facing) + moon * 0.3) * gain
+                    * mix(0.62, 1.0, smoothstep(-0.30, 0.70, dot(nrm, Ls))) * (1.0 - 0.6 * rec);
           bcol = mix(bcol, litF, flank * (1.0 - rimB));
           tcol = mix(tcol, bcol, backT);
         }
