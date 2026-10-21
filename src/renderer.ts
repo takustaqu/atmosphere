@@ -845,14 +845,20 @@ vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp, float 
 // A tall cloud with a low sun behind it is backlit all the way up, not just
 // where it covers the disc: its head, thirty degrees above a sun on the
 // horizon, still shows the eye its shadowed face. Only a sun that is up and
-// not taken by an overcast can light anything from behind
-float backlit(vec3 rd, vec3 sunDir, float squash) {
+// not taken by an overcast can light anything from behind.
+// sunApart is the angle that is reckoned in, backGate whether a sun can
+// backlight at all; the tower reads both to carry its backlight further
+// round the sky than a small cloud's (see the cumulonimbus)
+float sunApart(vec3 rd, vec3 sunDir, float squash) {
   vec3 a = normalize(vec3(rd.x, rd.y * squash, rd.z));
   vec3 b = normalize(vec3(sunDir.x, sunDir.y * squash, sunDir.z));
-  float ang = acos(clamp(dot(a, b), -1.0, 1.0));
-  return (1.0 - smoothstep(0.26, 0.60, ang))
-       * smoothstep(-0.05, 0.03, sunDir.y)
-       * (1.0 - smoothstep(0.55, 0.95, u_cover));
+  return acos(clamp(dot(a, b), -1.0, 1.0));
+}
+float backGate(vec3 sunDir) {
+  return smoothstep(-0.05, 0.03, sunDir.y) * (1.0 - smoothstep(0.55, 0.95, u_cover));
+}
+float backlit(vec3 rd, vec3 sunDir, float squash) {
+  return (1.0 - smoothstep(0.26, 0.60, sunApart(rd, sunDir, squash))) * backGate(sunDir);
 }
 
 // A cluster of round lobes read as a pack of bubbles as well as a sum.
@@ -1437,6 +1443,21 @@ vec3 corona(float a) {
   c = mix(c, vec3(0.50, 0.95, 0.95), smoothstep(2.8, 3.5, d) * (1.0 - smoothstep(3.8, 4.4, d)));
   c = mix(c, vec3(1.05, 0.50, 0.60), smoothstep(4.0, 4.6, d) * (1.0 - smoothstep(5.0, 5.8, d)));
   return mix(vec3(1.0), c, exp(-d / 6.0));
+}
+
+// A small cloud drawn over the cumulonimbus (mask, tower and back are the
+// tower's cbMask, cbCol and cbBack). Lit as if the tower were not there, a
+// fragment over a tower dark against the sun came out a light chip pasted on
+// it. But a cloud in front of a backlit tower is in the tower's shadow, and
+// lit from behind like it: nearly the tower's own tone, a glow only at its
+// thinnest margin. In front of a lit tower it is lit by the same sun, under
+// less air, and differs from the mass behind it far less than from the sky
+//   thin  how thin the cloud is here, 1 at its margin
+//   glow  the lining's color
+vec3 overTower(vec3 c, float thin, float mask, vec3 tower, float back, vec3 glow) {
+  vec3 b = mix(tower * 0.92, glow, thin * thin * 0.40);
+  c = mix(c, b, mask * back);
+  return mix(c, tower, mask * (1.0 - back) * 0.35);
 }
 
 // cloud color (lighting shared by every plane layer)
@@ -2462,6 +2483,10 @@ void main() {
   // how much of this pixel the tower covers — later layers use it to avoid
   // dragging their translucent fringes across the bright mass
   float cbMask = 0.0;
+  // and what it shows there, and how far it stands against the sun (its
+  // backT): a small cloud drawn in front of it takes its tone from these
+  vec3 cbCol = vec3(0.0);
+  float cbBack = 0.0;
   if (cbAmt > 0.001 && stack) {
     float azw = az + u_windOff * 0.15;
     vec2 dirc = vec2(sin(azw), cos(azw));
@@ -2591,7 +2616,31 @@ void main() {
     // vertically while the sun is low, so a tower over it is dark to the
     // top; a high sun lights the heads from above, and then only what
     // actually crowds the disc is
-    float back = backlit(rd, sunDir, mix(0.35, 1.0, smoothstep(0.15, 0.60, sunEl)));
+    float apart = sunApart(rd, sunDir, mix(0.35, 1.0, smoothstep(0.15, 0.60, sunEl)));
+    float gateB = backGate(sunDir);
+    float back = (1.0 - smoothstep(0.26, 0.60, apart)) * gateB;
+    // ── Side-lit ──
+    // Under a low sun the backlight does not stop at a third of a radian.
+    // A tower thirty or forty degrees round from a setting sun still shows
+    // the eye mostly its shaded side — the sun is behind it more than
+    // beside it — and photographs of one are all contrast: the flank
+    // toward the sun lit gold, the body a blue-violet shade, the lining
+    // only along the sunward edge. Ending the backlight where it ended for
+    // a small cloud left that band to the front-lit shading, its face and
+    // shade both half-lit, and then to the bright air: a flat pale
+    // lavender, neither one thing nor the other. So the tower's own
+    // backlight (backT) reaches on round to the sun's side while the
+    // sun is low, and as it goes round (side) its lining narrows to the
+    // sunward edge and the sunward flank takes the sun — all of the face
+    // by the time the sun is square to one side, where the front-lit
+    // shading takes over. A high sun lights the heads from above, and
+    // keeps the narrow reach. The anvil's plate and the cap have no flank
+    // to turn to the sun, only ice that is thick or thin, and theirs
+    // (backI) ends where the tower's flank has taken most of it
+    float lowS = 1.0 - smoothstep(0.20, 0.55, sunEl);
+    float backT = (1.0 - smoothstep(mix(0.26, 0.90, lowS), mix(0.60, 1.65, lowS), apart)) * gateB;
+    float backI = (1.0 - smoothstep(mix(0.26, 0.42, lowS), mix(0.60, 1.10, lowS), apart)) * gateB;
+    float side = smoothstep(0.24, 0.72, apart) * lowS;
     // the lining's color: the sun's own, run hot — at dusk past the orange
     // of the light itself toward gold, as anything blown out goes
     vec3 rimC = mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF);
@@ -2738,9 +2787,23 @@ void main() {
           // so overhead
           float thick = pl.x * pl.z;
           float tau = 60.0 * th0 * thick * mix(1.0, thick, 0.6 + 0.4 * ovh) / max(rd.y, 0.15) * dens * mix(1.0, 0.30, ovh);
+          // Side-on, the eye looks along the plume through all of it, and
+          // read that way the whole band came out solid: one smooth grey
+          // sash across the top of the frame. But a plate seen edge-on is
+          // thick only through its middle; toward its upper and lower
+          // margins the ray grazes it, and downwind the ice is drawn into
+          // strands with sky between them. So, side-on, the depth the ray
+          // crosses falls off toward the band's margins and comes and goes
+          // with the fibres out along the plume. (Side-on is what the eye
+          // gets low in the sky as well, whichever side of its towers the
+          // plate lies: at forty degrees up a plate spreading this way is
+          // still seen more across than from under)
+          float sideA = max(1.0 - ovh, 1.0 - smoothstep(0.45, 0.95, rd.y));
+          tau *= mix(1.0, (0.35 + 1.30 * fib) * (0.55 + 0.45 * billow), sideA * spread)
+               * mix(1.0, smoothstep(0.0, 0.85, pl.x), sideA);
           // (and its margins fade out over the last of its thickness, or
           // the plate's sides come out cut from card)
-          anvA = (1.0 - exp(-tau)) * smoothstep(0.0, 0.30, pl.x) * smoothstep(0.0, 0.08, rd.y);
+          anvA = (1.0 - exp(-tau)) * smoothstep(0.0, mix(0.30, 0.55, sideA), pl.x) * smoothstep(0.0, 0.08, rd.y);
           // Past the ring the plate runs on away from the eye, beyond the
           // towers — tens of kilometres off, read four times as deep as it
           // is (above), and that depth is what it should look: thinner and
@@ -2752,7 +2815,9 @@ void main() {
           // overhead, and the lower part of the band seen side-on — or the
           // near edge, the band's top: only what lies nearer than the
           // plume's middle, where a ray comes in through the plate's side
-          float under = smoothstep(-0.45, 0.25, pl.w);
+          // (side-on the two meet at a crease along the band, not in a grey
+          // gradient down it: a bright edge over a flat dark underside)
+          float under = smoothstep(mix(-0.45, -0.20, sideA), mix(0.25, 0.10, sideA), pl.w);
           float thin = 1.0 - smoothstep(0.15, 0.70, thick);
 
           // ── The anvil's light ──
@@ -2767,16 +2832,25 @@ void main() {
           float lz = -dot(sunDir.xz, hdir);
           // the near edge: a wall facing the eye, lit like a crown
           vec3 edgeC = (ambient + glow + sunL * (0.38 + 0.08 * smoothstep(-0.6, 0.6, lz)) + moon * 0.7) * gainA;
+          // Side-on, the edge is the plate's billowing upper margin, turned
+          // up toward the sun: the brightest of it is the ice the sun falls
+          // on square, which a sun above the plate's level does. The
+          // billows say which parts stand up into it
+          edgeC += sunL * sideA * smoothstep(-0.05, 0.35, sunDir.y) * (0.10 + 0.30 * billow) * gainA;
           // the underside faces the ground, and sees only the sky's light
           // round the horizon and what comes up off the ground and the
           // clouds below: a grey under a white edge. Thin, the light
           // through it from above brightens it — the ice is translucent.
           // And a sun near or under the horizon (as the plate sees it,
           // from 10 km) shines up under it: the underside of a sunset anvil
-          vec3 underC = (mix(ambient + glow, shade, 0.55) + moon * 0.3) * gainA;
+          // (side-on, flat and in its own shadow: darker under a bright edge)
+          vec3 underC = (mix(ambient + glow, shade, mix(0.55, 0.72, sideA)) + moon * 0.3) * gainA;
           // (thin as the ray finds it, fibre by fibre, so the underside is
           // streaked light and dark rather than one even grey)
-          underC = mix(underC, edgeC * 0.92, max(thin, exp(-tau * 0.35)) * 0.60);
+          underC = mix(underC, edgeC * 0.92, max(thin, exp(-tau * 0.35)) * mix(0.60, 0.40, sideA));
+          // and thin ice toward the sun carries its light on through it, so
+          // the plate is brighter on the side the sun is on
+          underC += sunL * exp(-tau * 0.5) * smoothstep(-0.1, 0.8, -lz) * 0.30 * gainA;
           float lowSun = smoothstep(0.16, -0.02, sunEl);
           underC += sunL * lowSun * 0.30;
 
@@ -2816,12 +2890,15 @@ void main() {
           anvCol = mix(edgeC, underC, under);
           // the billows and the fibres, as grain
           // (not over the pouches, which hang below the strands)
-          anvCol *= mix(0.86 + 0.28 * billow, 0.90 + 0.20 * fib, spread * (1.0 - 0.8 * mam));
+          anvCol *= mix(0.86 + 0.28 * billow, mix(0.90 + 0.20 * fib, 0.80 + 0.40 * fib, sideA), spread * (1.0 - 0.8 * mam));
           // Against the sun the plate is what the tower's rim is: where it
           // is thick, over its tower, the light has kilometres of ice to
           // cross and it goes dark; where it is thin — and most of it is —
-          // it glows with the sun's light carried on forward through it
-          float backA = backlit(rd, sunDir, mix(0.35, 1.0, smoothstep(0.15, 0.60, sunEl)));
+          // it glows with the sun's light carried on forward through it.
+          // Further round the sky than a small cloud's (backI), or round to
+          // the side of a low sun the plate was a pale lit veil laid over a
+          // tower gone dark
+          float backA = backI;
           if (backA > 0.0) {
             float fwd = exp(-sunAng * 5.0);
             // (as dark as the tower's own heart where it is thick, over the
@@ -2838,7 +2915,12 @@ void main() {
             // depth over the tower's crown came out a half-lit grey-brown
             // band: neither the anvil's dark nor its lining
             float thinB = smoothstep(0.05, 0.55, exp(-tau * 0.35));
-            vec3 bcol = mix(dark, rimA * (1.25 + 0.9 * fwd), thinB * mix(0.65, 1.0, fwd));
+            // (round to the side the ice scatters less of the light on
+            // toward the eye: the glow is fainter, and keeps to the thinnest
+            // of it, or the plate laid a pale lit band across a tower gone
+            // dark)
+            thinB *= mix(1.0, thinB, side);
+            vec3 bcol = mix(dark, rimA * (1.25 + 0.9 * fwd) * mix(1.0, 0.60, side), thinB * mix(0.65, 1.0, fwd));
             anvCol = mix(anvCol, bcol, backA);
             // and a dark veil is no veil: ice the light does not come through
             // stands as solid as the tower, and where it is too little to be
@@ -3313,12 +3395,12 @@ void main() {
         // tower over a low sun used to come out the same lavender-white as one
         // across the sky from it, and read as a translucent veil for being too
         // light to stand in front of anything.
-        if (back > 0.0) {
+        if (backT > 0.0) {
           // how much cloud the light crossed: the most deep inside the
           // silhouette, low down, and through a lobe's dense core
           float through = smoothstep(0.05, 0.80, depthIn)
                         * clamp(0.55 + core * 1.2 + depth * 0.35, 0.0, 1.0);
-          vec3 dark = (shade * mix(0.95, 0.55, through) + moon * 0.3) * gain;
+          vec3 dark = (shade * mix(0.95, mix(0.55, 0.66, side), through) + moon * 0.3) * gain;
           // the lobes still show, faintly: their thin margins pass a little
           // more, and the creases between them stay darker still
           dark *= (1.0 + micro * 0.10 + (wisp - 0.5) * 0.08) * mix(0.85, 1.0, ao);
@@ -3331,10 +3413,26 @@ void main() {
           // across a glowing margin
           float rimW = 1.0 - smoothstep(0.0, 0.22, mix(envT, field, 0.5));
           rimW *= rimW * mix(0.70, 1.0, fwd);
+          // With the sun round to the side the lining keeps to the edge that
+          // faces it: the far edge has the whole tower between it and the
+          // sun, and a lining all round read as a cut-out lit from behind
+          float edgeS = dot(normalize(n.xy + vec2(1e-4, 0.0)), vec2(lt, lu) / max(lat, 1e-3));
+          rimW *= mix(1.0, smoothstep(-0.15, 0.70, edgeS), side);
           // and right over the disc even the thick of it lets a little through
           dark += cloudSun * fwd * fwd * 0.25 * (1.0 - through * 0.7);
           vec3 bcol = mix(dark, rimC * (1.7 + 0.8 * fwd), rimW);
-          tcol = mix(tcol, bcol, back);
+          // and the flank turned toward the sun takes it straight: gold-orange
+          // over the shade, as hard against the body as a raking sun makes
+          // it. How far round the face is turned is the front-lit shading's
+          // own reading (sunVis), so the lit flank runs on into the
+          // front-lit tower without a seam as the sun comes round
+          // (and along each lobe's sunward margin, a crescent, the way a
+          // ball lit from behind and to the side is)
+          float flank = side * max(smoothstep(0.45, 0.85, sunVis),
+                                   margin * smoothstep(0.05, 0.45, facing));
+          vec3 litF = (shade * 0.35 + sunL * (0.80 + 0.40 * facing) + moon * 0.3) * gain;
+          bcol = mix(bcol, litF, flank * (1.0 - rimW));
+          tcol = mix(tcol, bcol, backT);
         }
         // in severe weather the cumulonimbus itself sits inside the storm.
         // leaving it bright here makes a pure-white cloud float in a leaden
@@ -3359,7 +3457,7 @@ void main() {
         // wash at the end already paints the air's own color over everything
         float wideA = 0.0;
         vec3 airCol = skyWeather(skyBase(rd, el, h, sunDir, sunEl, dayF, sunsetF, wideA), dayF, gloom);
-        airCol = mix(airCol, mix(ambient, cloudSun, 0.55) * gain, back);
+        airCol = mix(airCol, mix(ambient, cloudSun, mix(0.55, 0.30, side)) * gain, backT);
         float far = mix(1.6, 1.0, smoothstep(0.20, 0.60, max(topV, skTop - baseY)));
         // (and a storm further off is behind more air — but mostly at its
         // foot. The haze is a layer near the ground: the line of sight to
@@ -3373,16 +3471,25 @@ void main() {
         // brighter than the tower, and a far storm's foot, deep in the haze,
         // went all the way to it: the silhouette sank into a bright band.
         // Haze in front of a dark mass lends it some of the sky's light; it
-        // does not turn it into the sky
-        air = mix(air, min(air, 0.55), back);
+        // does not turn it into the sky. Nor is all of that air lit: a tower
+        // between the eye and the sun throws its shadow forward through the
+        // air in front of it, toward the eye, and air in shadow scatters only
+        // the sky's light. Round to the side the sky beyond is the bright
+        // sunset's and the body the shade's, and washed as far as straight
+        // against the sun it went back to the pale lavender
+        air = mix(air, min(air * mix(1.0, 0.55, side), 0.55), backT);
         tcol = mix(tcol, airCol, air);
         cbMask = clamp(m, 0.0, 1.0);
         OVER(tcol, cbMask);
+        cbCol = tcol;
+        cbBack = backT;
       }
     }
     // and the anvil's near side, over the tower's head
     if (anvA > 0.001) {
       OVER(anvCol, anvA * anvNear);
+      cbCol = cbMask > 0.0 ? mix(cbCol, anvCol, anvA * anvNear) : anvCol;
+      cbBack = max(cbBack, backI);
       cbMask = max(cbMask, anvA * anvNear);
     }
 
@@ -3430,14 +3537,17 @@ void main() {
           // against the sun the cap does what the tower's rim does: where it
           // hangs in open sky, thin, it glows with the light coming through
           // it; where it lies across the tower, in the tower's shadow, it is
-          // as dark as the mass behind it
-          if (back > 0.0) {
+          // as dark as the mass behind it. (As far round as the plate's,
+          // backI: lit as if the sun were behind the eye, a cap laid over a
+          // tower gone dark round to the side of a low sun was a pale band
+          // drawn across it)
+          if (backI > 0.0) {
             vec3 ambient, glow, sunL, shade, moon, leaden;
             float diffuse;
             cloudLight(dayF, nightM, sunsetF, cloudSun, 0.3, ambient, glow, sunL, shade, moon, leaden, diffuse);
             vec3 vdark = shade * 0.75 * mix(1.0, 0.82, dayF);
-            vec3 vback = mix(rimC * 1.25, vdark, max(cbMask, smoothstep(0.20, 0.70, v)));
-            vcol = mix(vcol, vback * (1.0 + vFray * 0.22), back);
+            vec3 vback = mix(rimC * mix(1.25, 0.80, side), vdark, max(cbMask, smoothstep(0.20, 0.70, v)));
+            vcol = mix(vcol, vback * (1.0 + vFray * 0.22), backI);
           }
           OVER(vcol, v * 0.70 * horizonFade);
         }
@@ -3516,6 +3626,8 @@ void main() {
       // tower's shadow: nothing comes through it to glow
       cuRim = mix(cuRim, cuShade, cbMask);
     }
+    // the tower's lining color, for a lump in front of it (overTower)
+    vec3 cbGlow = mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF);
     // Which flank the eye sees. With the sun off to the side a lump has a
     // lit flank and a shaded one, so the lit-ness swing is widest there;
     // with the sun behind the eye every face in view is lit, and toward the
@@ -3556,6 +3668,7 @@ void main() {
         vec3 bc = mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin);
         tc = mix(tc, bc, cuBack);
       }
+      if (cbMask > 0.001) tc = overTower(tc, 1.0 - smoothstep(tedge, tedge + 0.30, tl.z), cbMask, cbCol, cbBack, cbGlow);
       OVER(tc, talpha * 0.97);
     }
 
@@ -3601,6 +3714,7 @@ void main() {
       vec3 bc = mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin);
       c = mix(c, bc, cuBack);
     }
+    if (cbMask > 0.001) c = overTower(c, 1.0 - smoothstep(bedge, bedge + 0.30, dl.z), cbMask, cbCol, cbBack, cbGlow);
     OVER(c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
@@ -3615,6 +3729,7 @@ void main() {
       float deep = smoothstep(fedge + 0.05, fedge + 0.65, fl.z);
       fc = mix(fc, mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin), cuBack);
     }
+    if (cbMask > 0.001) fc = overTower(fc, 1.0 - smoothstep(fedge, fedge + 0.30, fl.z), cbMask, cbCol, cbBack, cbGlow);
     OVER(fc, falpha * 0.95);
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
