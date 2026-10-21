@@ -1193,66 +1193,79 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
         float h2 = hash12(vec2(id, 3.1));
         float cc = rc.y;
         float ak = cc * 6.2831853 / N;
-        // (fbm4, an octave pair at a time: the past below shares the fine
-        // pair, which barely moves over the lag)
-        vec2 pN = vec2(sin(ak), cos(ak)) * (0.85 * sc) + vec2(0.0, cbClock());
-        vec2 pP = pN - vec2(0.0, CB_LAG);
-        vec2 o = vec2(17.3, 9.1);
-        vec2 p2 = (pN * 2.03 + o) * 2.03 + o;
-        float fineN = 0.125 * vnoise(p2) + 0.0625 * vnoise(p2 * 2.03 + o);
-        float riseC = pow(max(0.5 * vnoise(pN) + 0.25 * vnoise(pN * 2.03 + o) + fineN - 0.42, 0.0) * 4.6, 1.5) * gain;
-        // ── The anvil's life ──
-        // and where it stood a while ago (CB_LAG). A turret that reaches
-        // the tropopause feeds a plate; one that has only just got there
-        // has spread it a little way, one that has stood there a while
-        // the whole way. Once the turret sinks the plate is cut loose —
-        // an orphan anvil — and drifts on downwind of where it stood, a
-        // thin fibrous sheet, until the last of it is gone with the
-        // reading from the past
-        float riseP = pow(max(0.5 * vnoise(pP) + 0.25 * vnoise(pP * 2.03 + o) + fineN - 0.42, 0.0) * 4.6, 1.5) * gain;
-        float fN = smoothstep(1.7, 2.3, riseC), fP = smoothstep(1.7, 2.3, riseP);
-        float cut = fP * (1.0 - fN);
-        float young = fN * (1.0 - fP);
         // (faded out toward the ends of the window read, or where the
         // window moves on a turret would drop out of it at a stroke and
         // cut a seam through its plate)
-        float feedC = sqrt(max(fN, fP)) * (1.0 - smoothstep(1.4, 2.4, abs(cc - cQ))) * rc.z;
-        if (feedC > 0.01) {
-          float aw = ak - u_windOff * 0.15;
-          vec2 T = vec2(sin(aw), cos(aw)) * D;
-          vec2 rel = X - T;
-          // downwind of the turret, and to the side of its plume: across
-          // the line of sight, and along it (counted four times, above)
-          float s = -dot(rel, up);
-          vec2 lat = rel + s * up;
-          float la = dot(lat, tg);
-          float lr = dot(lat, rh);
-          float sp = max(s, 0.0);
-          // as wide as the turret's head where it leaves it, and fanning
-          // out downwind
-          float wA = (0.26 + 0.08 * h2) + 0.50 * sp;
-          // thickest over the turret, and thinning from the moment it
-          // spreads: the ice that fans out is the same ice over more sky.
-          // Kept a sheet the sky does not show through most of the way
-          // out, a plate overhead was a flat grey ceiling across the frame
-          float thf = 1.0 - 0.82 * smoothstep(0.0, 0.85 * L, s);
-          // (along the line of sight it fans out less: seen side-on the
-          // fan is a band that lengthens as it goes, and if it deepened as
-          // fast it came out a grey wedge across the top of the frame)
-          float wR = (wA - 0.25 * sp) * 0.30 + 0.6 * th0 * thf / tE;
-          // the margins billow near the root and are drawn out into
-          // strands further on: never a ruled edge along the wind
-          float q = length(vec2(la / wA, lr / wR)) - bil * 0.55 * smoothstep(0.0, 0.5, sp)
-                  - (fib - 0.5) * 0.50 * smoothstep(0.1 * L, 0.6 * L, sp);
-          float reach = L * (0.85 + 0.30 * fib) * (0.85 + 0.30 * h2) * (1.0 - 0.55 * young);
-          // (cut loose, its root has drifted off downwind of the turret)
-          float cov = feedC * smoothstep(-0.10 - wA, -0.02, s - cut * 0.35 * L) * (1.0 - smoothstep(0.35, 1.05, q + cut * (fib - 0.5) * 0.6))
-                    * (1.0 - smoothstep(reach * 0.95, reach * 1.12, s));
-          float dn = thf * (1.0 - smoothstep(0.55 * reach, reach * 1.1, s)) * (1.0 - 0.6 * cut);
-          // neighbors' plates are one plate: summed, not the thickest of
-          // them, or each turret's shows as a pleat of its own
-          best += vec4(cov, cov * s, cov * dn, cov * lr / wR);
-          orph += cov * cut;
+        float winC = 1.0 - smoothstep(1.4, 2.4, abs(cc - cQ));
+        // Where its plume lies, before anything says whether it feeds one:
+        // most of the turrets read lie nowhere near X, and their noise —
+        // six fetches each — need not be read at all
+        float aw = ak - u_windOff * 0.15;
+        vec2 T = vec2(sin(aw), cos(aw)) * D;
+        vec2 rel = X - T;
+        // downwind of the turret, and to the side of its plume: across
+        // the line of sight, and along it (counted four times, above)
+        float s = -dot(rel, up);
+        vec2 lat = rel + s * up;
+        float la = dot(lat, tg);
+        float lr = dot(lat, rh);
+        float sp = max(s, 0.0);
+        // as wide as the turret's head where it leaves it, and fanning
+        // out downwind
+        float wA = (0.26 + 0.08 * h2) + 0.50 * sp;
+        // thickest over the turret, and thinning from the moment it
+        // spreads: the ice that fans out is the same ice over more sky.
+        // Kept a sheet the sky does not show through most of the way
+        // out, a plate overhead was a flat grey ceiling across the frame
+        float thf = 1.0 - 0.82 * smoothstep(0.0, 0.85 * L, s);
+        // (along the line of sight it fans out less: seen side-on the
+        // fan is a band that lengthens as it goes, and if it deepened as
+        // fast it came out a grey wedge across the top of the frame)
+        float wR = (wA - 0.25 * sp) * 0.30 + 0.6 * th0 * thf / tE;
+        // the margins billow near the root and are drawn out into
+        // strands further on: never a ruled edge along the wind
+        float q = length(vec2(la / wA, lr / wR)) - bil * 0.55 * smoothstep(0.0, 0.5, sp)
+                - (fib - 0.5) * 0.50 * smoothstep(0.1 * L, 0.6 * L, sp);
+        // The plume's cover below is nothing upwind of its root, past its
+        // reach or out past its margins, however the turret lives: the
+        // root drifts only downwind when it is cut loose, the reach is
+        // longest for a plate that is not young, and a loose plate's
+        // margins move by at most |fib − 0.5| · 0.6
+        float reachM = L * (0.85 + 0.30 * fib) * (0.85 + 0.30 * h2);
+        if (winC * rc.z > 0.0 && s > -0.10 - wA && s < reachM * 1.12
+            && q - abs(fib - 0.5) * 0.6 < 1.05) {
+          // (fbm4, an octave pair at a time: the past below shares the fine
+          // pair, which barely moves over the lag)
+          vec2 pN = vec2(sin(ak), cos(ak)) * (0.85 * sc) + vec2(0.0, cbClock());
+          vec2 pP = pN - vec2(0.0, CB_LAG);
+          vec2 o = vec2(17.3, 9.1);
+          vec2 p2 = (pN * 2.03 + o) * 2.03 + o;
+          float fineN = 0.125 * vnoise(p2) + 0.0625 * vnoise(p2 * 2.03 + o);
+          float riseC = pow(max(0.5 * vnoise(pN) + 0.25 * vnoise(pN * 2.03 + o) + fineN - 0.42, 0.0) * 4.6, 1.5) * gain;
+          // ── The anvil's life ──
+          // and where it stood a while ago (CB_LAG). A turret that reaches
+          // the tropopause feeds a plate; one that has only just got there
+          // has spread it a little way, one that has stood there a while
+          // the whole way. Once the turret sinks the plate is cut loose —
+          // an orphan anvil — and drifts on downwind of where it stood, a
+          // thin fibrous sheet, until the last of it is gone with the
+          // reading from the past
+          float riseP = pow(max(0.5 * vnoise(pP) + 0.25 * vnoise(pP * 2.03 + o) + fineN - 0.42, 0.0) * 4.6, 1.5) * gain;
+          float fN = smoothstep(1.7, 2.3, riseC), fP = smoothstep(1.7, 2.3, riseP);
+          float cut = fP * (1.0 - fN);
+          float young = fN * (1.0 - fP);
+          float feedC = sqrt(max(fN, fP)) * winC * rc.z;
+          if (feedC > 0.01) {
+            float reach = L * (0.85 + 0.30 * fib) * (0.85 + 0.30 * h2) * (1.0 - 0.55 * young);
+            // (cut loose, its root has drifted off downwind of the turret)
+            float cov = feedC * smoothstep(-0.10 - wA, -0.02, s - cut * 0.35 * L) * (1.0 - smoothstep(0.35, 1.05, q + cut * (fib - 0.5) * 0.6))
+                      * (1.0 - smoothstep(reach * 0.95, reach * 1.12, s));
+            float dn = thf * (1.0 - smoothstep(0.55 * reach, reach * 1.1, s)) * (1.0 - 0.6 * cut);
+            // neighbors' plates are one plate: summed, not the thickest of
+            // them, or each turret's shows as a pleat of its own
+            best += vec4(cov, cov * s, cov * dn, cov * lr / wR);
+            orph += cov * cut;
+          }
         }
       }
     }
