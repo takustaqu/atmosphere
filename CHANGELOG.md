@@ -88,6 +88,20 @@
   silhouette itself does not move. It costs at most about 1% more GPU time,
   and the edge flickers less from frame to frame as the tower drifts.
 
+- **The thunderhead is lit like cloud, not like a heap of balls.** Each
+  lobe was shaded as a smooth sphere: a bright cap rolling down to a dark
+  underside, the same on every lobe, with a thin dark arc wherever two met
+  — glossy metaballs. The lobes now tilt the face by the slope of a smooth
+  surface built from the same spheres, bumps on bumps with the florets
+  tilting it as far as the lobes do, so the light models them softly and
+  nothing turns in a pixel. Lit faces stay white across most of their lobes,
+  shadows pool softly in the lee of each lobe instead of being cut out
+  along its rim, the creases between lobes are only faintly darker, and
+  the crowns no longer carry a highlight. A low sun's gold still lights a
+  tower's sunward flank, without lighting lone lobes on its shaded side.
+  The silhouette is unchanged, as are the cost and the frame-to-frame
+  steadiness (a little steadier, if anything).
+
 ### Performance
 
 - **Compiled out where it cannot show.** The cumulonimbus and everything
