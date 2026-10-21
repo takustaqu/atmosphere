@@ -4343,19 +4343,23 @@ void main() {
         float w2 = 0.012 + wE;
         float t0 = smoothstep(-0.002 - wE, 0.002 + wE, F.x + 0.005 * dot(F.yzw, Ls));
         float t1 = smoothstep(-0.005 - wE, 0.005 + wE, F.x + 0.015 * dot(F.yzw, Ls));
-        float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 2.0, w2));
-        // (The two longest read fewer scales than they could: the finer
+        float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 1.0, w2));
+        // (The longer ones read fewer scales than they could: the finer
         // lobes swell the surface by no more than a fifth of the window the
         // turret-wide tap reads it through, and the coarse ones by a fifth of
         // the tower-wide one's — what they hold back is the same to within a
-        // shade, at two scales of noise fewer a pixel)
+        // shade, at two scales of noise fewer a pixel. The lobe-wide one, and
+        // the sky's a lobe up, read the coarse scale alone: the fine one is
+        // half a lobe across and swells the surface by a third of their
+        // window, and the light it gave them is the florets' and the
+        // domes' business now)
         float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 1.0, 0.050));
         float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 0.0, 0.120));
         float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
         // ...and the sky's: up, a lobe off, and back toward the eye — a point
         // in a crease has lobe standing over it and in front of it on the way
         // out, where one on a bulge has open air
-        float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 2.0, w2));
+        float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 1.0, w2));
         float u3 = smoothstep(-0.006 - wE, 0.006 + wE, F.x + 0.006 * F.z - 0.02 * F.w);
         // (Where the light slides from a turret behind onto the edge of one
         // in front of it, cF, the point it is read at stands in the crease
