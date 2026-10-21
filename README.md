@@ -920,24 +920,32 @@ apparent size and where the rain shafts start all scale together.
 sky.set({ weather: { cloudCover: 0.3, convection: 0.9, features: { distance: 0.2 } } });  // a storm close by
 ```
 
-The tower is drawn as a 2D field by default. `cumulonimbus: 'volumetric'`
-ray-marches it through a 3D density instead — the same turrets, standing in
-real depth with the 2D tower's skyline, lobes in two scales of surface, and
-the 2D tower's florets laid on its light and fraying its outline, lit by taps
-toward the sun; drawn large on the screen, its coarse lobes give way to a
-dense octave of domes over the florets, compiled as a variant of its own. It
-is still experimental: it gives the towers a depth the 2D field cannot, but a
-frame with a tower costs about 1.10–1.19× what it does with the 2D tower (pair
-it with `cloudScale: 0.5` where that matters), as the storm drifts its outline
-and the edges between turrets change about 1.2–1.4× as many pixels a frame as
-the 2D tower's at 640×400 and some three times as many at 1280×800, and a
-near storm whose lobes stand just under the domes' threshold (about 115
-pixels) still shows some smooth, broad lobes. The anvil, veil and rain shafts
-are 2D either way, and a sky with no tower carries none of the extra code.
+By default (`cumulonimbus: 'auto'`) the tower is ray-marched through a 3D
+density — the same turrets, standing in real depth with the 2D tower's
+skyline, lobes in two scales of surface, and the 2D tower's florets laid on
+its light and fraying its outline, lit by taps toward the sun and the sky —
+except for a storm close by, its base looming overhead (`features.distance`
+under about 0.45), where the march's coarse lobes stand a few hundred pixels
+across and come out as smooth slabs, and the 2D tower, a field over azimuth
+and elevation with its lobes and shading painted on, is drawn instead. As a
+storm draws nearer or recedes across 0.42–0.52 the two are crossfaded, so
+neither pops in. A frame with the volumetric tower costs about 1.10–1.19×
+what it does with the 2D one at 1080p (an M2 Max; pair it with
+`cloudScale: 0.5` where that matters), a near storm costs what the 2D tower
+does, and a frame inside the crossfade draws both, about 2.3× — only while
+the distance passes through. As the storm drifts, the volumetric outline and
+the edges between turrets change about 1.2–1.4× as many pixels a frame as
+the 2D tower's at 640×400, and some three times as many at 1280×800.
+
+`'2d'` draws the 2D tower at every distance — the lighter option — and
+`'volumetric'` the volumetric one at every distance. Each tower is a shader
+variant of its own, so a frame carries only the code it draws; the anvil,
+veil and rain shafts are 2D whichever, and a sky with no tower carries none
+of it.
 
 ```ts
-const sky = new Atmosphere(canvas, { cumulonimbus: 'volumetric', cloudScale: 0.5 });
-sky.cumulonimbus = '2d';   // switch back at any time
+const sky = new Atmosphere(canvas, { cumulonimbus: '2d' });   // the lighter tower everywhere
+sky.cumulonimbus = 'auto';   // switch at any time
 ```
 
 The cumulonimbus itself stands as a cluster of turrets competing in height,

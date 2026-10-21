@@ -4,39 +4,38 @@
 
 ### Added
 
-- **A volumetric thunderhead, as an option.** `cumulonimbus: 'volumetric'`
-  (or `sky.cumulonimbus`, live) ray-marches the tower through a 3D density
-  built on the same turrets: real depth between them, with the 2D tower's
-  skyline (each turret's head a dome two fifths of its height deep, so the
-  turrets stand proud of the body instead of meeting in a mesa, and no ledge
-  ruled along the skirt or the body's top), two scales of lobes as its
-  surface — each a swelling of the surface under it, read along its turn, so
-  no lobe stands clear of a narrow crown or rises off it as a finger — and
-  the 2D tower's packed florets laid on its light and fraying its outline
-  into cauliflower, lit by Beer–Lambert taps toward the sun and the sky. It
-  compiles as its own variant only when a tower is up. The edges between
-  turrets fade over the same few pixels the outline does, so they glide
-  rather than step as the storm drifts; a tower at night or before dawn
-  stands dark against the glow over the horizon as the 2D one does; against
-  a low sun only the flanks the light reaches past the other turrets take it
-  gold, so the inner turrets no longer show the sky's color through the
-  tower in arches. Every lobe keeps a lit cap and a dimmer flank, and the
-  shade is the luminous blue-grey of light scattered through the cloud, as
-  light under the heads as the 2D tower's. Drawn near — its coarse lobes
-  115 pixels across and more — the tower compiles a variant of its own in
-  which those lobes give way to a dense octave of domes over the florets,
-  each with a lit top and a shaded underside even in the shade, where they
-  had come out as smooth pancakes stacked like slabs. The crease behind a
-  turret's edge is lit as the faces either side, no longer a dark line
-  down the seams of a tower lit from the front. A frame with a tower costs
-  about 1.10–1.19× the 2D tower's at 1080p (1.16× at the site's hero
-  size), and pixels changing by 20 levels or more a frame are 1.2–1.4× the
-  2D tower's at 640×400 (from 1.5–1.8×). Still experimental — at 1280×800
-  a near storm's lobes stand just under the domes' threshold and keep some
-  of the pancakes, a drifting tower at that size still changes some three
-  times the 2D tower's pixels a frame, and a front-lit turret in another's
-  shadow can stand out grey — so the 2D tower stays the default. The
-  controller opens on it with `?cb=volumetric`.
+- **A volumetric thunderhead, drawn by default.** The tower is ray-marched
+  through a 3D density built on the same turrets: real depth between them,
+  with the 2D tower's skyline (each turret's head a dome two fifths of its
+  height deep, so the turrets stand proud of the body instead of meeting in
+  a mesa, and no ledge ruled along the skirt or the body's top), two scales
+  of lobes as its surface — each a swelling of the surface under it, read
+  along its turn, so no lobe stands clear of a narrow crown or rises off it
+  as a finger — and the 2D tower's packed florets laid on its light and
+  fraying its outline into cauliflower, lit by Beer–Lambert taps toward the
+  sun and the sky. The edges between turrets fade over the same few pixels
+  the outline does, so they glide rather than step as the storm drifts; the
+  crease behind a turret's edge is lit as the faces either side; a tower at
+  night or before dawn stands dark against the glow over the horizon as the
+  2D one does; against a low sun only the flanks the light reaches past the
+  other turrets take it gold. Every lobe keeps a lit cap and a dimmer flank,
+  and the shade is the luminous blue-grey of light scattered through the
+  cloud, as light under the heads as the 2D tower's. The new
+  `cumulonimbus` option (and `sky.cumulonimbus`, live) picks the tower:
+  `'auto'`, the default, draws this one, except for a storm close by with
+  its base looming overhead (`features.distance` under 0.42), where the
+  march's coarse lobes come out as smooth slabs and the 2D tower is drawn —
+  the two crossfaded across 0.42–0.52, so a storm drawing nearer or
+  receding never pops from one to the other. `'2d'` keeps the 2D tower at
+  every distance, the lighter option, and `'volumetric'` this one. A frame
+  with the volumetric tower costs about 1.10–1.19× the 2D tower's at 1080p
+  (1.13× at the site's hero), a near storm what the 2D tower costs, and a
+  frame inside the crossfade draws both (about 2.3×) while the distance
+  passes through; each tower compiles as its own variant, only when a
+  tower is up. As the storm drifts, pixels changing by 20 levels or more a
+  frame are 1.2–1.4× the 2D tower's at 640×400 and some three times at
+  1280×800. The controller's chips switch it, and `?cb=auto|2d|volumetric`
+  opens on one.
 
 ### Changed
 

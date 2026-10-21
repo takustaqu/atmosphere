@@ -18,9 +18,14 @@ import {
   formatTod, resolveConditions,
   type CloudMix, type Conditions,
   type CelestialId, type FilterId, type PolarizerId, type ToneId, type GeoLocation, type Weather, type WeatherId,
-  type AtmosphereLight, type LightSample,
+  type AtmosphereLight, type LightSample, type CumulonimbusMode,
 } from '../../src';
 import { Figure } from './figure';
+
+/** a ?cb= value or a chip's id as a tower mode: auto unless it names another */
+function cbParam(v: string | null): CumulonimbusMode {
+  return v === '2d' || v === 'volumetric' ? v : 'auto';
+}
 
 const canvas = document.getElementById('sky') as HTMLCanvasElement;
 const panel = document.getElementById('panel')!;
@@ -85,9 +90,10 @@ const sky = new Atmosphere(canvas, {
   // given at all, cloudScale compiles the shader that can split the clouds
   // out — which is what lets the Performance panel switch it live
   cloudScale: 1,
-  // ?cb=volumetric opens on the ray-marched thunderhead (the chips under
-  // "Cumulonimbus companion forms" switch it live too)
-  cumulonimbus: new URLSearchParams(location.search).get('cb') === 'volumetric' ? 'volumetric' : '2d',
+  // ?cb=2d or ?cb=volumetric opens on one tower at every distance rather
+  // than auto's (the chips under "Cumulonimbus companion forms" switch it
+  // live too)
+  cumulonimbus: cbParam(new URLSearchParams(location.search).get('cb')),
   adaptiveResolution: true,
   onLight: (light) => {
     // cam, not sky.camera: this can fire from inside the constructor (a still
@@ -469,12 +475,14 @@ note('How far off the storm stands: near, its base high over the horizon and the
   + 'anvil spreading overhead; far, a small tower on the horizon, washed into its haze.');
 syncers.push(slider('Distance', 0, 1, 0.01,
   () => ui.features.distance, (v) => { ui.features.distance = v; }, (v) => v.toFixed(2)));
-note('The towers ray-marched in depth — turrets standing in front of one another, '
-  + 'lobes lit by their own shadows — in place of the 2D field. Costlier; the anvil and veil stay 2D.');
+note('How the towers are drawn. Volumetric: ray-marched in depth, turrets standing in '
+  + 'front of one another, lobes lit by their own shadows. 2D: a field painted with its '
+  + 'lobes and shade, a little lighter. Auto: the volumetric towers, but the 2D ones '
+  + 'for a storm close overhead (distance under about 0.45), faded across. The anvil and veil stay 2D.');
 syncers.push(chips(
-  [{ id: '2d', label: '2D towers' }, { id: 'volumetric', label: 'Volumetric' }],
+  [{ id: 'auto', label: 'Auto' }, { id: '2d', label: '2D towers' }, { id: 'volumetric', label: 'Volumetric' }],
   (id) => sky.cumulonimbus === id,
-  (id) => { sky.cumulonimbus = id as '2d' | 'volumetric'; },
+  (id) => { sky.cumulonimbus = cbParam(id); },
 ));
 
 section('Sunset');

@@ -6765,11 +6765,12 @@ export interface RendererOptions {
    * How the cumulonimbus's towers are drawn: `'volumetric'`, their lobes a
    * 3D density ray-marched and lit by its own self-shadowing; `'2d'`, the
    * same towers standing in the same places as a field over azimuth and
-   * elevation with its lobes and shading painted on, about half the cost; or
-   * `'auto'` (the default), the volumetric tower but for a storm standing
-   * close, its base overhead (features.distance under {@link CB_AUTO_BAND}),
-   * which takes the 2D one — the two crossfaded across the band, so a storm
-   * drawing nearer does not jump from one to the other. The anvil, veil and
+   * elevation with its lobes and shading painted on, a frame with a tower a
+   * tenth to a sixth lighter; or `'auto'` (the default), the volumetric tower
+   * but for a storm standing close, its base overhead (features.distance
+   * under {@link CB_AUTO_BAND}), which takes the 2D one — the two crossfaded
+   * across the band, so a storm drawing nearer does not jump from one to the
+   * other, each frame inside it drawing both. The anvil, veil and
    * rain shafts are the 2D ones whichever. Each tower is a shader variant of
    * its own ({@link FEATURE}.CBVOL), so a frame outside the band carries only
    * the one it draws. Changeable at run time through
