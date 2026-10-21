@@ -9,9 +9,21 @@
   built on the same turrets: real depth between them, cauliflower bulges at
   up to five scales that fade in as they reach a few pixels, lit by
   Beer–Lambert taps toward the sun and the sky. It compiles as its own
-  variant only when a tower is up. Experimental — 1.3–2× the 2D tower's
-  GPU time, and weaker against a low sun — so the 2D tower stays the
-  default. The controller opens on it with `?cb=volumetric`.
+  variant only when a tower is up. The march starts and stops where the ray
+  actually passes within a turret's reach and reads the noise through the
+  texture filter where its steps cannot show; the light's near taps read
+  the surface off its own plane (value and gradient where the ray met it),
+  so a frame with a tower costs 1.2–1.5× the 2D tower's rather than
+  1.3–2×. Every lobe keeps a lit cap and a dimmer flank, the shade is the
+  luminous blue-grey of light scattered through the cloud rather than a
+  flat dark band under the heads, a tower against a low sun goes dark with
+  a gold lining and a lit sunward flank as the 2D one does, and the sky no
+  longer shows through in thin cracks along the seams between turrets.
+  Still experimental — its surface is plainer than the 2D tower's
+  cauliflower, a storm close by is darker and smoother, and the edges
+  between turrets step by whole pixels as the storm drifts — so the 2D
+  tower stays the default. The controller opens on it with
+  `?cb=volumetric`.
 
 ### Changed
 
