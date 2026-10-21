@@ -3973,8 +3973,11 @@ void main() {
       // and broken up along the outline by a slow noise. It widens the fade
       // at the silhouette (wE, a width in storm units: two or three pixels at
       // its crispest — any less, and a pixel on the outline flipped on and off
-      // as the tower drifted) and lets the sky through the thin of a soft margin
-      float edgeN = vnoiseHQ(cyl * 2.0 + vec2(3.7, 1.3)) * 0.6 + vnoiseHQ(cyl * 4.4 + vec2(11.0, 5.0)) * 0.4;
+      // as the tower drifted) and lets the sky through the thin of a soft margin.
+      // (The noise read through the texture filter: here it only says how
+      // wide a fade a few pixels wide is, which its steps cannot move by a
+      // fraction of a pixel, and read exactly it was eight fetches a pixel)
+      float edgeN = vnoise(cyl * 2.0 + vec2(3.7, 1.3)) * 0.6 + vnoise(cyl * 4.4 + vec2(11.0, 5.0)) * 0.4;
       float upT = smoothstep(0.35, 0.90, (ty - baseY) / max(topV - baseY, 0.02));
       float underC = g_cbP.z * smoothstep(0.10, 0.0, anvilTop - ty);
       float skW = smoothstep(0.0, 0.03, hs - hb + 0.02) * (1.0 - near);
