@@ -106,8 +106,10 @@ export interface AtmosphereOptions extends Conditions {
    */
   variants?: boolean;
   /**
-   * How the cumulonimbus's towers are drawn, `'2d'` (the default) or
-   * `'volumetric'` — see {@link RendererOptions.cumulonimbus}.
+   * How the cumulonimbus's towers are drawn: `'auto'` (the default) — the
+   * volumetric tower, and the 2D one for a storm standing close overhead —
+   * or always `'2d'` (the lighter) or always `'volumetric'`. See
+   * {@link RendererOptions.cumulonimbus}.
    */
   cumulonimbus?: CumulonimbusMode;
   /**

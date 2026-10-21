@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, FEATURE, featureKey } from '../src/renderer.js';
+import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, cbVolumetricShare, featureKey, featureKeys } from '../src/renderer.js';
 import { resolveConditions } from '../src/state.js';
 import { StateAnimator } from '../src/animator.js';
 
@@ -60,13 +60,56 @@ describe('featureKey', () => {
   it('compiles the volumetric tower in only when asked for, and only alongside a tower', () => {
     const summer = resolveConditions({ time: 13, weather: 'summer' });
     const fair = resolveConditions({ time: 14, weather: 'fair' });
-    expect(featureKey(summer) & FEATURE.CBVOL).toBe(0);
     expect(featureKey(summer, 0, '2d') & FEATURE.CBVOL).toBe(0);
     expect(featureKey(summer, 0, 'volumetric') & FEATURE.CBVOL).toBe(FEATURE.CBVOL);
     // the rest of the key is the 2D one's
-    expect(featureKey(summer, 0, 'volumetric') & ~FEATURE.CBVOL).toBe(featureKey(summer));
-    // a sky without a tower shares the 2D variant
-    expect(featureKey(fair, 0, 'volumetric')).toBe(featureKey(fair));
+    expect(featureKey(summer, 0, 'volumetric') & ~FEATURE.CBVOL).toBe(featureKey(summer, 0, '2d'));
+    // a sky without a tower shares the 2D variant, whichever the mode
+    for (const mode of ['auto', '2d', 'volumetric'] as const) {
+      expect(featureKey(fair, 0, mode)).toBe(featureKey(fair, 0, '2d'));
+    }
+  });
+
+  it('draws a storm close overhead with the 2D tower under auto, and any other with the volumetric one', () => {
+    const at = (distance: number) => resolveConditions({
+      time: 13, weather: { cloudCover: 0.25, convection: 0.9, features: { distance } },
+    });
+    const [lo, hi] = CB_AUTO_BAND;
+    // the default is auto, and the middle distance every sky is set at is volumetric
+    const summer = resolveConditions({ time: 13, weather: 'summer' });
+    expect(featureKey(summer)).toBe(featureKey(summer, 0, 'volumetric'));
+    expect(featureKeys(summer)).toEqual([{ key: featureKey(summer, 0, 'volumetric'), share: 1 }]);
+    for (const d of [hi, 0.6, 0.65, 0.95]) {
+      const ks = featureKeys(at(d), 0, 'auto');
+      expect(ks).toEqual([{ key: featureKey(at(d), 0, 'volumetric'), share: 1 }]);
+    }
+    for (const d of [0, 0.1, 0.3, 0.4, lo]) {
+      const ks = featureKeys(at(d), 0, 'auto');
+      expect(ks).toEqual([{ key: featureKey(at(d), 0, '2d'), share: 1 }]);
+      expect(featureKey(at(d), 0, 'auto') & FEATURE.CBVOL).toBe(0);
+    }
+    // inside the band both, the 2D tower first and the volumetric one over it
+    // at its share, which climbs from 0 to 1 across the band
+    let last = 0;
+    for (let d = lo + 0.005; d < hi; d += 0.01) {
+      const ks = featureKeys(at(d), 0, 'auto');
+      expect(ks.map((k) => k.key)).toEqual([featureKey(at(d), 0, '2d'), featureKey(at(d), 0, 'volumetric')]);
+      expect(ks[0].share).toBe(1);
+      expect(ks[1].share).toBeGreaterThan(last);
+      expect(ks[1].share).toBeLessThan(1);
+      expect(ks[1].share).toBeCloseTo(cbVolumetricShare(d), 9);
+      last = ks[1].share;
+      // and the one key is the tower with the larger share
+      expect(featureKey(at(d), 0, 'auto') & FEATURE.CBVOL).toBe(ks[1].share >= 0.5 ? FEATURE.CBVOL : 0);
+    }
+    // the explicit modes are pure at every distance
+    for (const d of [0.1, (lo + hi) / 2, 0.65]) {
+      expect(featureKeys(at(d), 0, '2d')).toEqual([{ key: featureKey(at(d), 0, '2d'), share: 1 }]);
+      expect(featureKeys(at(d), 0, 'volumetric')).toEqual([{ key: featureKey(at(d), 0, 'volumetric'), share: 1 }]);
+    }
+    // the band keeps clear of the close storm and of the middle distance
+    expect(lo).toBeGreaterThan(0.4);
+    expect(hi).toBeLessThanOrEqual(0.55);
   });
 
   it('keeps the cumulonimbus compiled in for as long as any of it can show, easing away or in', () => {

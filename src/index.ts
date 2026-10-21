@@ -6,7 +6,8 @@
 
 export { Atmosphere, type AtmosphereOptions, type LightProbeOptions } from './atmosphere.js';
 export {
-  AtmosphereRenderer, FEATURE, ALL_FEATURES, featureKey,
+  AtmosphereRenderer, FEATURE, ALL_FEATURES, featureKey, featureKeys,
+  CB_AUTO_BAND, cbVolumetricShare,
   type RendererOptions, type ProbeOptions, type GpuTime, type CumulonimbusMode,
 } from './renderer.js';
 export { ResolutionGovernor, type GovernorOptions } from './governor.js';

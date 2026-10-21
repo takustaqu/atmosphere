@@ -6437,8 +6437,9 @@ export const FEATURE = {
   /**
    * the cumulonimbus's towers ray-marched through a 3D density field instead
    * of drawn as a 2D field — {@link RendererOptions.cumulonimbus}. Not an
-   * optional block like the others but a different tower: set by the option,
-   * and only alongside CB (a sky without a tower shares the 2D variant)
+   * optional block like the others but a different tower: set by the option
+   * (under `'auto'`, by how near the storm stands), and only alongside CB (a
+   * sky without a tower shares the 2D variant)
    */
   CBVOL: 16384,
 } as const;
@@ -6470,14 +6471,48 @@ const FEATURE_DEFINES: [number, string][] = [
 export const ALL_FEATURES = 32767;
 
 /** how the cumulonimbus's towers are drawn — see {@link RendererOptions.cumulonimbus} */
-export type CumulonimbusMode = '2d' | 'volumetric';
+export type CumulonimbusMode = 'auto' | '2d' | 'volumetric';
+
+/** an option's mode, anything not named falling back to the default */
+function cbModeOf(v: unknown): CumulonimbusMode {
+  return v === '2d' || v === 'volumetric' ? v : 'auto';
+}
+
+/**
+ * Under `'auto'`, the storm distances (features.distance) the towers pass
+ * from the 2D tower to the volumetric one across. A storm close by stands
+ * over the eye with its base looming overhead, and there the march's coarse
+ * lobes, a few hundred pixels across, come out as broad smooth slabs laid
+ * over one another where the 2D tower's painted cauliflower holds up — still
+ * at 0.4, where the base hangs over the top of a level view; by 0.5 the
+ * storm has drawn back to the horizon and the volumetric tower is the better
+ * one again, as from the middle distance every sky with a tower is set at
+ * unless it says otherwise (0.65), and as close up through a narrow view,
+ * which stands as large on the screen but not over the eye. The band leaves
+ * an eighth of the range between it and the middle distance, and is narrow:
+ * inside it both towers are drawn and crossfaded, and each frame costs what
+ * the two cost together.
+ */
+export const CB_AUTO_BAND: readonly [number, number] = [0.42, 0.52];
+
+/**
+ * How much of the volumetric tower a storm at `distance` takes under
+ * `'auto'`: 0 near, 1 from the middle distance in, smooth across
+ * {@link CB_AUTO_BAND} (and exactly 0 or 1 outside it, so a frame outside the
+ * band draws the one tower alone)
+ */
+export function cbVolumetricShare(distance: number): number {
+  const [lo, hi] = CB_AUTO_BAND;
+  const t = Math.min(Math.max((distance - lo) / (hi - lo), 0), 1);
+  return t * t * (3 - 2 * t);
+}
 
 /**
  * Which features a state needs drawn — the key of the shader variant that
  * draws it. Each test is the same threshold the shader's own gate uses, so a
  * feature is compiled in exactly when it would be drawn.
  */
-export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: CumulonimbusMode = '2d'): number {
+export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: CumulonimbusMode = 'auto'): number {
   let k = 0;
   if (s.ground.sea > 0.001) k |= FEATURE.SEA;
   if (s.celestial.aurora > 0.001) k |= FEATURE.AURORA;
@@ -6498,7 +6533,11 @@ export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: Cumulonim
   // (the volumetric tower only while there is a tower to march: a sky
   // without one shares the 2D variant rather than compiling a second program
   // that draws the same)
-  if (cumulonimbus === 'volumetric' && (k & FEATURE.CB)) k |= FEATURE.CBVOL;
+  // Under 'auto' this is the tower that takes the larger share: inside the
+  // band the frame is drawn with both (featureKeys)
+  const vol = cumulonimbus === 'volumetric'
+    || (cumulonimbus === 'auto' && cbVolumetricShare(s.features.distance) >= 0.5);
+  if (vol && (k & FEATURE.CB)) k |= FEATURE.CBVOL;
   // The three below are all lighting the clouds take from a sun or a moon
   // that may not be there. Each gate is the shader's own, where its light
   // falls to exactly nothing; the elevations are compared a hair early, so
@@ -6518,6 +6557,21 @@ export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: Cumulonim
     k |= FEATURE.MOONLIT;
   }
   return k;
+}
+
+/**
+ * Every variant a state is drawn with, and how much of the frame each one
+ * gives: one, at 1 — or under `'auto'`, for a tower inside
+ * {@link CB_AUTO_BAND}, the 2D tower's variant and then the volumetric one's,
+ * drawn over it at its share. The same picture but for the tower, so the
+ * crossfade is the tower's alone.
+ */
+export function featureKeys(s: AtmosphereState, rays = 0, cumulonimbus: CumulonimbusMode = 'auto'): { key: number; share: number }[] {
+  const k = featureKey(s, rays, cumulonimbus);
+  if (cumulonimbus !== 'auto' || !(k & FEATURE.CB)) return [{ key: k, share: 1 }];
+  const v = cbVolumetricShare(s.features.distance);
+  if (v <= 0 || v >= 1) return [{ key: k, share: 1 }];
+  return [{ key: k & ~FEATURE.CBVOL, share: 1 }, { key: k | FEATURE.CBVOL, share: v }];
 }
 
 /** how many variants to keep linked at once; the least recently drawn goes first */
@@ -6708,13 +6762,17 @@ export interface RendererOptions {
    */
   variants?: boolean;
   /**
-   * How the cumulonimbus's towers are drawn: `'2d'` (the default), a field
-   * over azimuth and elevation with its lobes and shading painted on; or
-   * `'volumetric'`, the same towers standing where the 2D ones do, but with
-   * their lobes a 3D density ray-marched and lit by its own self-shadowing.
-   * The anvil, veil and rain shafts are the 2D ones either way. Compiled as
-   * its own shader variant ({@link FEATURE}.CBVOL), so the default carries
-   * none of it. Changeable at run time through
+   * How the cumulonimbus's towers are drawn: `'volumetric'`, their lobes a
+   * 3D density ray-marched and lit by its own self-shadowing; `'2d'`, the
+   * same towers standing in the same places as a field over azimuth and
+   * elevation with its lobes and shading painted on, about half the cost; or
+   * `'auto'` (the default), the volumetric tower but for a storm standing
+   * close, its base overhead (features.distance under {@link CB_AUTO_BAND}),
+   * which takes the 2D one — the two crossfaded across the band, so a storm
+   * drawing nearer does not jump from one to the other. The anvil, veil and
+   * rain shafts are the 2D ones whichever. Each tower is a shader variant of
+   * its own ({@link FEATURE}.CBVOL), so a frame outside the band carries only
+   * the one it draws. Changeable at run time through
    * {@link AtmosphereRenderer.cumulonimbus}.
    */
   cumulonimbus?: CumulonimbusMode;
@@ -6799,6 +6857,9 @@ export class AtmosphereRenderer {
   private cloudScaleWanted: number;
   private raysWanted: number;
   private cbMode: CumulonimbusMode;
+  // under 'auto' inside the band, the second of the two variants a frame is
+  // drawn with: kept from eviction as `wanted` is
+  private wantedVol = -1;
   // whether the program is the split variant: decided once, at construction
   private readonly split: boolean;
   private cloudSupport: boolean | null = null;   // null = not asked yet on this context
@@ -6831,7 +6892,7 @@ export class AtmosphereRenderer {
     this.opts = options;
     this.cloudScaleWanted = options.cloudScale ?? 1;
     this.raysWanted = options.rays ?? 0;
-    this.cbMode = options.cumulonimbus === 'volumetric' ? 'volumetric' : '2d';
+    this.cbMode = cbModeOf(options.cumulonimbus);
     this.split = options.cloudScale !== undefined;
     canvas.addEventListener('webglcontextlost', this.onLost);
     canvas.addEventListener('webglcontextrestored', this.onRestored);
@@ -6898,14 +6959,24 @@ export class AtmosphereRenderer {
    * variant it needs has linked.
    */
   get cumulonimbus(): CumulonimbusMode { return this.cbMode; }
-  set cumulonimbus(v: CumulonimbusMode) { this.cbMode = v === 'volumetric' ? 'volumetric' : '2d'; }
+  set cumulonimbus(v: CumulonimbusMode) { this.cbMode = cbModeOf(v); }
 
-  /** the variant key a state is drawn with (null: the one that draws anything) */
-  private keyFor(s: AtmosphereState | null): number {
-    if (s === null || this.opts.variants === false) {
-      return (ALL_FEATURES & ~FEATURE.CBVOL) | (this.cbMode === 'volumetric' ? FEATURE.CBVOL : 0);
+  /**
+   * the variants a state is drawn with and each one's share (see
+   * featureKeys; null: the one that draws anything — under 'auto' the
+   * volumetric tower, which the middle distance every sky is set at takes)
+   */
+  private keysFor(s: AtmosphereState | null): { key: number; share: number }[] {
+    if (s === null) {
+      const vol = this.cbMode !== '2d';
+      return [{ key: (ALL_FEATURES & ~FEATURE.CBVOL) | (vol ? FEATURE.CBVOL : 0), share: 1 }];
     }
-    return featureKey(s, this.rays, this.cbMode);
+    const ks = featureKeys(s, this.rays, this.cbMode);
+    if (this.opts.variants === false) {
+      // everything in one program — but which tower is the key's own
+      for (const k of ks) k.key = (ALL_FEATURES & ~FEATURE.CBVOL) | (k.key & FEATURE.CBVOL);
+    }
+    return ks;
   }
 
   /**
@@ -6991,7 +7062,7 @@ export class AtmosphereRenderer {
     // that can draw anything, so onReady still comes
     else setTimeout(() => {
       if (!this.gl || this.lost || this.variants.size > 0) return;
-      this.wanted = this.keyFor(null);
+      this.wanted = this.keysFor(null)[0].key;
       this.ensure(this.wanted);
     }, 0);
   }
@@ -7004,9 +7075,9 @@ export class AtmosphereRenderer {
    */
   prepare(s: AtmosphereState): void {
     if (!this.gl || this.lost) return;
-    const key = this.keyFor(s);
-    if (this.current === null) this.wanted = key;
-    this.ensure(key);
+    const ks = this.keysFor(s);
+    if (this.current === null) this.wanted = ks[0].key;
+    for (const k of ks) this.ensure(k.key);
   }
 
   /** the variant for a key, compiling it if this is the first ask */
@@ -7071,11 +7142,24 @@ export class AtmosphereRenderer {
       const base = this.ensure(0);
       return base?.linked ? base : null;
     }
+    return this.standIn(key) ?? (this.current?.linked ? this.current : null);
+  }
+
+  /**
+   * a linked variant that draws everything a key's does, the fewest extra
+   * features first. CBVOL is not a feature added but a tower swapped, so a
+   * variant with a tower in it stands in only for a key with the same
+   * tower: a 2D key stood in for by the volumetric variant drew a near storm
+   * as the other tower for as long as its own took to link
+   */
+  private standIn(key: number): Variant | null {
     let best: Variant | null = null;
     for (const v of this.variants.values()) {
-      if (v.linked && (v.key & key) === key && (!best || popcount(v.key) < popcount(best.key))) best = v;
+      if (!v.linked || (v.key & key) !== key) continue;
+      if ((key & FEATURE.CB) && ((v.key ^ key) & FEATURE.CBVOL)) continue;
+      if (!best || popcount(v.key) < popcount(best.key)) best = v;
     }
-    return best ?? (this.current?.linked ? this.current : null);
+    return best;
   }
 
   /** drop the least recently drawn variants past the cap, never the one in use */
@@ -7085,7 +7169,7 @@ export class AtmosphereRenderer {
     while (this.variants.size > MAX_VARIANTS) {
       let victim: Variant | null = null;
       for (const v of this.variants.values()) {
-        if (v === this.current || v.key === this.wanted || !(v.linked || v.failed)) continue;
+        if (v === this.current || v.key === this.wanted || v.key === this.wantedVol || !(v.linked || v.failed)) continue;
         if (!victim || v.used < victim.used) victim = v;
       }
       if (!victim) return;
@@ -7300,11 +7384,57 @@ export class AtmosphereRenderer {
     evo = 0,
   ): void {
     this.advanceSnow(timeSec, camera);
-    const gl = this.bind(timeSec, s, windOff, evo);
-    if (!gl) return;
-    const u = this.u;
+    const passes = this.passes(s);
+    if (!passes) return;
+    const gl = this.gl!;
     const w = this.canvas.width, h = this.canvas.height;
     const query = this.beginTiming(w * h);
+    passes.forEach((p, i) => this.drawFrame(gl, p.v, i > 0 ? p.share : 1, timeSec, s, camera, windOff, evo));
+    if (query) this.timer!.endQueryEXT(this.timer!.TIME_ELAPSED_EXT);
+  }
+
+  /**
+   * The variants this frame is drawn with, and the share each is laid over
+   * the one before at: one, whole — or under 'auto' inside the band, the 2D
+   * tower's and over it the volumetric one's, the crossfade (featureKeys).
+   * Two only once both can draw (linked, or stood in for by a variant with
+   * the same tower): while one of them links, the other draws alone, whole,
+   * rather than a tower faded halfway into nothing. null: nothing yet
+   */
+  private passes(s: AtmosphereState): { v: Variant; share: number }[] | null {
+    if (!this.gl || this.lost) return null;
+    const ks = this.keysFor(s);
+    if (ks.length === 1) {
+      this.wantedVol = -1;
+      const v = this.pick(ks[0].key);
+      return v ? [{ v, share: 1 }] : null;
+    }
+    const [a, b] = ks;
+    this.wantedVol = b.key;
+    const ready = (key: number): Variant | null => {
+      const v = this.ensure(key);
+      return v?.linked ? v : this.standIn(key);
+    };
+    const va = ready(a.key), vb = ready(b.key);
+    // (wanted: the tower with the larger share, which is what a frame drawn
+    // with one alone would take — and what says ready)
+    this.wanted = b.share >= 0.5 ? b.key : a.key;
+    if (va && vb) return [{ v: va, share: 1 }, { v: vb, share: b.share }];
+    const v = va ?? vb ?? this.pick(this.wanted);
+    return v ? [{ v, share: 1 }] : null;
+  }
+
+  /**
+   * One frame drawn with one variant: laid over what the canvas holds at
+   * `share` (the second tower of a crossfade), or over nothing at 1
+   */
+  private drawFrame(
+    gl: WebGLRenderingContext, v: Variant, share: number,
+    timeSec: number, s: AtmosphereState, camera: Camera, windOff: number, evo: number,
+  ): void {
+    this.bind(v, timeSec, s, windOff, evo);
+    const u = this.u;
+    const w = this.canvas.width, h = this.canvas.height;
     gl.uniform1f(u.u_aspect, w / Math.max(1, h));
     gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
 
@@ -7346,8 +7476,22 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
     gl.uniform1f(u.u_lensDrops, s.lens.droplets);
     gl.uniform1f(u.u_lensFx, 1);
+    // (only the frame itself is laid over the last: the cloud stack's own
+    // pass above replaces its target's contents, as it always does)
+    if (share < 1) this.blendOver(gl, share);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    if (query) this.timer!.endQueryEXT(this.timer!.TIME_ELAPSED_EXT);
+    if (share < 1) gl.disable(gl.BLEND);
+  }
+
+  /**
+   * draw the next draws over what the target holds at `share`: a straight
+   * mix of the two pictures, each already toned and encoded — the two are
+   * the same sky but for the tower, so it is the tower alone that fades
+   */
+  private blendOver(gl: WebGLRenderingContext, share: number): void {
+    gl.enable(gl.BLEND);
+    gl.blendColor(0, 0, 0, share);
+    gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE_MINUS_CONSTANT_ALPHA);
   }
 
   /** start a timer query for this frame, if timing is on and not too many are in flight */
@@ -7465,10 +7609,30 @@ export class AtmosphereRenderer {
   ): LightMeasurement | null {
     const [cols, rows] = options.grid ?? [8, 6];
     const layout = probeLayout(cols, rows, options.environment ?? true);
-    const gl = this.bind(timeSec, s, windOff, evo);
-    if (!gl || !this.probeTarget(gl, layout)) return null;
-    const u = this.u;
+    const passes = this.passes(s);
+    const gl = this.gl;
+    if (!passes || !gl || !this.probeTarget(gl, layout)) return null;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
+    // (crossfaded inside the band as the frame is, every draw of the second)
+    passes.forEach((p, i) => {
+      if (i > 0) this.blendOver(gl, p.share);
+      this.drawProbe(gl, p.v, layout, timeSec, s, camera, windOff, evo);
+      if (i > 0) gl.disable(gl.BLEND);
+    });
+    const px = this.probePixels!;
+    gl.readPixels(0, 0, layout.width, layout.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    return summarizeProbe(px, layout);
+  }
+
+  /** the probe's draws with one variant, into its bound target */
+  private drawProbe(
+    gl: WebGLRenderingContext, v: Variant, layout: ProbeLayout,
+    timeSec: number, s: AtmosphereState, camera: Camera, windOff: number, evo: number,
+  ): void {
+    this.bind(v, timeSec, s, windOff, evo);
+    const u = this.u;
     // sRGB regardless of the canvas: these numbers leave the GPU for someone
     // else's pipeline, and sRGB is the one every consumer assumes
     gl.uniform1f(u.u_p3, 0);
@@ -7495,24 +7659,14 @@ export class AtmosphereRenderer {
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       });
     }
-
-    const px = this.probePixels!;
-    gl.readPixels(0, 0, layout.width, layout.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    return summarizeProbe(px, layout);
   }
 
   /**
-   * Make the program current and upload everything that follows the state —
-   * the part render() and probe() share. Returns null when there is nothing to
-   * draw with yet.
+   * Make a variant's program current and upload everything that follows the
+   * state — the part render() and probe() share
    */
-  private bind(timeSec: number, s: AtmosphereState, windOff: number, evo: number): WebGLRenderingContext | null {
-    const gl = this.gl;
-    if (!gl || this.lost) return null;
-    const v = this.pick(this.keyFor(s));
-    if (!v) return null;
+  private bind(v: Variant, timeSec: number, s: AtmosphereState, windOff: number, evo: number): void {
+    const gl = this.gl!;
     this.current = v;
     v.used = ++this.frame;
     this.u = v.u;
@@ -7566,7 +7720,6 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_aurora, ce.aurora);
     gl.uniform1f(u.u_contrails, s.particles.contrails);
     gl.uniform1f(u.u_rays, this.rays);
-    return gl;
   }
 
   /** the probe's framebuffer, (re)made to fit the layout. false if the driver refuses it */
