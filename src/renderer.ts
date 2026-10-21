@@ -861,6 +861,10 @@ float backlit(vec3 rd, vec3 sunDir, float squash) {
   return (1.0 - smoothstep(0.26, 0.60, sunApart(rd, sunDir, squash))) * backGate(sunDir);
 }
 
+// Everything from here to the anvil's plate is the cumulonimbus's alone, and
+// compiled only into the variants that draw one (FEAT_CB) — save the storm's
+// scale and clock, which the rain shafts read as well
+#ifdef FEAT_CB
 // A cluster of round lobes read as a pack of bubbles as well as a sum.
 // blobs() adds its spheres up, which is what a silhouette wants: the edge of a
 // sum is a chain of arcs. But a sum has no front or back, and shading it gives
@@ -926,6 +930,7 @@ float fbm4HQ(vec2 p) {
   return 0.5 * vnoiseHQ(p) + 0.25 * vnoiseHQ(p1)
        + 0.125 * vnoise(p2) + 0.0625 * vnoise(p3);
 }
+#endif
 
 // How much of the sky a cumulonimbus takes up, from how far off it stands
 // (0 close, 1 far on the horizon): the factor its elevations and azimuths
@@ -953,6 +958,7 @@ float cbScale(float d) {
 float cbClock() { return u_evo * 0.12; }
 const float CB_LAG = 0.25;
 
+#ifdef FEAT_CB
 // How high a cumulonimbus's thrust carries it: the height y solving
 // rise − (y + 0.6y²) − 1 = 0, the thrust's own reach before anything shapes it
 float cbReach(float rise) {
@@ -1251,6 +1257,7 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
   orphan = orph / sum;
   return vec4(min(best.x, 1.0), best.y / sum, best.z / sum, best.w / sum);
 }
+#endif
 
 // ── Forms of the ten cloud genera ──────────────────────
 // The ten genera reduce to "4 forms (filament/stratiform/granular/convective)
@@ -1362,6 +1369,7 @@ float filament(vec2 uv) {
 // circular arcs. Real cumulus silhouettes look like "arcs joined together"
 // precisely because they *are* a cluster of risen bubbles — this construction
 // mirrors that origin directly.
+#ifdef FEAT_CB
 float blobs(vec2 p, float radius) {
   vec2 ip = floor(p), fp = fract(p);
   float sum = 0.0;
@@ -1377,6 +1385,7 @@ float blobs(vec2 p, float radius) {
   }
   return sum;
 }
+#endif
 
 // lens-flare ghost (a soft disc)
 float ghost(vec2 p, vec2 pos, float r, float aspect) {
@@ -1454,11 +1463,13 @@ vec3 corona(float a) {
 // less air, and differs from the mass behind it far less than from the sky
 //   thin  how thin the cloud is here, 1 at its margin
 //   glow  the lining's color
+#ifdef FEAT_CB
 vec3 overTower(vec3 c, float thin, float mask, vec3 tower, float back, vec3 glow) {
   vec3 b = mix(tower * 0.92, glow, thin * thin * 0.40);
   c = mix(c, b, mask * back);
   return mix(c, tower, mask * (1.0 - back) * 0.35);
 }
+#endif
 
 // cloud color (lighting shared by every plane layer)
 vec3 cloudColor(float den, float lit, float thick, float dayF, float nightF, float sunsetF,
@@ -2487,6 +2498,9 @@ void main() {
   // backT): a small cloud drawn in front of it takes its tone from these
   vec3 cbCol = vec3(0.0);
   float cbBack = 0.0;
+  // (a sky with no tower in it is compiled without any of this — see
+  // FEATURE.CB — and the layers below see an empty cbMask)
+#ifdef FEAT_CB
   if (cbAmt > 0.001 && stack) {
     float azw = az + u_windOff * 0.15;
     vec2 dirc = vec2(sin(azw), cos(azw));
@@ -3554,6 +3568,7 @@ void main() {
       }
     }
   }
+#endif
 
   // ── Low layer, under 2000m ──────────────────────────
   // Stratocumulus Sc (roll cloud) — large mottled masses, arranged as rolls
@@ -3627,7 +3642,9 @@ void main() {
       cuRim = mix(cuRim, cuShade, cbMask);
     }
     // the tower's lining color, for a lump in front of it (overTower)
+#ifdef FEAT_CB
     vec3 cbGlow = mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF);
+#endif
     // Which flank the eye sees. With the sun off to the side a lump has a
     // lit flank and a shaded one, so the lit-ness swing is widest there;
     // with the sun behind the eye every face in view is lit, and toward the
@@ -3668,7 +3685,9 @@ void main() {
         vec3 bc = mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin);
         tc = mix(tc, bc, cuBack);
       }
+#ifdef FEAT_CB
       if (cbMask > 0.001) tc = overTower(tc, 1.0 - smoothstep(tedge, tedge + 0.30, tl.z), cbMask, cbCol, cbBack, cbGlow);
+#endif
       OVER(tc, talpha * 0.97);
     }
 
@@ -3714,7 +3733,9 @@ void main() {
       vec3 bc = mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin);
       c = mix(c, bc, cuBack);
     }
+#ifdef FEAT_CB
     if (cbMask > 0.001) c = overTower(c, 1.0 - smoothstep(bedge, bedge + 0.30, dl.z), cbMask, cbCol, cbBack, cbGlow);
+#endif
     OVER(c, alpha * 0.97);
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
@@ -3729,7 +3750,9 @@ void main() {
       float deep = smoothstep(fedge + 0.05, fedge + 0.65, fl.z);
       fc = mix(fc, mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin), cuBack);
     }
+#ifdef FEAT_CB
     if (cbMask > 0.001) fc = overTower(fc, 1.0 - smoothstep(fedge, fedge + 0.30, fl.z), cbMask, cbCol, cbBack, cbGlow);
+#endif
     OVER(fc, falpha * 0.95);
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
@@ -3781,6 +3804,7 @@ void main() {
     // from (see that block), so the curtain hangs only where a tower stands.
     // Unrelated noise here would rain out of an empty sky
     float cbP = 0.0, cbBase = 0.12;
+#ifdef FEAT_CB
     if (u_low.w > 0.001) {
       float cbAmtS = u_low.w * (1.0 - gloom * 0.6);
       float azT = azw - lean * max(sin(0.1304 / cbSS) - rd.y, 0.0);
@@ -3794,6 +3818,7 @@ void main() {
       // from the storm's own sky to the real one)
       cbBase = sin(asin(0.12 + 0.06 * smoothstep(0.6, 2.0, riseS)) / cbSS);
     }
+#endif
     // the deck: rain falls from all of it, but heavier in cells, and only
     // the cells show as shafts against the lighter rain round them. The more
     // it rains the more of the deck is a cell
@@ -4605,6 +4630,13 @@ export const FEATURE = {
   POLARIZER: 256,
   /** rain shafts hanging under a raining tower or deck */
   SHAFTS: 512,
+  /**
+   * the cumulonimbus: its towers, anvil and veil, the rain its towers drop,
+   * and the small clouds' shading in front of it. The largest block in the
+   * shader by far: carried by a sky without a tower, it made a fair or an
+   * overcast sky's frame some two fifths longer (an M2 Max, 1080p)
+   */
+  CB: 1024,
 } as const;
 
 const FEATURE_DEFINES: [number, string][] = [
@@ -4618,10 +4650,11 @@ const FEATURE_DEFINES: [number, string][] = [
   [FEATURE.DARKSKY, 'FEAT_DARKSKY'],
   [FEATURE.POLARIZER, 'FEAT_POLARIZER'],
   [FEATURE.SHAFTS, 'FEAT_SHAFTS'],
+  [FEATURE.CB, 'FEAT_CB'],
 ];
 
 /** every feature compiled in: the one program the renderer used to be */
-export const ALL_FEATURES = 1023;
+export const ALL_FEATURES = 2047;
 
 /**
  * Which features a state needs drawn — the key of the shader variant that
@@ -4643,6 +4676,8 @@ export function featureKey(s: AtmosphereState, rays = 0): number {
   if (s.polarizer.strength > 0.001) k |= FEATURE.POLARIZER;
   // a thunderstorm's tower rains whether or not it is raining here
   if (s.rain > 0.01 || (s.clouds.cumulonimbus > 0.05 && s.thunder > 0.001)) k |= FEATURE.SHAFTS;
+  // the tower's own gate is this amount, less the gloom's share of it
+  if (s.clouds.cumulonimbus > 0.001) k |= FEATURE.CB;
   return k;
 }
 

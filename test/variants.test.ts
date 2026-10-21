@@ -45,6 +45,17 @@ describe('featureKey', () => {
     expect(featureKey(s) & FEATURE.SHAFTS).toBe(0);
   });
 
+  it('compiles the cumulonimbus in only where there is one', () => {
+    expect(featureKey(resolveConditions({ time: 13, weather: 'summer' })) & FEATURE.CB).toBe(FEATURE.CB);
+    expect(featureKey(resolveConditions({ time: 17, weather: 'thunderstorm' })) & FEATURE.CB).toBe(FEATURE.CB);
+    expect(featureKey(resolveConditions({ time: 14, weather: 'fair' })) & FEATURE.CB).toBe(0);
+    expect(featureKey(resolveConditions({ time: 11, weather: 'overcast' })) & FEATURE.CB).toBe(0);
+    // the shader's gate is the amount past 0.001
+    const s = resolveConditions({ weather: { convection: 0.5 } });
+    s.clouds.cumulonimbus = 0.001;
+    expect(featureKey(s) & FEATURE.CB).toBe(0);
+  });
+
   it('lets go of the dark sky once an eased bortle is all but back at 6', () => {
     const s = resolveConditions({ time: 22, weather: 'clear', celestial: 'suburban' });
     s.celestial.bortle = 5.9999;
