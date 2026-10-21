@@ -76,6 +76,18 @@
   turrets sink, the anvil, veil and glow fade with it, and nothing is left
   by 0.03. Rising from 0, the towers grow in rather than popping in whole.
 
+- **The thunderhead's outline is mixed, not one crisp line.** Every lobe
+  used to end in the same one- or two-pixel cut, so the silhouette read as
+  a cut-out. Now the crown of a young, growing tower stays crisp, while the
+  edge goes soft lower down, on the skirt of towering cumulus, under the
+  tropopause and all round a dying tower. A slow noise also varies it along
+  the outline, so one lobe can be crisp and the next feathered. Where the
+  edge is soft it fades over several pixels, frayed into strands, with the
+  sky showing through it. It also takes on more of the air's color: paler
+  in front light, glowing against the sun, and more so on a far storm. The
+  silhouette itself does not move. It costs at most about 1% more GPU time,
+  and the edge flickers less from frame to frame as the tower drifts.
+
 ### Performance
 
 - **Compiled out where it cannot show.** The cumulonimbus and everything
