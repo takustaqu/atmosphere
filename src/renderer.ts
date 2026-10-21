@@ -4183,9 +4183,8 @@ void main() {
         // ── The florets ──
         // Past the surface's two scales the cauliflower goes on in the light
         // alone, as the 2D tower's does past its finest lobes: its buds
-        // (budPack), octave after octave for as long as one is a few pixels
-        // across, each faded in from three pixels a cell to six — the same
-        // packed florets turning over at a fold a pixel or so wide, read in
+        // (budPack), octave after octave down to a few pixels across — the
+        // same packed florets turning over at a fold a pixel or so wide, read in
         // the same sky (cyl), drifting up as the lobes do. Each tilts the
         // face (lean, along the azimuth and up) and its gaps are recesses
         // (rec), seeing less of the sky and of the light scattered round
@@ -4197,14 +4196,22 @@ void main() {
         vec2 lean = vec2(0.0);
         float rec = 0.0;
         float budW = lobe * (1.0 - smoothstep(0.5, 0.9, gloom));
-        for (int k = 0; k < 3; k++) {
-          float fq = 7.6 * pow(2.1, float(k));
+        // (three octaves of them, the coarsest the first under 46 pixels a
+        // cell — fading out from 30, as the finest fades in from 5 to 8 —
+        // so a near or narrow view gets finer florets, not bigger ones:
+        // three octaves fixed at the coarse end left a close view of the
+        // tower with nothing under twenty pixels)
+        float k0 = max(0.0, ceil(log(1.0 / (46.0 * 7.6 * fpc)) * 1.3478));
+        for (int j = 0; j < 3; j++) {
+          float k = k0 + float(j);
+          float fq = 7.6 * pow(2.1, k);
           float cellPx = 1.0 / (fpc * fq);
-          if (cellPx < 3.0 || budW <= 0.0) break;
-          float wB = smoothstep(3.0, 6.0, cellPx) * budW;
-          vec3 bud = budPack(wfB * fq + vec2(float(k) * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc);
-          lean += bud.xy * ((0.75 - 0.12 * float(k)) * wB);
-          rec += bud.z * (0.14 * wB);
+          float wB = smoothstep(5.0, 8.0, cellPx) * (1.0 - smoothstep(30.0, 46.0, cellPx)) * budW;
+          if (wB > 0.0) {
+            vec3 bud = budPack(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc);
+            lean += bud.xy * ((0.75 - 0.12 * float(j)) * wB);
+            rec += bud.z * (0.14 * wB);
+          }
         }
         rec = clamp(rec, 0.0, 1.0);
         nrm = normalize(nrm + vec3(dot(lean, vec2(dirc.y, -dirc.x)), dot(lean, dirc), 0.0));
