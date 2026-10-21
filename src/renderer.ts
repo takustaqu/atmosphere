@@ -3300,7 +3300,11 @@ void main() {
         // (no swellings on the anvil's flat: over a top that broad every gap
         // between them let one stand clear as a crumb — there they only dent)
         float field = lobeLayer(envT, (bMid - 0.60) * near, 0.07, 0.05, hc);
-        field = lobeLayer(field, ((bFine - 0.54) * 0.82 + (fine - 0.50) * 0.72) * near, 0.05, 0.035, hc * 0.5);
+        float fineN = (bFine - 0.54) * 0.82 + (fine - 0.50) * 0.72;
+        // (and the same surface with the florets laid on at three quarters
+        // and no grain: where the edge goes soft, see the mixed edge below)
+        float fieldM = lobeLayer(field, fineN * 0.75 * near, 0.05, 0.035, hc * 0.5);
+        field = lobeLayer(field, fineN * near, 0.05, 0.035, hc * 0.5);
         field = lobeLayer(field, ((bMicro - 0.51) * 0.48 + (wisp - 0.50) * 0.22) * near, 0.03, 0.02, 0.5);
         // ── No floating fragments ──
         // However tight the band, a lobe the noise raises over a dip in it can
@@ -3328,9 +3332,11 @@ void main() {
         // out to a contour of the bare envelope, and the flanks go bald
         field = max(field, (envT - 0.12) * 2.0);
         fieldS = lobeLayer(fieldS, (bMid - 0.60) * skP, 0.08, 0.04, 1.0);
-        fieldS = lobeLayer(fieldS, ((bFine - 0.54) * 0.82 + (fine - 0.50) * 0.72) * skP, 0.05, 0.035, 0.5);
+        float fieldSM = lobeLayer(fieldS, fineN * 0.75 * skP, 0.05, 0.035, 0.5);
+        fieldS = lobeLayer(fieldS, fineN * skP, 0.05, 0.035, 0.5);
         fieldS = lobeLayer(fieldS, ((bMicro - 0.51) * 0.48 + (wisp - 0.50) * 0.22) * skP, 0.03, 0.02, 0.5);
-        fieldS += smoothstep(0.60, 0.15, (ty - baseY) / skH) * 0.50 * skP;
+        float skBase = smoothstep(0.60, 0.15, (ty - baseY) / skH) * 0.50 * skP;
+        fieldS += skBase;
         // the two are one cloud: whichever reaches further
         float skW = smoothstep(-0.10, 0.10, fieldS - field);
         field = max(field, fieldS);
@@ -3387,7 +3393,75 @@ void main() {
                                       25.0 * (1.0 - smoothstep(0.0, 0.04, ty - baseY)));
         float widePx = max(0.0016 * min(soft, 2.6) * pow(cbS, 0.4) / pxA, 2.5);
         float lo = -0.0275 + 0.0075 * growth - 0.03 * decay;
-        float m = smoothstep(lo, lo + clamp(slope * widePx, 0.0425 - 0.01125 * growth + 0.03 * decay, 0.10 + 0.03 * decay), field);
+        float bandC = clamp(slope * widePx, 0.0425 - 0.01125 * growth + 0.03 * decay, 0.10 + 0.03 * decay);
+        float m = smoothstep(lo, lo + bandC, field);
+        // ── A mixed edge ──
+        // Cut that way the whole outline was one line: crisp, a pixel or two
+        // of ramp all round, every lobe a cut-out. A real thunderhead's edge
+        // is mixed. A young head boiling up in the sun is crisp, but along
+        // the rest of the outline the cloud is thinning into the air round
+        // it — evaporating at its margins, older and more mixed down the
+        // flanks and toward the foot, glaciating into a fibrous fringe up
+        // under the tropopause, and dying all round once the tower decays —
+        // and there the edge is a margin, not a line: thin cloud, the sky
+        // showing through it, frayed. So how soft the edge is (sv, 0 crisp
+        // to 1 soft) is read along the outline: soft low on the tower,
+        // crisp toward its crown, softer on the skirt, under the ceiling and
+        // on a dying tower, crisper on a growing one — and broken up by a
+        // slow noise a lobe or two across, so neighbouring stretches of one
+        // outline differ: one lobe crisp, the next feathered.
+        //
+        // The soft edge is cut from a field of its own (fieldSoft): the
+        // surface with the florets laid on at three quarters and without the
+        // grain. It climbs from the silhouette more slowly than the lobed
+        // field, whose fine octaves make it steepest just where the edge
+        // falls — read off that, any fade stayed a pixel wide however wide
+        // it was asked to be. Read off the gentler one, the fade spreads a
+        // few pixels in, and what of the grain and the florets' tips stood
+        // beyond it comes out as thin cloud. It is a width on the screen
+        // (and, close up, a width in the sky, so a near tower's soft margin
+        // does not shrink to a pixel line), and it only ever thins what the
+        // crisp cut drew — the silhouette stays where it stood, so no lobe
+        // the cut kept from floating free returns as a ghost.
+        //
+        // Nor may it spread far: where both fields climb slowly a wide fade
+        // turned whole florets glassy, the sky through them. So it is also
+        // complete by the time the lobed field has climbed three crisp
+        // fades in (teC).
+        //
+        // Inside the margin a fibrous noise eats into the fade — gaps between
+        // strands, deepest at the outer edge, none where the cloud turns
+        // solid — stretched a little along the horizon, as evaporating and
+        // icing fringes are. Only ever into it, so it frays the margin and
+        // lifts nothing off it; and only at a scale the screen can hold (a
+        // strand under a few pixels flickers as the tower drifts), its finer
+        // octave giving way first.
+        //
+        // All of this is the edge's alone, and only read near it: deeper in
+        // the fade is done whatever sv says, and nothing here is needed
+        float fieldSoft = min(max(max(fieldM, (envT - 0.12) * 2.0), fieldSM + skBase), (ty + baseFray - baseY) * 25.0);
+        float bandW = cbS * max(pxA * 48.0, 0.06);
+        float teC = (field - lo) / (bandC * 3.0);
+        float te = max((fieldSoft - lo) / (bandW * 1.6), teC);
+        float sv = 0.0, fr = 0.5;
+        if (field > lo && te < 1.5) {
+          float edgeN = vnoiseHQ(wf * 2.0 + vec2(3.7, 1.3)) * 0.6 + vnoiseHQ(wf * 4.4 + vec2(11.0, 5.0)) * 0.4;
+          // (how far up the whole tower, not up this turret: at a turret's
+          // own edge its head is always just here)
+          float upT = smoothstep(0.35, 0.90, (ty - baseY) / max(topV - baseY, 0.02));
+          sv = clamp(0.30 + 0.35 * (1.0 - upT) + 0.20 * skW + 0.45 * decay - 0.25 * growth + 0.30 * (1.0 - hc)
+                     + (smoothstep(0.30, 0.70, edgeN) - 0.5) * 1.2, 0.0, 1.0);
+          te = max((fieldSoft - lo) / (bandW * (0.4 + 1.2 * sv)), teC);
+          // the strands: the cylinder's radius stretched about the horizon's,
+          // so they run along it half again as long as they stand tall
+          float rC = length(cyl);
+          vec2 fib = dirc * (2.6 * cbS + (rC - 2.6 * cbS) * 1.6) * 22.0 + warp * 0.6;
+          float frPx = 1.0 / (22.0 * 2.6 * cbS * pxA);
+          fr = vnoiseHQ(fib + 5.0) * 0.6
+             + (vnoiseHQ(fib * 2.3 + 29.0) - 0.5) * 0.4 * smoothstep(2.0, 5.0, frPx / 2.3) + 0.2;
+          float teF = te - 1.6 * smoothstep(2.5, 6.0, frPx) * smoothstep(0.35, 0.80, fr) * (1.0 - clamp(te, 0.0, 1.0));
+          m = min(m, mix(1.0, smoothstep(0.0, 1.0, teF), sv));
+        }
         // the last low remnant of a storm that is running out thins away
         // rather than standing solid to its final sliver (see cbLive)
         m *= smoothstep(0.03, 0.35, stand);
@@ -3745,6 +3819,16 @@ void main() {
 #ifdef FEAT_BACKLIT
           air = mix(air, min(air * mix(1.0, 0.55, side), 0.55), backT);
 #endif
+          // and the margin is thin cloud, behind as much air as the rest
+          // but with less of itself to show through it: the air's color
+          // takes more of it — a paler, hazier rim where the edge is soft,
+          // paler still between its strands; against the sun, the glow of
+          // the light it lets through. Further off, more so: what is left
+          // of a far storm's margins is mostly the air in front of them.
+          // (A rim only: spread further in it veiled whole florets, which
+          // read as glass)
+          float thinM = (1.0 - smoothstep(0.0, 1.5, te)) * (0.30 + 0.70 * sv) * (0.7 + 0.6 * smoothstep(0.35, 0.80, fr));
+          air += (1.0 - air) * thinM * 0.15 * (1.0 + smoothstep(1.0, 3.5, cbS));
           tcol = mix(tcol, airCol, air);
           cbMask = clamp(m, 0.0, 1.0);
           OVER(tcol, cbMask);
