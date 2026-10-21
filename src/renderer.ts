@@ -1215,10 +1215,15 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
           // as wide as the turret's head where it leaves it, and fanning
           // out downwind
           float wA = (0.26 + 0.08 * h2) + 0.50 * sp;
-          // thickest over the turret, and thinning as it spreads — most of
-          // the way out still a sheet the sky does not show through
-          float thf = 1.0 - 0.78 * smoothstep(0.10 * L, 0.95 * L, s);
-          float wR = wA * 0.30 + 0.6 * th0 * thf / tE;
+          // thickest over the turret, and thinning from the moment it
+          // spreads: the ice that fans out is the same ice over more sky.
+          // Kept a sheet the sky does not show through most of the way
+          // out, a plate overhead was a flat grey ceiling across the frame
+          float thf = 1.0 - 0.82 * smoothstep(0.0, 0.85 * L, s);
+          // (along the line of sight it fans out less: seen side-on the
+          // fan is a band that lengthens as it goes, and if it deepened as
+          // fast it came out a grey wedge across the top of the frame)
+          float wR = (wA - 0.25 * sp) * 0.30 + 0.6 * th0 * thf / tE;
           // the margins billow near the root and are drawn out into
           // strands further on: never a ruled edge along the wind
           float q = length(vec2(la / wA, lr / wR)) - bil * 0.55 * smoothstep(0.0, 0.5, sp)
@@ -2712,12 +2717,27 @@ void main() {
           // still billows like it; out along the wind it is ice drawn into
           // strands. Both as how much of it lies across the ray
           float billow = fbm4(X * 5.5 + vec2(u_evo * 0.06, 0.0));
-          float dens = mix(0.85 + 0.40 * billow, (0.55 + 0.80 * fib) * (0.70 + 0.60 * billow), max(spread, orphan));
+          // How much of the plate hangs over the eye: on the eye's side of
+          // its towers (inside the ring), or running toward the eye from a
+          // tower upwind — its underside in view, the eye looking up into
+          // the plume rather than across it. Seen from under it a plate is
+          // a few kilometres of ice spread over tens, and most of what is
+          // overhead is its spreading reach: a veil the sky shows through,
+          // drawn into strands. Taken as thick as its root, the whole of it
+          // came out a flat grey ceiling over the frame. Side-on from afar
+          // the eye looks along the plume, through all of it, and there it
+          // keeps most of the weight it has
+          float upw = dot(hdir, vec2(0.9889, 0.1483));
+          float ovh = max(smoothstep(0.95 * D, 0.40 * D, rX),
+                          smoothstep(0.25, 0.85, upw) * smoothstep(1.20 * D, 0.85 * D, rX));
+          float dens = mix(0.85 + 0.40 * billow, (0.55 + 0.80 * fib) * (0.70 + 0.60 * billow), max(max(spread, orphan), 0.7 * ovh));
           // ice, and thin: where little of it lies across the ray the sky
           // shows through. The path through it is its thickness over the
-          // sine of the elevation
+          // sine of the elevation. And it thins faster than it narrows —
+          // the ice that spreads is the same ice, over more sky — the more
+          // so overhead
           float thick = pl.x * pl.z;
-          float tau = 60.0 * th0 * thick / max(rd.y, 0.15) * dens;
+          float tau = 60.0 * th0 * thick * mix(1.0, thick, 0.6 + 0.4 * ovh) / max(rd.y, 0.15) * dens * mix(1.0, 0.30, ovh);
           // (and its margins fade out over the last of its thickness, or
           // the plate's sides come out cut from card)
           anvA = (1.0 - exp(-tau)) * smoothstep(0.0, 0.30, pl.x) * smoothstep(0.0, 0.08, rd.y);
@@ -2753,8 +2773,10 @@ void main() {
           // through it from above brightens it — the ice is translucent.
           // And a sun near or under the horizon (as the plate sees it,
           // from 10 km) shines up under it: the underside of a sunset anvil
-          vec3 underC = (mix(ambient + glow, shade, 0.70) + moon * 0.3) * gainA;
-          underC = mix(underC, edgeC * 0.92, thin * 0.55);
+          vec3 underC = (mix(ambient + glow, shade, 0.55) + moon * 0.3) * gainA;
+          // (thin as the ray finds it, fibre by fibre, so the underside is
+          // streaked light and dark rather than one even grey)
+          underC = mix(underC, edgeC * 0.92, max(thin, exp(-tau * 0.35)) * 0.60);
           float lowSun = smoothstep(0.16, -0.02, sunEl);
           underC += sunL * lowSun * 0.30;
 
@@ -2794,7 +2816,7 @@ void main() {
           anvCol = mix(edgeC, underC, under);
           // the billows and the fibres, as grain
           // (not over the pouches, which hang below the strands)
-          anvCol *= mix(0.88 + 0.24 * billow, 0.93 + 0.14 * fib, spread * (1.0 - 0.8 * mam));
+          anvCol *= mix(0.86 + 0.28 * billow, 0.90 + 0.20 * fib, spread * (1.0 - 0.8 * mam));
           // Against the sun the plate is what the tower's rim is: where it
           // is thick, over its tower, the light has kilometres of ice to
           // cross and it goes dark; where it is thin — and most of it is —
