@@ -920,6 +920,20 @@ apparent size and where the rain shafts start all scale together.
 sky.set({ weather: { cloudCover: 0.3, convection: 0.9, features: { distance: 0.2 } } });  // a storm close by
 ```
 
+The tower is drawn as a 2D field by default. `cumulonimbus: 'volumetric'`
+ray-marches it through a 3D density instead — the same turrets, standing in
+real depth, with cauliflower bulges at several scales lit by taps toward the
+sun. It is experimental: in summer daylight it reads most like a photograph,
+but it costs 1.3–2× the GPU time of the 2D tower (pair it with
+`cloudScale: 0.5`), and against a low sun the 2D tower's lining is still the
+better of the two. The anvil, veil and rain shafts are 2D either way, and a
+sky with no tower carries none of the extra code.
+
+```ts
+const sky = new Atmosphere(canvas, { cumulonimbus: 'volumetric', cloudScale: 0.5 });
+sky.cumulonimbus = '2d';   // switch back at any time
+```
+
 The cumulonimbus itself stands as a cluster of turrets competing in height,
 a full-bodied mass with a broad rounded crown. Each lobe is shaded as a sunlit
 dome — light on the crowns, shadow in the creases between — on a flat dark

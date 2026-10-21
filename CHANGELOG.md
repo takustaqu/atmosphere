@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **A volumetric thunderhead, as an option.** `cumulonimbus: 'volumetric'`
+  (or `sky.cumulonimbus`, live) ray-marches the tower through a 3D density
+  built on the same turrets: real depth between them, cauliflower bulges at
+  up to five scales that fade in as they reach a few pixels, lit by
+  Beer–Lambert taps toward the sun and the sky. It compiles as its own
+  variant only when a tower is up. Experimental — 1.3–2× the 2D tower's
+  GPU time, and weaker against a low sun — so the 2D tower stays the
+  default. The controller opens on it with `?cb=volumetric`.
+
 ### Changed
 
 - **The thunderhead is a cauliflower, not putty.** Its face was lit off

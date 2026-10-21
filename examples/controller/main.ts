@@ -85,6 +85,9 @@ const sky = new Atmosphere(canvas, {
   // given at all, cloudScale compiles the shader that can split the clouds
   // out — which is what lets the Performance panel switch it live
   cloudScale: 1,
+  // ?cb=volumetric opens on the ray-marched thunderhead (the chips under
+  // "Cumulonimbus companion forms" switch it live too)
+  cumulonimbus: new URLSearchParams(location.search).get('cb') === 'volumetric' ? 'volumetric' : '2d',
   adaptiveResolution: true,
   onLight: (light) => {
     // cam, not sky.camera: this can fire from inside the constructor (a still
@@ -466,6 +469,13 @@ note('How far off the storm stands: near, its base high over the horizon and the
   + 'anvil spreading overhead; far, a small tower on the horizon, washed into its haze.');
 syncers.push(slider('Distance', 0, 1, 0.01,
   () => ui.features.distance, (v) => { ui.features.distance = v; }, (v) => v.toFixed(2)));
+note('The towers ray-marched in depth — turrets standing in front of one another, '
+  + 'lobes lit by their own shadows — in place of the 2D field. Costlier; the anvil and veil stay 2D.');
+syncers.push(chips(
+  [{ id: '2d', label: '2D towers' }, { id: 'volumetric', label: 'Volumetric' }],
+  (id) => sky.cumulonimbus === id,
+  (id) => { sky.cumulonimbus = id as '2d' | 'volumetric'; },
+));
 
 section('Sunset');
 note('How hard the sky burns. Warmth is the band on the sun\'s side — its strength, '

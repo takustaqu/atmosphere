@@ -57,6 +57,18 @@ describe('featureKey', () => {
     expect(featureKey(s) & FEATURE.CB).toBe(0);
   });
 
+  it('compiles the volumetric tower in only when asked for, and only alongside a tower', () => {
+    const summer = resolveConditions({ time: 13, weather: 'summer' });
+    const fair = resolveConditions({ time: 14, weather: 'fair' });
+    expect(featureKey(summer) & FEATURE.CBVOL).toBe(0);
+    expect(featureKey(summer, 0, '2d') & FEATURE.CBVOL).toBe(0);
+    expect(featureKey(summer, 0, 'volumetric') & FEATURE.CBVOL).toBe(FEATURE.CBVOL);
+    // the rest of the key is the 2D one's
+    expect(featureKey(summer, 0, 'volumetric') & ~FEATURE.CBVOL).toBe(featureKey(summer));
+    // a sky without a tower shares the 2D variant
+    expect(featureKey(fair, 0, 'volumetric')).toBe(featureKey(fair));
+  });
+
   it('keeps the cumulonimbus compiled in for as long as any of it can show, easing away or in', () => {
     // The towers sink into their base as the amount falls, and the last of
     // them is gone by 0.03 (cbLive and the alpha's fade in the shader): the
