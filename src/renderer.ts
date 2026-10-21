@@ -3306,7 +3306,42 @@ void main() {
         // the fade is outside it; inside, the cloud is opaque at once
         // (crisper yet on a young tower; a dying one's edge goes soft, the
         // sky showing through its wasting margins)
-        float m = smoothstep(-0.11 + 0.03 * growth - 0.12 * decay, 0.06 - 0.015 * growth, field * 4.0);
+        //
+        // How wide the fade is, though, is better said on the screen than in
+        // the field. Across the silhouette the field climbs some 25 a radian
+        // where the lobes lie on it (a few where the bare envelope makes the
+        // edge, well over a hundred along a floret's rim), and more as a
+        // storm stands further off and its lobes come smaller on screen; at
+        // the resolution a background is drawn at, that band was under a
+        // pixel along most of a tower's lobes — a cut-out — and a cut that
+        // falls between two pixels flips one of them on and off as the tower
+        // drifts and grows: the head's edge crawled. So the fade is a width
+        // in pixels, turned into the field's measure by how much field a
+        // pixel of the edge typically crosses here (slope; the base's ruled
+        // line, a climb of 25, is steep wherever it is).
+        //
+        // And how wide, in the sky: a sunlit head is crisp, a couple of
+        // pixels at 1080p; down the flanks and toward the foot the cloud is
+        // older and more mixed with the air round it, its edge more diffuse;
+        // a storm further off is behind more air, and softer still. Never
+        // under two or three pixels at the typical slope (the steepest rims
+        // get about one even so), nor narrower than the band always was.
+        //
+        // The fade starts where it always did, just outside the silhouette,
+        // and widens inward — the cloud is opaque a few pixels in, not at
+        // once. Its outer edge stays where it stood, so no lobe that stood
+        // clear of it before (under the cut that keeps fragments from
+        // floating free) shows now as a faint ghost over the sky beside it.
+        // And it widens only so far, the steep and the gentle alike, or
+        // where the field happens to climb slowly a cap goes glassy again
+        float pxA = u_cam.z / u_frame.w;
+        float upE = smoothstep(0.20, 0.90, (ty - baseY) / max(headY - baseY, 0.02));
+        float soft = mix(mix(2.0, 1.15, upE), 1.25, skW) * (1.0 - 0.2 * growth) + 1.2 * decay;
+        float slope = pxA * cbS * max(25.0 * pow(cbS, -0.4) * (0.35 + 0.65 * mix(near, skP, skW)),
+                                      25.0 * (1.0 - smoothstep(0.0, 0.04, ty - baseY)));
+        float widePx = max(0.0016 * min(soft, 2.6) * pow(cbS, 0.4) / pxA, 2.5);
+        float lo = -0.0275 + 0.0075 * growth - 0.03 * decay;
+        float m = smoothstep(lo, lo + clamp(slope * widePx, 0.0425 - 0.01125 * growth + 0.03 * decay, 0.10 + 0.03 * decay), field);
         // how deep inside the cloud this is, for the shading's rim terms (the
         // lining, the margin, how far the crease shadows reach). The field
         // itself only climbs slowly inward from the silhouette, and inside it
