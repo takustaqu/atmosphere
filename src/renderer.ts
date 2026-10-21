@@ -1329,6 +1329,279 @@ float lobeLayer(float f, float n, float band, float dent, float lift) {
            + max(n, 0.0) * 0.60 * lift * smoothstep(-band, -0.02, f);
 }
 
+#ifdef FEAT_CBVOL
+// ── The volumetric thunderhead (RendererOptions.cumulonimbus) ──
+//
+// The same towers the 2D field draws, standing where it puts them, but as a
+// body of cloud with depth: turrets that stand in front of and behind one
+// another, and lobes that are lumps in three dimensions shadowing one
+// another — found and lit by marching a ray into it, rather than painted
+// onto a silhouette.
+//
+// It is laid out in the storm's own sky (the one cbScale stretches the real
+// one into), in storm units — a radian of that sky: across the tower (x,
+// along the azimuth, from this pixel's column), up it (y, the sine of the
+// elevation, ty) and through it (z, away from the eye, from the ring the
+// towers stand on). The ray is marched through that depth at its own x and
+// y: a tower some tens of kilometres off is a few deep, and the outline it
+// shows is the one the 2D field gives it, so the anvil, the veil and the
+// shafts still meet it where they always did.
+//
+// The body is the 2D field's own turrets (turretRow's cells, thrusts and
+// clocks, read the same way), each now a round column standing at a depth
+// of its own with a head a little flatter than a ball, the neighbours
+// melted together as the 2D skyline's are, on the broad body the 2D tower
+// stands its turrets on, and the congestus skirt's turrets crowding its foot
+// a little nearer the eye. A distance to that surface, not a field in some
+// measure of its own: a lobe laid on it swells a steep flank as far as a
+// gentle head, and the march can step by it.
+
+// Value noise in three dimensions, two fetches of the lattice's squares of
+// four (u_noiseQ, see vnoiseHQ) a slice apart, blended here in full
+// precision: a surface found where a field crosses zero shows every step a
+// texture filter leaves in its blend, as contour lines round every lobe.
+// Slice z of the lattice is the 2D lattice shifted by z·(113, 71), which
+// only comes back on itself 133 cells away
+float vnoise3(vec3 p) {
+  vec3 i = floor(p), f = p - i;
+  f = f * f * (3.0 - 2.0 * f);
+  vec2 uv = (i.xy + vec2(113.0, 71.0) * i.z + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)};
+  vec4 q = mix(NOISEQ_FETCH(uv), NOISEQ_FETCH(uv + vec2(113.0, 71.0) * ${(1 / NOISE_SIZE).toFixed(10)}), f.z);
+  return mix(mix(q.x, q.y, f.x), mix(q.z, q.w, f.x), f.y);
+}
+
+// the coarsest lobes' size, in storm units: two or three to a turret's head
+const float CBV_L0 = 0.090;
+// how far each scale of lobes swells the surface, as a share of its size
+const float CBV_AMP = 0.80;
+// how far apart the turrets may stand in depth, and the skirt's in front
+const float CBV_ZT = 0.26;
+const float CBV_ZS = 0.10;
+// how much flatter than a ball a turret's head is
+const float CBV_HEAD = 1.30;
+// the extinction the march's light sees: toward the sun, from the sky
+// overhead, and back along the eye's own ray
+const float CBV_SIGL = 110.0;
+const float CBV_SIGA = 9.0;
+const float CBV_SIGV = 220.0;
+
+// The cauliflower: lobes on lobes, each scale half the size of the one
+// before, five of them at most. Each scale is billowed value noise, |2n − 1|:
+// rounded where the noise is high or low and creased sharp where it crosses
+// the middle — a dome between two folds, which a sum of smooth noise is not
+// (it swells and sags as softly as it rises, and a face of it reads as
+// putty). Centred on its mean (0.30), so the surface swells and creases about
+// the body rather than inflating past it, and each scale swells only within
+// its own reach of the surface the coarser ones left: a floret sits on a lobe
+// and a lobe on the body, and none stands clear of it with sky beneath
+// (lobeLayer's rule, in three dimensions). Where no lobe may rise (lift: the
+// anvil's flat) they only crease.
+//
+// Each scale is laid on only where the screen can hold it, fading in from
+// two pixels to five (fp: storm units to a pixel), so the detail on screen
+// stays about as fine however near the storm or narrow the view, and a
+// scale never shimmers at the size of a pixel. And the lobes evolve: each
+// scale drifts slowly up the tower, as a growing tower's lobes rise and roll
+// over, and boils in place — the noise slid through the depth, so lobes
+// swell out of the face and sink back into it — the finer the faster.
+//
+// What a scale swells by and where it has got to in its evolution are the
+// same for every read of the body a pixel makes, so they are set once per
+// pixel (cbLobeSetup): g_cbA the swell of the coarsest four scales (the
+// lobes' weight, the fade and the size folded in), g_cbA4 the fifth's, and
+// g_cbE0..4 each scale's drift. Each scale is the one before taken twice as
+// fine with its axes turned (yzx), so up, which is y at the coarsest, is x,
+// z, y and x in the finer ones, and through, z, is y, x, z and y
+vec4 g_cbA;
+float g_cbA4;
+vec3 g_cbE0, g_cbE1, g_cbE2, g_cbE3, g_cbE4;
+void cbLobeSetup(float fp, float lobe) {
+  vec4 lam = CBV_L0 * vec4(1.0, 0.5, 0.25, 0.125);
+  g_cbA = CBV_AMP * lam * smoothstep(2.0, 5.0, lam / fp) * lobe;
+  g_cbA4 = CBV_AMP * CBV_L0 * 0.0625 * smoothstep(2.0, 5.0, CBV_L0 * 0.0625 / fp) * lobe;
+  // (rising a hundredth of a storm unit for every unit of evolution,
+  // whatever the scale; boiling faster the finer it is)
+  vec4 r = u_evo * 0.010 / lam;
+  vec4 m = u_evo * vec4(0.20, 0.30, 0.40, 0.50);
+  g_cbE0 = vec3(0.0, -r.x, m.x);
+  g_cbE1 = vec3(-r.y, m.y, 0.0);
+  g_cbE2 = vec3(m.z, 0.0, -r.z);
+  g_cbE3 = vec3(0.0, -r.w, m.w);
+  g_cbE4 = vec3(-u_evo * 0.010 / (CBV_L0 * 0.0625), u_evo * 0.60, 0.0);
+}
+// what the scales from the one numbered from on can add at most, so a
+// march reading only the coarse ones knows how near the surface could be
+float cbLobeRest(float from) {
+  vec4 on = step(vec4(0.0, 1.0, 2.0, 3.0), vec4(from - 0.5));
+  return 0.70 * (dot(g_cbA, 1.0 - on) + g_cbA4);
+}
+// one scale laid on the surface f: q is where in its noise, a its swell
+float cbLobe(float f, vec3 q, float a, float lift) {
+  float b = abs(2.0 * vnoise3(q) - 1.0) - 0.30;
+  return f + a * (b < 0.0 ? b : b * lift * smoothstep(-a, 0.0, f));
+}
+//   f     the surface so far (storm units, > 0 inside)
+//   N     where in the lobes' noise (storm units)
+//   oct   how many scales to read (taps a long way off need few)
+float cbLobes3(float f, vec3 N, float lift, float oct) {
+  vec3 p = N * (1.0 / CBV_L0);
+  f = cbLobe(f, p + g_cbE0, g_cbA.x, lift);
+  if (oct > 1.5 && g_cbA.y > 0.0) {
+    p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+    f = cbLobe(f, p + g_cbE1, g_cbA.y, lift);
+    if (oct > 2.5 && g_cbA.z > 0.0) {
+      p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+      f = cbLobe(f, p + g_cbE2, g_cbA.z, lift);
+      if (oct > 3.5 && g_cbA.w > 0.0) {
+        p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+        f = cbLobe(f, p + g_cbE3, g_cbA.w, lift);
+        if (oct > 4.5 && g_cbA4 > 0.0) {
+          p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+          f = cbLobe(f, p + g_cbE4, g_cbA4, lift);
+        }
+      }
+    }
+  }
+  return f;
+}
+
+// One turret of a row, read as turretStep reads it (the same cell, thrust,
+// clock and size): x its center across from the pixel's place c in the
+// row (storm units), y its top, z its radius, w a hash of its own
+vec4 cbTurret(float kk, float c, float n, float gain, float kind, float cell,
+              float live, float seed, float ceil) {
+  vec3 rc = rowCell(kk, n, seed);
+  float id = rc.x;
+  float h2 = hash12(vec2(id, seed + 3.1));
+  float h3 = hash12(vec2(id, seed + 7.7));
+  float top;
+  if (kind < 0.5) {
+    float rk = pow(max(turretThrust(id, 0.0).x - 0.42, 0.0) * 4.6, 1.5) * gain + 0.25;
+    top = cbShape(cbReach(rk), ceil);
+  } else {
+    float mk = turretThrust(id, 1.0).x + 0.094;
+    top = smoothstep(0.35, 0.47, mk) * gain;
+  }
+  float yk = top * (0.74 + 0.26 * (0.5 + 0.5 * sin(live * (0.7 + 0.6 * h2) + h3 * 6.2831853))) * rc.z;
+  return vec4((rc.y - c) * cell, yk, (0.80 + 0.25 * h2) * cell, hash12(vec2(id, seed + 5.3)));
+}
+
+// a smooth max: two fields melted together over k, as two turrets' heads
+// are where they meet (a hard max leaves a crease the lobes cut into a slot)
+float smaxK(float a, float b, float k) {
+  float h = max(k - abs(a - b), 0.0) / k;
+  return max(a, b) + h * h * k * 0.25;
+}
+
+// What a pixel's march reads the body from, set once per pixel in main:
+// the turrets near its column (the tower's row, T, and the skirt's, S), and
+//   g_cbP  the broad body the turrets stand on (x), the ceiling over them
+//          (y) and how far it caps them (z: only under a spreading anvil)
+//   g_cbQ  the base (x), a pixel in storm units (y), the lobes' weight (z),
+//          the pixel's own height (w)
+//   g_cbN  where the pixel's column is in the lobes' noise, and the
+//          directions across it and through it there
+vec4 g_cbT0, g_cbT1, g_cbT2, g_cbT3, g_cbT4;
+vec4 g_cbS0, g_cbS1, g_cbS2, g_cbS3, g_cbS4;
+vec4 g_cbP;
+vec4 g_cbQ;
+vec3 g_cbN, g_cbTg, g_cbRad;
+
+// One turret as a body: a round column of radius T.w under a head centered
+// at height T.y and depth T.z, its field the distance inside its surface
+// (> 0 inside). p is the point across, up and through.
+//
+// Only the heads stand at depths of their own. Down the tower the columns
+// lean back in to the middle of it, to stand on the base together: kept at
+// their heads' depths all the way down, every pair of neighbours left a
+// slot between them, one in front of the other, ruled from the head to the
+// base, and in the shadow each threw on the next the tower came out a
+// bundle of organ pipes. And each widens a little toward its foot
+// (CBV_FLARE a storm unit down): plumb, its walls stood square to a high
+// sun and every lobe on them threw its shadow straight down the wall
+const float CBV_FLARE = 0.6;
+float cbLean(float y, vec4 T) {
+  float l = clamp((y - g_cbQ.x) / max(T.y - g_cbQ.x, 0.02), 0.0, 1.0);
+  return T.z * l * l;
+}
+float cbColumn(vec3 p, vec4 T) {
+  float r = T.w * (1.0 + CBV_FLARE * max(T.y - p.y, 0.0));
+  return r - length(vec3(p.x - T.x, max(p.y - T.y, 0.0) * CBV_HEAD, p.z - cbLean(p.y, T)));
+}
+// How far the columns sway at a height (across, through): a turret does not
+// climb plumb, and two plumb columns melted together meet in a crease ruled
+// straight up the tower. All of them sway together, by a few hundredths
+// and a little differently from one place across the tower to the next
+vec2 cbSway(float y, float x) {
+  return 0.035 * vec2(sin(y * 14.0 + x * 9.0 + 1.7), sin(y * 11.0 - x * 7.0 + 4.2));
+}
+
+
+// The body at p — across from the pixel's column, the height (ty) and the
+// depth — as a distance inside its surface, the lobes laid on at oct scales
+float cbFinish(float f, vec3 p, float oct) {
+  // capped under the ceiling where an anvil spreads, met in a rounded
+  // shoulder; and there the lobes only crease the flat, never swell it
+  float ceilD = g_cbP.y - p.y;
+  f = mix(f, -smaxK(-f, -ceilD, 0.04), g_cbP.z);
+  float lift = mix(1.0, smoothstep(0.02, 0.10, ceilD), g_cbP.z);
+  vec3 N = g_cbN + g_cbTg * p.x + vec3(0.0, p.y, 0.0) + g_cbRad * p.z;
+  f = cbLobes3(f, N, lift, oct);
+  // and nothing under the base: a flat underside, ruled across the tower
+  return min(f, p.y - g_cbQ.x);
+}
+float cbBody(vec3 p, float oct) {
+  // the broad body, rounded off through its depth (and taken as a distance:
+  // divided by how steeply it climbs there)
+  float f = (g_cbP.x - p.y - 5.0 * p.z * p.z) / sqrt(1.0 + 100.0 * p.z * p.z);
+  vec3 q = p;
+  q.xz += cbSway(p.y, p.x);
+  // (written out turret by turret: kept in an array and read in a loop, the
+  // ten of them went through memory at every read of the body, and the
+  // march reads it some forty times a pixel)
+  f = smaxK(f, cbColumn(q, g_cbT0), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbT1), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbT2), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbT3), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbT4), 0.05);
+  f = smaxK(f, cbColumn(q, g_cbS0), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbS1), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbS2), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbS3), 0.03);
+  f = smaxK(f, cbColumn(q, g_cbS4), 0.03);
+  return cbFinish(f, p, oct);
+}
+
+// ...and the same along the pixel's own ray, where only the depth z
+// changes: how far each turret is from the ray across and up (g_cbD, its
+// square: g_cbD the tower's, g_cbF the skirt's, and the sway through the
+// depth, g_cbWz) is read once per pixel, and a turret is a distance in depth alone.
+// The march reads the body here a dozen or two times a pixel; the taps that
+// leave the ray, above, eight
+float g_cbD0, g_cbD1, g_cbD2, g_cbD3, g_cbD4, g_cbF0, g_cbF1, g_cbF2, g_cbF3, g_cbF4;
+float g_cbBody;
+float cbRayCol(float z, vec4 T, float d2) {
+  float dz = z - cbLean(g_cbQ.w, T);
+  return T.w * (1.0 + CBV_FLARE * max(T.y - g_cbQ.w, 0.0)) - sqrt(d2 + dz * dz);
+}
+float g_cbWz;
+float cbRay(float z, float oct) {
+  float f = (g_cbBody - 5.0 * z * z) / sqrt(1.0 + 100.0 * z * z);
+  float zw = z + g_cbWz;
+  f = smaxK(f, cbRayCol(zw, g_cbT0, g_cbD0), 0.05);
+  f = smaxK(f, cbRayCol(zw, g_cbT1, g_cbD1), 0.05);
+  f = smaxK(f, cbRayCol(zw, g_cbT2, g_cbD2), 0.05);
+  f = smaxK(f, cbRayCol(zw, g_cbT3, g_cbD3), 0.05);
+  f = smaxK(f, cbRayCol(zw, g_cbT4, g_cbD4), 0.05);
+  f = smaxK(f, cbRayCol(zw, g_cbS0, g_cbF0), 0.03);
+  f = smaxK(f, cbRayCol(zw, g_cbS1, g_cbF1), 0.03);
+  f = smaxK(f, cbRayCol(zw, g_cbS2, g_cbF2), 0.03);
+  f = smaxK(f, cbRayCol(zw, g_cbS3, g_cbF3), 0.03);
+  f = smaxK(f, cbRayCol(zw, g_cbS4, g_cbF4), 0.03);
+  return cbFinish(f, vec3(0.0, g_cbQ.w, z), oct);
+}
+#endif
+
 // The anvil's plate, where the view ray crosses a level plane at the
 // tropopause (X; the plane at height 1 and the eye under its middle).
 //
@@ -3273,6 +3546,300 @@ void main() {
       }
     }
 
+#ifdef FEAT_CBVOL
+    // ── The volumetric tower ──
+    // (RendererOptions.cumulonimbus; the body is laid out by vnoise3 and
+    // on.) The same gate as the 2D tower's: nothing stands under the base,
+    // where no turret rises over it, or well over the turrets and the skirt
+    if (!over && (headY > baseY || skTop > baseY + 0.004) && ty > baseY - 0.03) {
+      float near = smoothstep(0.02, 0.24, headY);
+      float skP = smoothstep(0.025, 0.06, skStood);
+      // the tower's life, read at its core as the 2D field reads it
+      float envL = headY + 0.6 * headY * headY - hgt;
+      if (mass > 0.40 && envL > -0.15) {
+        float gain0 = 1.05 + 1.35 * cbAmt;
+        float massP = fbm4HQ(acir + vec2(0.0, cbClock() - CB_LAG));
+        float riseN = pow(max(mass - 0.42, 0.0) * 4.6, 1.5) * gain0;
+        float riseP = pow(max(massP - 0.42, 0.0) * 4.6, 1.5) * gain0;
+        float here = smoothstep(0.40, 0.46, mass) * smoothstep(-0.15, -0.10, envL);
+        float rel = (riseN - riseP) / max(max(riseN, riseP), 0.8);
+        decay = smoothstep(0.30, 0.65, -rel) * here;
+        growth = smoothstep(0.08, 0.35, rel) * here;
+      }
+      // (a dying tower's lobes slump: shallower, all of them)
+      float lobe = max(near, skP) * (1.0 - 0.45 * decay);
+      float shoot = 0.06 * smoothstep(0.60, 0.70, mass) * smoothstep(0.0, 0.15, headY - anvilTop)
+                  * smoothstep(0.3, 0.7, cbAmt);
+
+      // ── The turrets, in depth ──
+      // The tower's row and the skirt's, a turret either side of this
+      // pixel's own and one more: each as the 2D skyline takes it — eased
+      // into a dome over the tropopause, carried up into the anvil's root
+      // where it feeds one, sunk with the storm as it runs out — standing at
+      // a depth of its own, the skirt's a little nearer the eye. Where the
+      // ray can meet any of them is known from these alone: no nearer than
+      // the nearest one's front and the most the lobes can swell it (A),
+      // nor further than the furthest one's back, and not at all if no
+      // turret comes within that of this pixel (fUp, which is also what the
+      // glow round a backlit rim reads, with no march)
+      float fp = u_cam.z / u_frame.w * cbS;
+      cbLobeSetup(fp, lobe);
+      g_cbQ = vec4(baseY, fp, lobe, ty);
+      float A = cbLobeRest(0.0);
+      float Ar = cbLobeRest(2.0);
+      float gainT = 1.05 + 1.35 * cbAmt;
+      float nT = ${TOWER_TURRETS.toFixed(1)} * cbS, nS = ${SKIRT_TURRETS.toFixed(1)} * cbS;
+      float aT = mod(azT, 6.2831853) / 6.2831853;
+      float cT = aT * nT, cS = aT * nS;
+      float cellT = 6.2831853 / ${TOWER_TURRETS.toFixed(1)} * cosEl;
+      float cellS = 6.2831853 / ${SKIRT_TURRETS.toFixed(1)} * cosEl;
+      float hb = min(topV * 0.5, mix(baseY, topV * 0.5, stand));
+      float hs = baseY + skirt * skGain * 0.3 * stand;
+      float bodyD = hb - ty;
+      vec2 sw = cbSway(ty, 0.0);
+      g_cbWz = sw.y;
+      float fUp = bodyD, zLo = -sqrt(max(bodyD + 0.6 * A, 0.0) / 5.0), zHi = -zLo;
+      for (int j = 0; j < 5; j++) {
+        vec4 t = cbTurret(floor(cT) + float(j - 2), cT, nT, gainT, 0.0, cellT, turT, 0.0, ceilN);
+        float yk = t.y;
+        float hv = clamp(0.5 + 0.5 * (capV - yk) / 0.10, 0.0, 1.0);
+        yk = mix(capV, yk, hv) - 0.05 * hv * (1.0 - hv);
+        yk = mix(yk, max(yk, anvilTop), feed * smoothstep(anvilTop - 0.20, anvilTop - 0.08, yk));
+        yk = min(yk, mix(baseY, yk, stand));
+        vec4 T = vec4(t.x, yk - t.z / CBV_HEAD, (t.w - 0.5) * CBV_ZT, t.z);
+        float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * CBV_HEAD, d2 = dx * dx + dy * dy;
+        if (j == 0) { g_cbT0 = T; g_cbD0 = d2; } else if (j == 1) { g_cbT1 = T; g_cbD1 = d2; }
+        else if (j == 2) { g_cbT2 = T; g_cbD2 = d2; } else if (j == 3) { g_cbT3 = T; g_cbD3 = d2; }
+        else { g_cbT4 = T; g_cbD4 = d2; }
+        float fi = T.w * (1.0 + CBV_FLARE * max(T.y - ty, 0.0)) - sqrt(d2);
+        fUp = max(fUp, fi);
+        if (fi > -0.6 * A - 0.05) { float zc = cbLean(ty, T) - sw.y; zLo = min(zLo, zc - fi - sqrt(d2) - 0.6 * A); zHi = max(zHi, zc + fi + sqrt(d2) + 0.6 * A); }
+      }
+      for (int j = 0; j < 5; j++) {
+        vec4 t = cbTurret(floor(cS) + float(j - 2), cS, nS, skGain, 1.0, cellS, turT * 1.3, 17.0, ceilN);
+        float yk = baseY + t.y * stand;
+        vec4 T = vec4(t.x, yk - t.z / CBV_HEAD, -CBV_ZS + (t.w - 0.5) * CBV_ZT, t.z);
+        float dx = sw.x - T.x, dy = max(ty - T.y, 0.0) * CBV_HEAD, d2 = dx * dx + dy * dy;
+        if (j == 0) { g_cbS0 = T; g_cbF0 = d2; } else if (j == 1) { g_cbS1 = T; g_cbF1 = d2; }
+        else if (j == 2) { g_cbS2 = T; g_cbF2 = d2; } else if (j == 3) { g_cbS3 = T; g_cbF3 = d2; }
+        else { g_cbS4 = T; g_cbF4 = d2; }
+        float fi = T.w * (1.0 + CBV_FLARE * max(T.y - ty, 0.0)) - sqrt(d2);
+        fUp = max(fUp, fi);
+        if (fi > -0.6 * A - 0.05) { float zc = cbLean(ty, T) - sw.y; zLo = min(zLo, zc - fi - sqrt(d2) - 0.6 * A); zHi = max(zHi, zc + fi + sqrt(d2) + 0.6 * A); }
+      }
+      // (melted together, the turrets stand a little past the tallest one.
+      // And the lobes reach A only where every scale of them is at its
+      // highest at once, which none is for long: three fifths of it bounds
+      // all but the rarest floret, and over a band round the whole tower
+      // the march is a good deal shorter for it)
+      // (the bare body's own reach, before that: how far inside its outline
+      // this pixel is, which the lining and the margins read)
+      float bare = fUp;
+      fUp = min(fUp + 0.6 * A + 0.0125, ty - baseY);
+      g_cbP = vec4(hb, anvilTop + shoot, smoothstep(0.0, 0.5, feed), 0.0);
+      g_cbBody = hb - ty;
+      g_cbN = vec3(dirc.x * cbS, 0.0, dirc.y * cbS);
+      g_cbTg = vec3(dirc.y, 0.0, -dirc.x);
+      g_cbRad = vec3(dirc.x, 0.0, dirc.y);
+
+      // ── A mixed edge ──
+      // As the 2D tower's (see there): how soft the outline is here, sv, 0
+      // crisp to 1 soft — crisp toward the crown and on a growing tower,
+      // soft low down, on the skirt, under the ceiling and on a dying one,
+      // and broken up along the outline by a slow noise. It widens the fade
+      // at the silhouette (wE, a width in storm units: two or three pixels at
+      // its crispest — any less, and a pixel on the outline flipped on and off
+      // as the tower drifted) and lets the sky through the thin of a soft margin
+      float edgeN = vnoiseHQ(cyl * 2.0 + vec2(3.7, 1.3)) * 0.6 + vnoiseHQ(cyl * 4.4 + vec2(11.0, 5.0)) * 0.4;
+      float upT = smoothstep(0.35, 0.90, (ty - baseY) / max(topV - baseY, 0.02));
+      float underC = g_cbP.z * smoothstep(0.10, 0.0, anvilTop - ty);
+      float skW = smoothstep(0.0, 0.03, hs - hb + 0.02) * (1.0 - near);
+      float sv = clamp(0.30 + 0.35 * (1.0 - upT) + 0.20 * skW + 0.45 * decay - 0.25 * growth
+                       + 0.30 * underC + (smoothstep(0.30, 0.70, edgeN) - 0.5) * 1.2, 0.0, 1.0);
+      float wE = fp * (2.6 + 4.0 * sv);
+
+      float m = 0.0, zL = 0.0;
+      if (fUp > -wE) {
+        // ── The march ──
+        // In from the near side, a step at a time by about as far as the
+        // surface can be (the field is a distance to it, the lobes' slopes
+        // aside), reading only the two coarse scales and the most the rest
+        // could add while the surface is still well off. The nearest the
+        // ray comes to the surface is kept: a ray that grazes the outline
+        // without meeting it is the fade at the silhouette
+        float z = zLo, zp = z, fpv = -1.0, fmax = -1.0, zmax = z;
+        bool hit = false;
+        for (int i = 0; i < 28; i++) {
+          if (z > zHi) break;
+          float f = cbRay(z, 2.0) + Ar;
+          if (Ar > 0.0 && f > -wE) f = cbRay(z, 5.0);
+          if (f > fmax) { fmax = f; zmax = z; }
+          if (f > 0.0) { hit = true; break; }
+          zp = z; fpv = f;
+          // (finely where the ray grazes the surface, so the nearest it comes
+          // is read to within a little of a pixel: read coarsely, the fade at
+          // the outline stepped as the tower grew, and its pixels popped)
+          z += max(-f * 0.6, f > -4.0 * wE ? 0.0015 : 0.004 + 0.0004 * float(i));
+        }
+        // A ray that runs out of steps still short of the far side, well
+        // inside the outline, is one threading a fold between two turrets
+        // a hair off both: the cloud is there, a little further in. Taken
+        // as a miss, the sky showed through the tower in cracks
+        if (!hit && z < zHi && bare > 0.02) { hit = true; zp = z; fpv = -0.001; fmax = 0.0; }
+        zL = zmax;
+        if (hit) {
+          // just crossed the skin: find where, between this step and the
+          // last, halving three times and reading the crossing off the line
+          // between the two ends — left wherever a step happened to land, the
+          // surface sat at a different depth from one pixel to the next and
+          // the light on it came out in contour lines
+          float za = zp, fa = fpv, zb = z, fb = fmax;
+          for (int j = 0; j < 3; j++) {
+            float zm = 0.5 * (za + zb);
+            float fm = cbRay(zm, 5.0);
+            if (fm > 0.0) { zb = zm; fb = fm; } else { za = zm; fa = fm; }
+          }
+          zL = mix(za, zb, clamp(-fa / max(fb - fa, 1e-5), 0.0, 1.0));
+          fmax = max(fmax, 0.0);
+        }
+        m = smoothstep(-wE, 0.0, fmax);
+      }
+      // just outside a backlit rim the tower's last wisps, too thin to see,
+      // scatter the sun forward into a glow hugging the silhouette — read off
+      // how near the ray could come to it, and laid under the tower
+#ifdef FEAT_BACKLIT
+      float aura = smoothstep(-0.30, 0.0, fUp) * (1.0 - m) * auraW;
+      if (aura > 0.001) {
+        OVER(rimC * 1.2, aura * 0.45);
+      }
+#endif
+      if (m > 0.001) {
+        vec3 P = vec3(0.0, ty, zL);
+        // the sun in the column's frame: across it (along the azimuth), up,
+        // and on through it away from the eye
+        vec2 hz = normalize(rd.xz + vec2(1e-5, 0.0));
+        vec3 Ls = vec3(dot(sunDir.xz, vec2(hz.y, -hz.x)), sunDir.y, dot(sunDir.xz, hz));
+
+        // ── The light's way in ──
+        // Beer–Lambert along the way to the sun, read at five distances — a
+        // floret's, a lobe's, two a turret's and the tower's — each standing for
+        // the stretch before it, each read softer the further off it is (a
+        // cone rather than a line: the shadow of a lobe a long way toward the
+        // sun is a soft one) and with only the scales that can still tell at
+        // that distance. A point on a bulge's sunward side looks out into the
+        // sky at every one of them and is lit; one in the fold behind it
+        // looks through the bulge and is not. That is the cauliflower's
+        // modelling — bright domes over blue folds — which no tilt of a
+        // painted normal gave
+        float t0 = smoothstep(-0.002 - wE, 0.002 + wE, cbBody(P + Ls * 0.005, 5.0));
+        float t1 = smoothstep(-0.005 - wE, 0.005 + wE, cbBody(P + Ls * 0.015, 4.0));
+        float t2 = smoothstep(-0.012 - wE, 0.012 + wE, cbBody(P + Ls * 0.045, 3.0));
+        float t3 = smoothstep(-0.050, 0.050, cbBody(P + Ls * 0.120, 2.0));
+        float t4 = smoothstep(-0.120, 0.120, cbBody(P + Ls * 0.300, 1.0));
+        // (the long ones count for less than their length: over a turret's
+        // width the light has scattered round whatever lobe stood in its way)
+        float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
+        // ...and the sky's: up, a lobe off, and back toward the eye — a point
+        // in a crease has lobe standing over it and in front of it on the way
+        // out, where one on a bulge has open air
+        float u1 = smoothstep(-0.012 - wE, 0.012 + wE, cbBody(P + vec3(0.0, 0.045, 0.0), 3.0));
+        float u3 = smoothstep(-0.006 - wE, 0.006 + wE, cbBody(P + vec3(0.0, 0.006, -0.02), 4.0));
+        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3));
+        // ...and how much cloud lies behind the surface along the eye's own
+        // ray: little at a grazing margin, where the light comes through
+        float v1 = smoothstep(-0.003 - wE, 0.003 + wE, cbBody(P + vec3(0.0, 0.0, 0.010), 4.0));
+        float alphaV = 1.0 - exp(-CBV_SIGV * (0.003 + 0.020 * v1));
+
+        // ── Its light ──
+        // The palette is the 2D tower's (cloudLight), at the same authored
+        // level: a face lit square by the sun about its head's white, the
+        // shade the sky's light, blue-grey, and less of it in the folds
+        vec3 ambient, glow, sunL, shade, moon, leaden;
+        float diffuse;
+        cloudLight(dayF, nightM, sunsetF, cloudSun, 0.3, ambient, glow, sunL, shade, moon, leaden, diffuse);
+        float gain = mix(1.0, 0.82, dayF);
+        // (the sky a face turned from a low sun sees is the far side of it,
+        // the dim one: against the sun the mass goes dark, in the shade's
+        // color, as the 2D tower's does)
+        vec3 sky3 = mix(ambient + glow, shade * 0.75, backT);
+        vec3 deep = shade * mix(0.80, 0.50, backT);
+        vec3 tcol = mix(deep, sky3, ambVis) + moon * (0.3 + 0.4 * ambVis);
+        // The sun's share: what comes straight through, and what comes after
+        // scattering many times over, as a second and a third much fainter
+        // extinction — what keeps a fold a luminous grey rather than a hole,
+        // and lights the shade side a little. The phase is two Henyey–
+        // Greenstein lobes, forward (g 0.6) and back (−0.3), normalised to
+        // a face lit from the side: the back lobe is the near-white of a face
+        // lit from behind the eye. Only a share of it on the dense faces,
+        // where the light has scattered too often to remember its way in
+        float cosT = dot(rd, sunDir);
+        float hgF = 0.64 / pow(1.36 - 1.2 * cosT, 1.5);
+        float hgB = 0.91 / pow(1.09 + 0.6 * cosT, 1.5);
+        float ph = mix(hgF, hgB, 0.35) / 0.537;
+        float Tsun = exp(-tau);
+        float ms = 0.55 * exp(-0.12 * tau) + 0.20 * exp(-0.03 * tau);
+        // the powder look: the thin outer skin scatters less of the light
+        // back than the cloud under it, a slightly darker rim just inside a
+        // sunlit edge — only where the light comes from the eye's side
+        float powder = mix(1.0, 0.75 + 0.25 * alphaV, 1.0 - smoothstep(-0.2, 0.6, cosT));
+        tcol += sunL * (0.38 * Tsun * mix(1.0, ph, 0.25) + 0.13 * ms) * powder * (1.0 - diffuse * 0.75);
+        // and where the cloud is thin enough that the light comes on through
+        // it toward the eye: the silver lining, hottest by the disc. Thin is
+        // the outermost of the outline — the lobes standing out past the bare
+        // turrets, and the skin over them — where the light scattered on
+        // forward has little cloud left to cross; a few taps toward the sun
+        // find the thin skin there but not the forward-scattered glow that
+        // spreads a little way in from it, so that is laid on by how near
+        // the outline is
+        float rimW = 1.0 - smoothstep(-0.01, 0.05, bare);
+        rimW *= rimW;
+        tcol += rimC * min(hgF / 0.40, 8.0) * (0.10 * Tsun * (1.0 - alphaV * 0.85) + 0.10 * rimW * exp(-0.12 * tau))
+              * (1.0 - diffuse);
+        tcol *= gain;
+
+        // Less light reaches lower down a column kilometres thick than any
+        // few taps can find: it comes in at the top and the sun side and is
+        // spent on the way down. So, as the 2D tower does, the color sinks
+        // toward the sky-lit base over the lower part of the cloud
+        float cloudH = max(max(topL, skTop) - baseY, 0.04);
+        float depth = 1.0 - smoothstep(baseY, baseY + min(cloudH * 0.6, max((anvilTop - baseY) * 0.65, 0.20)), ty);
+        depth = mix(depth, 1.0 - smoothstep(baseY, skTop + 0.02, ty), skW);
+        vec3 base = (mix(ambient, shade, 0.5) + moon * 0.3) * gain;
+        tcol = mix(tcol, base, depth * depth * 0.6);
+        // and right over the base the underside itself, flat and turned away
+        // from the sky: the darkest band of the whole cloud
+        float under = 1.0 - smoothstep(baseY, baseY + min(0.028, cloudH * 0.25), ty);
+        tcol = mix(tcol, deep * gain * 0.95, under * 0.70);
+        tcol = mix(tcol, leaden, gloom * 0.85);
+        tcol += flash * vec3(0.75, 0.80, 1.0) * 0.55;
+
+        // ── Aerial perspective ── (as the 2D tower's)
+        vec3 airCol = skyWeather(airSky, dayF, gloom);
+#ifdef FEAT_BACKLIT
+        airCol = mix(airCol, mix(ambient, cloudSun, mix(0.55, 0.30, side)) * gain, backT);
+#endif
+        float far = mix(1.6, 1.0, smoothstep(0.20, 0.60, max(topL, skTop - baseY)));
+        float airD = mix(pow(cbS, 0.6), 1.0, smoothstep(baseY, ceilN, ty));
+        float air = 1.0 - exp(-(0.35 + 0.40 * u_haze) * 0.12 * far * airD / max(rd.y, 0.02));
+#ifdef FEAT_BACKLIT
+        air = mix(air, min(air * mix(1.0, 0.55, side), 0.55), backT);
+#endif
+        tcol = mix(tcol, airCol, air);
+
+        // the thin of a soft margin lets the sky through; a crisp one, a
+        // sunlit head's, stands solid to its outline. And the last low
+        // remnant of a storm that is running out thins away (see cbLive)
+        // (only at the outline itself: a thin edge well inside it has more of
+        // the tower behind it, and through it the sky showed as cracks)
+        m *= mix(1.0, alphaV, (0.3 + 0.7 * sv) * (1.0 - smoothstep(0.0, 0.03, bare)));
+        m *= smoothstep(0.03, 0.35, stand);
+        cbMask = clamp(m, 0.0, 1.0);
+        OVER(tcol, cbMask);
+        cbCol = tcol;
+        cbBack = backT;
+      }
+    }
+#else
     // Where neither row stands above the base, and under the base itself,
     // there is nothing to draw — the envelope tops out at the base, and the
     // anvil's flare is gated on the head — so the whole lobe stack, the
@@ -4037,6 +4604,7 @@ void main() {
         }
       }
     }
+#endif
     // and the anvil's near side, over the tower's head
     if (anvA > 0.001) {
       OVER(anvCol, anvA * anvNear);
@@ -5197,6 +5765,13 @@ export const FEATURE = {
   IRIDESCENCE: 4096,
   /** a thin cloud lit through by the moon, colored by its corona */
   MOONLIT: 8192,
+  /**
+   * the cumulonimbus's towers ray-marched through a 3D density field instead
+   * of drawn as a 2D field — {@link RendererOptions.cumulonimbus}. Not an
+   * optional block like the others but a different tower: set by the option,
+   * and only alongside CB (a sky without a tower shares the 2D variant)
+   */
+  CBVOL: 16384,
 } as const;
 
 const FEATURE_DEFINES: [number, string][] = [
@@ -5214,17 +5789,26 @@ const FEATURE_DEFINES: [number, string][] = [
   [FEATURE.BACKLIT, 'FEAT_BACKLIT'],
   [FEATURE.IRIDESCENCE, 'FEAT_IRIDESCENCE'],
   [FEATURE.MOONLIT, 'FEAT_MOONLIT'],
+  [FEATURE.CBVOL, 'FEAT_CBVOL'],
 ];
 
-/** every feature compiled in: the one program the renderer used to be */
-export const ALL_FEATURES = 16383;
+/**
+ * every feature compiled in: the one program the renderer used to be. (Its
+ * CBVOL bit swaps the 2D tower for the volumetric one rather than adding
+ * anything, so a renderer compiling everything into one program takes that
+ * bit from its own cumulonimbus option, not from here)
+ */
+export const ALL_FEATURES = 32767;
+
+/** how the cumulonimbus's towers are drawn — see {@link RendererOptions.cumulonimbus} */
+export type CumulonimbusMode = '2d' | 'volumetric';
 
 /**
  * Which features a state needs drawn — the key of the shader variant that
  * draws it. Each test is the same threshold the shader's own gate uses, so a
  * feature is compiled in exactly when it would be drawn.
  */
-export function featureKey(s: AtmosphereState, rays = 0): number {
+export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: CumulonimbusMode = '2d'): number {
   let k = 0;
   if (s.ground.sea > 0.001) k |= FEATURE.SEA;
   if (s.celestial.aurora > 0.001) k |= FEATURE.AURORA;
@@ -5242,6 +5826,10 @@ export function featureKey(s: AtmosphereState, rays = 0): number {
   // the tower's own gate is this amount, less the gloom's share of it
   const c = s.clouds;
   if (c.cumulonimbus > 0.001) k |= FEATURE.CB;
+  // (the volumetric tower only while there is a tower to march: a sky
+  // without one shares the 2D variant rather than compiling a second program
+  // that draws the same)
+  if (cumulonimbus === 'volumetric' && (k & FEATURE.CB)) k |= FEATURE.CBVOL;
   // The three below are all lighting the clouds take from a sun or a moon
   // that may not be there. Each gate is the shader's own, where its light
   // falls to exactly nothing; the elevations are compared a hair early, so
@@ -5451,6 +6039,17 @@ export interface RendererOptions {
    */
   variants?: boolean;
   /**
+   * How the cumulonimbus's towers are drawn: `'2d'` (the default), a field
+   * over azimuth and elevation with its lobes and shading painted on; or
+   * `'volumetric'`, the same towers standing where the 2D ones do, but with
+   * their lobes a 3D density ray-marched and lit by its own self-shadowing.
+   * The anvil, veil and rain shafts are the 2D ones either way. Compiled as
+   * its own shader variant ({@link FEATURE}.CBVOL), so the default carries
+   * none of it. Changeable at run time through
+   * {@link AtmosphereRenderer.cumulonimbus}.
+   */
+  cumulonimbus?: CumulonimbusMode;
+  /**
    * Measure how long each frame takes on the GPU (`EXT_disjoint_timer_query`),
    * for {@link AtmosphereRenderer.takeGpuTimes}. Off by default; the
    * measurement is asynchronous and does not stall, but there is no reason to
@@ -5530,6 +6129,7 @@ export class AtmosphereRenderer {
   // the cloud stack's own target, when cloudScale < 1 (see RendererOptions.cloudScale)
   private cloudScaleWanted: number;
   private raysWanted: number;
+  private cbMode: CumulonimbusMode;
   // whether the program is the split variant: decided once, at construction
   private readonly split: boolean;
   private cloudSupport: boolean | null = null;   // null = not asked yet on this context
@@ -5562,6 +6162,7 @@ export class AtmosphereRenderer {
     this.opts = options;
     this.cloudScaleWanted = options.cloudScale ?? 1;
     this.raysWanted = options.rays ?? 0;
+    this.cbMode = options.cumulonimbus === 'volumetric' ? 'volumetric' : '2d';
     this.split = options.cloudScale !== undefined;
     canvas.addEventListener('webglcontextlost', this.onLost);
     canvas.addEventListener('webglcontextrestored', this.onRestored);
@@ -5621,6 +6222,22 @@ export class AtmosphereRenderer {
     return !this.split || this.cloudSupport === false ? 0 : Math.min(1, Math.max(0, this.raysWanted));
   }
   set rays(v: number) { this.raysWanted = v; }
+
+  /**
+   * How the cumulonimbus's towers are drawn — see
+   * {@link RendererOptions.cumulonimbus}. Setting it takes effect once the
+   * variant it needs has linked.
+   */
+  get cumulonimbus(): CumulonimbusMode { return this.cbMode; }
+  set cumulonimbus(v: CumulonimbusMode) { this.cbMode = v === 'volumetric' ? 'volumetric' : '2d'; }
+
+  /** the variant key a state is drawn with (null: the one that draws anything) */
+  private keyFor(s: AtmosphereState | null): number {
+    if (s === null || this.opts.variants === false) {
+      return (ALL_FEATURES & ~FEATURE.CBVOL) | (this.cbMode === 'volumetric' ? FEATURE.CBVOL : 0);
+    }
+    return featureKey(s, this.rays, this.cbMode);
+  }
 
   /**
    * The GPU times of the frames measured since the last call, oldest first —
@@ -5705,8 +6322,8 @@ export class AtmosphereRenderer {
     // that can draw anything, so onReady still comes
     else setTimeout(() => {
       if (!this.gl || this.lost || this.variants.size > 0) return;
-      this.wanted = ALL_FEATURES;
-      this.ensure(ALL_FEATURES);
+      this.wanted = this.keyFor(null);
+      this.ensure(this.wanted);
     }, 0);
   }
 
@@ -5718,7 +6335,7 @@ export class AtmosphereRenderer {
    */
   prepare(s: AtmosphereState): void {
     if (!this.gl || this.lost) return;
-    const key = this.opts.variants === false ? ALL_FEATURES : featureKey(s, this.rays);
+    const key = this.keyFor(s);
     if (this.current === null) this.wanted = key;
     this.ensure(key);
   }
@@ -6223,7 +6840,7 @@ export class AtmosphereRenderer {
   private bind(timeSec: number, s: AtmosphereState, windOff: number, evo: number): WebGLRenderingContext | null {
     const gl = this.gl;
     if (!gl || this.lost) return null;
-    const v = this.pick(this.opts.variants === false ? ALL_FEATURES : featureKey(s, this.rays));
+    const v = this.pick(this.keyFor(s));
     if (!v) return null;
     this.current = v;
     v.used = ++this.frame;

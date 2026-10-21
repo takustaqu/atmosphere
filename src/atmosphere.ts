@@ -13,7 +13,7 @@ import {
   type AtmosphereLight, type LightMeasurement,
 } from './light.js';
 import { ResolutionGovernor } from './governor.js';
-import { AtmosphereRenderer, type ProbeOptions } from './renderer.js';
+import { AtmosphereRenderer, type CumulonimbusMode, type ProbeOptions } from './renderer.js';
 import {
   resolveCamera, resolveConditions,
   type AtmosphereState, type Camera, type Conditions,
@@ -105,6 +105,11 @@ export interface AtmosphereOptions extends Conditions {
    * everything into one program (`false`) — see {@link RendererOptions.variants}.
    */
   variants?: boolean;
+  /**
+   * How the cumulonimbus's towers are drawn, `'2d'` (the default) or
+   * `'volumetric'` — see {@link RendererOptions.cumulonimbus}.
+   */
+  cumulonimbus?: CumulonimbusMode;
   /**
    * Hold each frame inside a GPU time budget by lowering the resolution when
    * it would run over, and raising it back when there is room — for large
@@ -203,6 +208,7 @@ export class Atmosphere {
       cloudScale: options.cloudScale,
       rays: options.rays === true ? 1 : options.rays === false ? 0 : options.rays,
       variants: options.variants,
+      cumulonimbus: options.cumulonimbus,
       timing: !!adaptive,
     });
     // start the shader variant this sky needs linking now, not at the first frame
@@ -250,6 +256,18 @@ export class Atmosphere {
   get cloudScale(): number { return this.renderer.cloudScale; }
   set cloudScale(v: number) {
     this.renderer.cloudScale = v;
+    if (this.wantRunning && !this.raf) this.draw(performance.now());
+  }
+
+  /**
+   * How the cumulonimbus's towers are drawn — see
+   * {@link AtmosphereOptions.cumulonimbus}. Switching starts the variant it
+   * needs compiling; the old one draws until it has linked.
+   */
+  get cumulonimbus(): CumulonimbusMode { return this.renderer.cumulonimbus; }
+  set cumulonimbus(v: CumulonimbusMode) {
+    this.renderer.cumulonimbus = v;
+    this.renderer.prepare(this.target);
     if (this.wantRunning && !this.raf) this.draw(performance.now());
   }
 

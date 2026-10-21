@@ -7,7 +7,7 @@
 export { Atmosphere, type AtmosphereOptions, type LightProbeOptions } from './atmosphere.js';
 export {
   AtmosphereRenderer, FEATURE, ALL_FEATURES, featureKey,
-  type RendererOptions, type ProbeOptions, type GpuTime,
+  type RendererOptions, type ProbeOptions, type GpuTime, type CumulonimbusMode,
 } from './renderer.js';
 export { ResolutionGovernor, type GovernorOptions } from './governor.js';
 export { StateAnimator, lerpWrapped, type AnimatorOptions } from './animator.js';
