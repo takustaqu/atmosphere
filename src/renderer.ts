@@ -19,6 +19,7 @@ import {
   type LightMeasurement, type ProbeLayout,
 } from './light.js';
 import { NOISE_SIZE, noiseLattice, noiseQuads } from './noise.js';
+import { SKIRT_TURRETS, TOWER_TURRETS, TURRET_SLOTS, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
 const VERT = `
@@ -70,6 +71,7 @@ precision mediump sampler2D;
 uniform sampler2D u_noise;   // the baked value-noise lattice — see noise.ts
 #ifdef FEAT_CB
 uniform sampler2D u_noiseQ;  // the same lattice, each texel's square of four in rgba (vnoiseHQ)
+uniform sampler2D u_turrets; // each turret's thrust this frame, read on the CPU (turretThrust)
 #endif
 
 uniform vec4  u_frame;     // the viewport being drawn: origin xy, size zw (pixels)
@@ -917,10 +919,19 @@ vec4 blobPack(vec2 p, float radius) {
 // in full float precision gives the same field without the staircase. The
 // four corners come in one fetch, from a copy of the lattice with each
 // texel's square of four in its channels (u_noiseQ, see noiseQuads) — the
-// same 8-bit values the four reads of vnoise found — and still only the few
-// azimuth-only reads use it, and only for the two coarse octaves: a step is
-// a fixed fraction of a cell, so each finer octave's staircase is twice as
-// fine and half as tall again, and past the second it no longer shows
+// same 8-bit values the four reads of vnoise found.
+//
+// The staircase is in time as well. The storm's clock slides its reads
+// along the lattice by a few thousandths of a cell a frame, so a filtered
+// read sits still for several frames and then jumps a step — and the reads
+// that ride the clock are the ones nothing else moves across a stretch of
+// sky: a turret reads its thrust once, at its center, and the whole head
+// jumped together, the crown rattling up in steps as it grew; the anvil's
+// plate, fed by the same read, spread and shrank in steps a turret at a
+// time; and the thrust per azimuth, its fine octaves crossing their steps
+// fastest, flickered column by column down the flanks. So everything that
+// rides the clock reads all four octaves here: across a frame the fine
+// octaves' staircase hides under a pixel, but moving it is a jolt
 float vnoiseHQ(vec2 p) {
   vec2 i = floor(p), f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
@@ -932,8 +943,9 @@ float fbm4HQ(vec2 p) {
   vec2 p2 = p1 * 2.03 + vec2(17.3, 9.1);
   vec2 p3 = p2 * 2.03 + vec2(17.3, 9.1);
   return 0.5 * vnoiseHQ(p) + 0.25 * vnoiseHQ(p1)
-       + 0.125 * vnoise(p2) + 0.0625 * vnoise(p3);
+       + 0.125 * vnoiseHQ(p2) + 0.0625 * vnoiseHQ(p3);
 }
+
 #endif
 
 // How much of the sky a cumulonimbus takes up, from how far off it stands
@@ -1027,8 +1039,10 @@ vec3 rowCell(float k, float n, float seed) {
 // How high a turret may go is the thrust's business, and it must be read at
 // the turret's own center: read per pixel, the height changes from one
 // column of pixels to the next and the cap is no longer round. One read per
-// turret is a constant across it, so it cannot step either: plain fbm4
-// will do, where an azimuth-only read per pixel needs the HQ one. kind 0
+// turret is a constant across it, so it is read once a frame for every
+// turret, on the CPU, and looked up here (turretThrust; see storm.ts —
+// read through the texture filter here, it stepped in time with the
+// storm's clock, the whole head at once). kind 0
 // raises the thrust into a tower top as the thrust itself does (gain is
 // its gain, ceil the tropopause cbShape gathers the crown under), a
 // quarter higher (see the turrets in main); kind 1, a
@@ -1044,24 +1058,33 @@ vec3 rowCell(float k, float n, float seed) {
 // then change smoothly, as the storm draws nearer, without the row
 // jumping. Beside that cell one more turret is read, the one past it,
 // since it may hold next to nothing (turretStep is one turret)
+
+// Turret id's thrust as the CPU read it this frame (u_turrets, see
+// storm.ts), two bytes to a number. row 0 is the tower's row: x its thrust,
+// the full fbm4 at its center; y the thrust as it stood CB_LAG ago (the
+// coarse pair then, the fine pair now). row 1 is the skirt's: x the
+// thrust's two coarse octaves
+vec2 turretThrust(float id, float row) {
+  vec4 t = TURRET_FETCH(vec2((id + 0.5) * ${(1 / TURRET_SLOTS).toFixed(10)}, row * 0.5 + 0.25));
+  return vec2(t.x + t.y * (1.0 / 255.0), t.z + t.w * (1.0 / 255.0));
+}
+
 // one turret of the row (cell kk, read from c along it), laid onto the
 // skyline so far
 float turretStep(float sky, float kk, float c, float n, float gain, float kind,
-                 float cell, float live, float seed, float ceil, float sc) {
+                 float cell, float live, float seed, float ceil) {
   float k = 0.6 * cell;
   vec3 rc = rowCell(kk, n, seed);
   float id = rc.x;
   float h2 = hash12(vec2(id, seed + 3.1));
   float h3 = hash12(vec2(id, seed + 7.7));
   float ctr = rc.y;
-  float ak = ctr * 6.2831853 / n;
-  vec2 q = vec2(sin(ak), cos(ak)) * (0.85 * sc) + vec2(0.0, cbClock());
   float top;
   if (kind < 0.5) {
-    float rk = pow(max(fbm4(q) - 0.42, 0.0) * 4.6, 1.5) * gain + 0.25;
+    float rk = pow(max(turretThrust(id, 0.0).x - 0.42, 0.0) * 4.6, 1.5) * gain + 0.25;
     top = cbShape(cbReach(rk), ceil);
   } else {
-    float mk = 0.5 * vnoise(q) + 0.25 * vnoise(q * 2.03 + vec2(17.3, 9.1)) + 0.094;
+    float mk = turretThrust(id, 1.0).x + 0.094;
     top = smoothstep(0.35, 0.47, mk) * gain;
   }
   float R = (0.80 + 0.25 * h2) * cell;
@@ -1088,14 +1111,14 @@ float turretRow(float a, float n0, float gain, float kind,
   float cell = 6.2831853 / n0 * cosEl;
   float sky = 0.0;
   for (int j = -1; j <= 1; j++) {
-    sky = turretStep(sky, ic + float(j), c, n, gain, kind, cell, live, seed, ceil, sc);
+    sky = turretStep(sky, ic + float(j), c, n, gain, kind, cell, live, seed, ceil);
   }
   // and beside a narrow cell the one past it: in cell 0 the one two back,
   // in the two cells before the seam the one two on. (Only while there
   // is a narrow cell at all: at the middle distance there is none, and
   // the row reads its three as it always did)
   if (fract(n) > 0.0 && (c < 1.0 || c >= floor(n) - 1.0)) {
-    sky = turretStep(sky, c < 1.0 ? ic - 2.0 : ic + 2.0, c, n, gain, kind, cell, live, seed, ceil, sc);
+    sky = turretStep(sky, c < 1.0 ? ic - 2.0 : ic + 2.0, c, n, gain, kind, cell, live, seed, ceil);
   }
   return sky;
 }
@@ -1179,7 +1202,7 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
   // where the upwind line crosses the ring; past the ring's edge, the
   // nearest point of it
   float sq = sqrt(max(D * D - l * l, 0.0));
-  float N = 40.0 * sc;
+  float N = ${TOWER_TURRETS.toFixed(1)} * sc;
   for (int k = 0; k < 2; k++) {
     float s0 = -b + (k == 0 ? -sq : sq);
     if (s0 > -0.6 && s0 < L * 1.5) {
@@ -1198,8 +1221,8 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
         // cut a seam through its plate)
         float winC = 1.0 - smoothstep(1.4, 2.4, abs(cc - cQ));
         // Where its plume lies, before anything says whether it feeds one:
-        // most of the turrets read lie nowhere near X, and their noise —
-        // six fetches each — need not be read at all
+        // most of the turrets read lie nowhere near X, and their thrust
+        // need not be looked up at all
         float aw = ak - u_windOff * 0.15;
         vec2 T = vec2(sin(aw), cos(aw)) * D;
         vec2 rel = X - T;
@@ -1234,14 +1257,9 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
         float reachM = L * (0.85 + 0.30 * fib) * (0.85 + 0.30 * h2);
         if (winC * rc.z > 0.0 && s > -0.10 - wA && s < reachM * 1.12
             && q - abs(fib - 0.5) * 0.6 < 1.05) {
-          // (fbm4, an octave pair at a time: the past below shares the fine
-          // pair, which barely moves over the lag)
-          vec2 pN = vec2(sin(ak), cos(ak)) * (0.85 * sc) + vec2(0.0, cbClock());
-          vec2 pP = pN - vec2(0.0, CB_LAG);
-          vec2 o = vec2(17.3, 9.1);
-          vec2 p2 = (pN * 2.03 + o) * 2.03 + o;
-          float fineN = 0.125 * vnoise(p2) + 0.0625 * vnoise(p2 * 2.03 + o);
-          float riseC = pow(max(0.5 * vnoise(pN) + 0.25 * vnoise(pN * 2.03 + o) + fineN - 0.42, 0.0) * 4.6, 1.5) * gain;
+          // (the turret's own thrust, as the CPU read it: see turretThrust)
+          vec2 thr = turretThrust(id, 0.0);
+          float riseC = pow(max(thr.x - 0.42, 0.0) * 4.6, 1.5) * gain;
           // ── The anvil's life ──
           // and where it stood a while ago (CB_LAG). A turret that reaches
           // the tropopause feeds a plate; one that has only just got there
@@ -1250,7 +1268,7 @@ vec4 anvilPlate(vec2 X, float tE, float D, float gain, float L, float th0, float
           // an orphan anvil — and drifts on downwind of where it stood, a
           // thin fibrous sheet, until the last of it is gone with the
           // reading from the past
-          float riseP = pow(max(0.5 * vnoise(pP) + 0.25 * vnoise(pP * 2.03 + o) + fineN - 0.42, 0.0) * 4.6, 1.5) * gain;
+          float riseP = pow(max(thr.y - 0.42, 0.0) * 4.6, 1.5) * gain;
           float fN = smoothstep(1.7, 2.3, riseC), fP = smoothstep(1.7, 2.3, riseP);
           float cut = fP * (1.0 - fN);
           float young = fN * (1.0 - fP);
@@ -2790,8 +2808,8 @@ void main() {
       // neck: a finger poking up out of the crown. So it dies out well
       // below the heads)
       azT = azw + wob * 0.08 / (cosEl * cbS) * smoothstep(0.70, 0.40, ty / max(topV, 0.05));
-      headY = max(turretRow(azT, 40.0, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS), headY);
-      skTop = max(baseY + turretRow(azT, 72.0, skGain, 1.0, cosEl, turT * 1.3, 17.0, ceilN, cbS), skTop);
+      headY = max(turretRow(azT, ${TOWER_TURRETS.toFixed(1)}, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS), headY);
+      skTop = max(baseY + turretRow(azT, ${SKIRT_TURRETS.toFixed(1)}, skGain, 1.0, cosEl, turT * 1.3, 17.0, ceilN, cbS), skTop);
     }
 
     // ── Anvil (incus) ──
@@ -3097,7 +3115,7 @@ void main() {
       // on the flank comes loose. Over a level head the push barely changes
       // the height, so it lifts no scraps off it
       if (flank) {
-        float headB = turretRow(azT + (bMid - 0.60) * 0.06 / (cosEl * cbS), 40.0, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS);
+        float headB = turretRow(azT + (bMid - 0.60) * 0.06 / (cosEl * cbS), ${TOWER_TURRETS.toFixed(1)}, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS);
         headY = max(headY, mix(headY, headB, near));
       }
       // Nor does a turret run on far past the tropopause. Under an anvil
@@ -3941,13 +3959,15 @@ void main() {
     float azw = az + u_windOff * 0.15;
     // the tower's own thrust, read off the same field the cumulonimbus is cut
     // from (see that block), so the curtain hangs only where a tower stands.
-    // Unrelated noise here would rain out of an empty sky
+    // Unrelated noise here would rain out of an empty sky. (Read as the
+    // tower reads it, through vnoiseHQ: it rides the storm's clock, and the
+    // curtain stepped with it, column by column)
     float cbP = 0.0, cbBase = 0.12;
 #ifdef FEAT_CB
     if (u_low.w > 0.001) {
       float cbAmtS = u_low.w * (1.0 - gloom * 0.6);
       float azT = azw - lean * max(sin(0.1304 / cbSS) - rd.y, 0.0);
-      float massS = fbm4(vec2(sin(azT), cos(azT)) * (0.85 * cbSS) + vec2(0.0, cbClock()));
+      float massS = fbm4HQ(vec2(sin(azT), cos(azT)) * (0.85 * cbSS) + vec2(0.0, cbClock()));
       float riseS = pow(max(massS - 0.42, 0.0) * 4.6, 1.5) * (1.05 + 1.35 * cbAmtS);
       // only a grown tower rains, and only from its core: the flanks of the
       // footprint, where the mass is thin, stay dry
@@ -4739,8 +4759,10 @@ function fragSource(explicitLod: boolean, split: boolean, key: number): string {
     ? '#extension GL_EXT_shader_texture_lod : enable\n'
       + '#define NOISE_FETCH(uv) texture2DLodEXT(u_noise, (uv), 0.0)\n'
       + '#define NOISEQ_FETCH(uv) texture2DLodEXT(u_noiseQ, (uv), 0.0)\n'
+      + '#define TURRET_FETCH(uv) texture2DLodEXT(u_turrets, (uv), 0.0)\n'
     : '#define NOISE_FETCH(uv) texture2D(u_noise, (uv))\n'
       + '#define NOISEQ_FETCH(uv) texture2D(u_noiseQ, (uv))\n'
+      + '#define TURRET_FETCH(uv) texture2D(u_turrets, (uv))\n'
   ) + (explicitLod
     // the composite's read of the cloud stack sits in a branch too; same reason
     ? '#define CLOUD_FETCH(uv) texture2DLodEXT(u_clouds, (uv), 0.0)\n'
@@ -4937,7 +4959,7 @@ const POLL_MS = 16;
 type Uniforms = Record<string, WebGLUniformLocation | null>;
 
 const UNIFORM_NAMES = [
-  'u_noise', 'u_noiseQ',
+  'u_noise', 'u_noiseQ', 'u_turrets',
   'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun', 'u_moon', 'u_moonEclipse',
   'u_cover', 'u_high', 'u_mid', 'u_low',
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
@@ -5108,6 +5130,11 @@ export class AtmosphereRenderer {
   private noise: WebGLTexture | null = null;
   // the lattice again, each texel's square of four in rgba: unit 2, for vnoiseHQ
   private noiseQ: WebGLTexture | null = null;
+  // each turret's thrust (storm.ts): unit 3, refilled when the storm's clock
+  // or distance moves; turretKey is what it was last filled for
+  private turrets: WebGLTexture | null = null;
+  private turretData = new Uint8Array(TURRET_SLOTS * 2 * 4);
+  private turretKey = '';
   // the light probe's offscreen target, made on first use and resized to the layout
   private probeFbo: WebGLFramebuffer | null = null;
   private probeTex: WebGLTexture | null = null;
@@ -5266,6 +5293,7 @@ export class AtmosphereRenderer {
 
     this.noise = this.createNoise(gl);
     this.noiseQ = this.createNoiseQuads(gl);
+    this.turrets = this.createTurrets(gl);
 
     // a fullscreen triangle. Every variant binds a_pos to attribute 0 before
     // it links, so this is set up once for all of them
@@ -5452,6 +5480,44 @@ export class AtmosphereRenderer {
   }
 
   /**
+   * The turrets' thrust (turretTable), on unit 3: TURRET_SLOTS × 2, read at
+   * texel centers and so unfiltered. Filled per frame by updateTurrets
+   */
+  private createTurrets(gl: WebGLRenderingContext): WebGLTexture | null {
+    const tex = gl.createTexture();
+    if (!tex) return null;
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, TURRET_SLOTS, 2, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, this.turretData);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.activeTexture(gl.TEXTURE0);
+    this.turretKey = '';
+    return tex;
+  }
+
+  /**
+   * Read every turret's thrust for this frame's storm, if it moved since the
+   * last fill (a sky with no tower in it never reads them). Leaves unit 3
+   * active with the table bound
+   */
+  private updateTurrets(gl: WebGLRenderingContext, s: AtmosphereState, evo: number): void {
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, this.turrets);
+    if (!this.turrets || !(s.clouds.cumulonimbus > 0)) return;
+    const key = s.features.distance + ' ' + evo;
+    if (key === this.turretKey) return;
+    this.turretKey = key;
+    turretTable(s.features.distance, evo, this.turretData);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, TURRET_SLOTS, 2, gl.RGBA, gl.UNSIGNED_BYTE, this.turretData);
+  }
+
+  /**
    * Carry the snow's fall forward to this frame. A frame that does not follow
    * on from the last (the first, a jump in the clock, its wrap) starts the
    * fall over as if it had always been in this direction, so a one-off frame
@@ -5488,6 +5554,7 @@ export class AtmosphereRenderer {
     gl.uniform1i(v.u.u_noise, 0);
     gl.uniform1i(v.u.u_clouds, 1);
     gl.uniform1i(v.u.u_noiseQ, 2);
+    gl.uniform1i(v.u.u_turrets, 3);
     v.linked = true;
     if (!this.reported && v.key === this.wanted) {
       this.reported = true;
@@ -5510,11 +5577,13 @@ export class AtmosphereRenderer {
       for (const o of this.variants.values()) if (o.linked) gl.deleteProgram(o.program);
       if (this.noise) gl.deleteTexture(this.noise);
       if (this.noiseQ) gl.deleteTexture(this.noiseQ);
+      if (this.turrets) gl.deleteTexture(this.turrets);
     }
     this.variants = new Map();
     this.current = null;
     this.noise = null;
     this.noiseQ = null;
+    this.turrets = null;
     this.gl = null;
     this.notifyReady(false);
   }
@@ -5775,6 +5844,7 @@ export class AtmosphereRenderer {
     // bind every frame rather than only at init: another renderer sharing this
     // canvas (or anything else touching the context) may have swapped programs
     gl.useProgram(v.program);
+    this.updateTurrets(gl, s, evo);
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.noiseQ);
     gl.activeTexture(gl.TEXTURE0);
@@ -5885,6 +5955,7 @@ export class AtmosphereRenderer {
       if (this.buffer) gl.deleteBuffer(this.buffer);
       if (this.noise) gl.deleteTexture(this.noise);
       if (this.noiseQ) gl.deleteTexture(this.noiseQ);
+      if (this.turrets) gl.deleteTexture(this.turrets);
       this.freeProbe(gl);
       this.freeClouds(gl);
       for (const p of this.pending) this.timer?.deleteQueryEXT(p.q);
@@ -5899,5 +5970,6 @@ export class AtmosphereRenderer {
     this.buffer = null;
     this.noise = null;
     this.noiseQ = null;
+    this.turrets = null;
   }
 }
