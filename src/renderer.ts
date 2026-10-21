@@ -1534,6 +1534,20 @@ const float CBV_SIGV = 220.0;
 // is y in the first, is x in the second, and through, z, is y
 vec2 g_cbA;
 vec3 g_cbE0, g_cbE1;
+// Each scale is read where the point it lies over on the surface below it
+// is, not at the point itself: shifted back along the surface's outward
+// turn by how far off the surface the point is (g_cbU, in the lobes' noise,
+// a storm unit of shift for a storm unit of field: see the turrets in main).
+// Read where it stood, a lobe was a lump of the noise in three dimensions,
+// and the band it may swell in a lump's own size: where the noise ran high
+// some way out from a narrow crown but crossed its middle nearer in, the
+// lump stood clear of the crown with sky under it, and where it ran high in
+// a narrow streak it stood up off the crown as a finger. Read along the
+// surface's turn, each scale is a swelling of the surface itself, as high as
+// its noise says where it stands: a dome on the face under it, never apart
+// from it. (Only across and up the sky: through the depth, along the eye's
+// ray, a lump in front of a face only ever shows as a bump on it)
+vec3 g_cbU;
 void cbLobeSetup(float fp, float lobe) {
   vec2 lam = CBV_L0 * vec2(1.0, 0.5);
   g_cbA = CBV_AMP * lam * smoothstep(2.0, 5.0, lam / fp) * lobe;
@@ -1571,9 +1585,10 @@ float cbLobeF(float f, vec3 q, float a, float lift) {
 float cbLobes3(float f, vec3 N, float lift, float oct, float win) {
   if (abs(f) > win + 0.70 * (g_cbA.x + g_cbA.y)) return f;
   vec3 p = N * (1.0 / CBV_L0);
-  f = cbLobeF(f, p + g_cbE0, g_cbA.x, lift);
+  vec3 u = g_cbU * (1.0 / CBV_L0);
+  f = cbLobeF(f, p + u * clamp(f, -g_cbA.x, g_cbA.x) + g_cbE0, g_cbA.x, lift);
   if (oct > 1.5 && g_cbA.y > 0.0 && abs(f) < win + 0.70 * g_cbA.y) {
-    p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+    p = (p + u * clamp(f, -g_cbA.y, g_cbA.y)).yzx * 2.03 + vec3(17.3, 9.1, 5.7);
     f = cbLobeF(f, p + g_cbE1, g_cbA.y, lift);
   }
   return f;
@@ -1804,8 +1819,9 @@ float cbRayBare(float z) {
 // the lobes on it, through the filter: what the march reads
 float cbRayLobes(float f, float z) {
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
-  f = cbLobeF(f, p + g_cbE0, g_cbA.x, g_cbY.y);
-  p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+  vec3 u = g_cbU * (1.0 / CBV_L0);
+  f = cbLobeF(f, p + u * clamp(f, -g_cbA.x, g_cbA.x) + g_cbE0, g_cbA.x, g_cbY.y);
+  p = (p + u * clamp(f, -g_cbA.y, g_cbA.y)).yzx * 2.03 + vec3(17.3, 9.1, 5.7);
   if (g_cbA.y > 0.0) f = cbLobeF(f, p + g_cbE1, g_cbA.y, g_cbY.y);
   return f;
 }
@@ -1815,9 +1831,10 @@ float cbRayLobes(float f, float z) {
 float cbRay(float z) {
   float f = cbRayBare(z);
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
-  f = cbLobe(f, p + g_cbE0, g_cbA.x, g_cbY.y);
+  vec3 u = g_cbU * (1.0 / CBV_L0);
+  f = cbLobe(f, p + u * clamp(f, -g_cbA.x, g_cbA.x) + g_cbE0, g_cbA.x, g_cbY.y);
   if (g_cbA.y > 0.0) {
-    p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+    p = (p + u * clamp(f, -g_cbA.y, g_cbA.y)).yzx * 2.03 + vec3(17.3, 9.1, 5.7);
     f = cbLobe(f, p + g_cbE1, g_cbA.y, g_cbY.y);
   }
   return f;
@@ -1859,15 +1876,25 @@ vec4 cbFieldG(float z, vec4 B) {
   // with its axes turned (yzx), so its slope comes back to the noise's own
   // axes turned the other way (zxy) for every scale it has passed through;
   // and to the body's (across, up, through) as the noise is laid on it
+  // (each read along the surface's turn, g_cbU: the noise's slope taken
+  // on through the shift, which climbs with the field's own)
   vec3 p = (g_cbM + g_cbRad * z) * (1.0 / CBV_L0);
-  vec4 n = vnoise3d(p + g_cbE0);
+  vec3 u = g_cbU * (1.0 / CBV_L0);
+  vec3 uB = vec3(dot(g_cbU, g_cbTg), g_cbU.y, 0.0);
+  float sh = clamp(F.x, -g_cbA.x, g_cbA.x);
+  vec4 n = vnoise3d(p + u * sh + g_cbE0);
   vec3 gN = n.yzw * (1.0 / CBV_L0);
-  F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.x, CBV_L0);
+  vec3 gB = vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad));
+  gB += dot(gB, uB) * F.yzw * step(abs(F.x), g_cbA.x);
+  F = cbLobeG(F, n, gB, g_cbA.x, CBV_L0);
   if (g_cbA.y > 0.0) {
-    p = p.yzx * 2.03 + vec3(17.3, 9.1, 5.7);
+    sh = clamp(F.x, -g_cbA.y, g_cbA.y);
+    p = (p + u * sh).yzx * 2.03 + vec3(17.3, 9.1, 5.7);
     n = vnoise3d(p + g_cbE1);
     gN = n.wyz * (2.03 / CBV_L0);
-    F = cbLobeG(F, n, vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad)), g_cbA.y, CBV_L0 * 0.5);
+    gB = vec3(dot(gN, g_cbTg), gN.y, dot(gN, g_cbRad));
+    gB += dot(gB, uB) * F.yzw * step(abs(F.x), g_cbA.y);
+    F = cbLobeG(F, n, gB, g_cbA.y, CBV_L0 * 0.5);
   }
   // and the base: flat, climbing straight up
   return F.x < g_cbY.z ? F : vec4(g_cbY.z, 0.0, 1.0, 0.0);
@@ -3890,6 +3917,14 @@ void main() {
       // in height, a ray started inside the body all along the foot of the
       // tower, and lit there what it found, one flat grey band)
       float fUp = bodyD, zLo = bodyD > -reach ? -sqrt(max(bodyD, 0.0) / CBV_BODYZ) - reach : 0.0, zHi = -zLo;
+      // (and which way the surface the ray meets turns, across and up: each
+      // turret's front face turns as far from the eye as the ray passes off
+      // its axis, over its radius — and the broad body's up, less down its
+      // front — weighed by how near the ray comes to each, so the turn
+      // passes smoothly from one to the next where they meet. What the
+      // lobes are read along: see g_cbU)
+      float wU = exp(min(bodyD, 0.30) * 66.7), wSum = wU;
+      vec2 uS = vec2(0.0, inversesqrt(1.0 + 80.0 * max(bodyD, 0.0))) * wU;
       for (int j = 0; j < 4; j++) {
         vec4 t = cbTurret(floor(cT - 0.5) + float(j - 1), cT, nT, 1.0, cellT);
         float yk = t.y;
@@ -3905,6 +3940,9 @@ void main() {
         fUp = max(fUp, R.y - sqrt(d2));
         float re = R.y + reach;
         if (re * re > d2) { float h = sqrt(re * re - d2); zLo = min(zLo, R.z - h); zHi = max(zHi, R.z + h); }
+        wU = exp(min(R.y - sqrt(d2), 0.30) * 66.7);
+        vec2 uT = vec2(dx, dy) / R.y;
+        uS += uT / max(length(uT), 1.0) * wU; wSum += wU;
       }
       // (the skirt's turrets only where they can reach: nothing of a turret
       // stands higher than its own top, skMax at most, and over it the field
@@ -3928,6 +3966,9 @@ void main() {
         fUp = max(fUp, R.y - sqrt(d2));
         float re = R.y + reach;
         if (re * re > d2) { float h = sqrt(re * re - d2); zLo = min(zLo, R.z - h); zHi = max(zHi, R.z + h); }
+        wU = exp(min(R.y - sqrt(d2), 0.30) * 66.7);
+        vec2 uT = vec2(dx, dy) / R.y;
+        uS += uT / max(length(uT), 1.0) * wU; wSum += wU;
       }
       // (melted together, the turrets stand a little past the tallest one.
       // And the lobes reach A only where every scale of them is at its
@@ -3943,6 +3984,8 @@ void main() {
       g_cbN = vec3(dirc.x * cbS, 0.0, dirc.y * cbS);
       g_cbTg = vec3(dirc.y, 0.0, -dirc.x);
       g_cbRad = vec3(dirc.x, 0.0, dirc.y);
+      uS /= wSum;
+      g_cbU = g_cbTg * uS.x + vec3(0.0, uS.y, 0.0);
       float ceilR = g_cbP.y - ty;
       g_cbY = vec3(ceilR, mix(1.0, smoothstep(0.02, 0.10, ceilR), g_cbP.z), ty - baseY);
       g_cbM = g_cbN + vec3(0.0, ty, 0.0);
