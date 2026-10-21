@@ -10,24 +10,34 @@
   skyline (each turret's head a dome two fifths of its height deep, so the
   turrets stand proud of the body instead of meeting in a mesa, and no ledge
   ruled along the skirt or the body's top), two scales of lobes as its
-  surface and the 2D tower's packed florets laid on its light, as many
-  octaves of them as the screen can hold, lit by Beer–Lambert taps toward
-  the sun and the sky. It compiles as its own variant only when a tower is
-  up. The edges between turrets fade over the same few pixels the outline
-  does, so they glide rather than step as the storm drifts (pixels changing
-  by 20 levels or more a frame: 1.7–2.1× the 2D tower's, from 8–12×); a
-  tower at night or before dawn stands dark against the glow over the
-  horizon as the 2D one does; and a frame with a tower costs about
-  1.15–1.25× the 2D tower's (from 1.2–1.5×). Every lobe keeps a lit cap and a
-  dimmer flank, the shade is the luminous blue-grey of light scattered
-  through the cloud, a tower against a low sun goes dark with a gold lining
-  and a lit sunward flank as the 2D one does. Still experimental — a little
-  dearer than the 2D tower, its edges still change twice as many pixels a
-  frame, and a lobe now and then stands clear of a narrow crown — so the 2D
-  tower stays the default. The controller opens on it with
-  `?cb=volumetric`.
+  surface — each a swelling of the surface under it, read along its turn, so
+  no lobe stands clear of a narrow crown or rises off it as a finger — and
+  the 2D tower's packed florets laid on its light and fraying its outline
+  into cauliflower, lit by Beer–Lambert taps toward the sun and the sky. It
+  compiles as its own variant only when a tower is up. The edges between
+  turrets fade over the same few pixels the outline does, so they glide
+  rather than step as the storm drifts; a tower at night or before dawn
+  stands dark against the glow over the horizon as the 2D one does; against
+  a low sun only the flanks the light reaches past the other turrets take it
+  gold, so the inner turrets no longer show the sky's color through the
+  tower in arches. Every lobe keeps a lit cap and a dimmer flank, and the
+  shade is the luminous blue-grey of light scattered through the cloud. A
+  frame with a tower costs about 1.05–1.15× the 2D tower's at 1080p (from
+  1.15–1.25×; 1.16× at the site's hero size), and pixels changing by 20
+  levels or more a frame are 1.5–1.8× the 2D tower's (from 1.7–2.1×).
+  Still experimental — a storm drawn close shows smoother, broader lobes
+  than the 2D tower's cauliflower, and a tower lit from the front keeps a
+  thin dark line down some seams between turrets — so the 2D tower stays
+  the default. The controller opens on it with `?cb=volumetric`.
 
 ### Changed
+
+- **Every turret worked out once a frame.** The turret table the shader
+  looks the thunderhead's turrets up in now carries each turret whole — its
+  height, where in its cell it stands and its hashes — rather than only its
+  thrust, which every pixel near the tower raised into a height again for a
+  dozen turrets or more. The same picture to within a few outline pixels,
+  and about 3–5% off a frame with the 2D tower in it at 1080p.
 
 - **The thunderhead is a cauliflower, not putty.** Its face was lit off
   the lobes read as a smooth sum, plus a coarser scale wider than a turret
