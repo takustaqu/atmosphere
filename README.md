@@ -924,14 +924,16 @@ The tower is drawn as a 2D field by default. `cumulonimbus: 'volumetric'`
 ray-marches it through a 3D density instead — the same turrets, standing in
 real depth with the 2D tower's skyline, lobes in two scales of surface, and
 the 2D tower's florets laid on its light and fraying its outline, lit by taps
-toward the sun. It is still experimental: it gives the towers a depth the 2D
-field cannot, but a frame with a tower costs about 1.05–1.15× what it does
-with the 2D tower (pair it with `cloudScale: 0.5` where that matters), as the
-storm drifts its outline and the edges between turrets change about 1.5–1.8×
-as many pixels a frame as the 2D tower's, and a storm drawn close shows
-smoother, broader lobes than the 2D tower's cauliflower. The anvil, veil and
-rain shafts are 2D either way, and a sky with no tower carries none of the
-extra code.
+toward the sun; drawn large on the screen, its coarse lobes give way to a
+dense octave of domes over the florets, compiled as a variant of its own. It
+is still experimental: it gives the towers a depth the 2D field cannot, but a
+frame with a tower costs about 1.10–1.19× what it does with the 2D tower (pair
+it with `cloudScale: 0.5` where that matters), as the storm drifts its outline
+and the edges between turrets change about 1.2–1.4× as many pixels a frame as
+the 2D tower's at 640×400 and some three times as many at 1280×800, and a
+near storm whose lobes stand just under the domes' threshold (about 115
+pixels) still shows some smooth, broad lobes. The anvil, veil and rain shafts
+are 2D either way, and a sky with no tower carries none of the extra code.
 
 ```ts
 const sky = new Atmosphere(canvas, { cumulonimbus: 'volumetric', cloudScale: 0.5 });
