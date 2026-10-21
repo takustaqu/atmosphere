@@ -64,6 +64,18 @@
   on far storms and dying towers. Frame-to-frame change in a tower is now
   steady (its variation 0.76 → 0.04), at no extra cost.
 
+- **The thunderhead has relief, and leaves as the storm runs out.** Its
+  lobes carried about 1% of the luminance, so under a high sun or with the
+  sun behind the eye it read as a smooth grey mountain. Lobes now tilt
+  further toward and away from the sun, the folds between them stay dark
+  even in sunlight, crowns facing the sun catch more of it, and each floret
+  is shaded as a small ball — about half again the local contrast. And as
+  `cumulonimbus` eases toward 0 the towers sink into their base and thin
+  out instead of standing full-size until the amount crosses 0.001 and
+  vanishing in one frame: below 0.3 the storm keeps its size and its
+  turrets sink, the anvil, veil and glow fade with it, and nothing is left
+  by 0.03. Rising from 0, the towers grow in rather than popping in whole.
+
 ### Performance
 
 - **Compiled out where it cannot show.** The cumulonimbus and everything
