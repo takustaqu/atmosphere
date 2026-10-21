@@ -1121,6 +1121,34 @@ vec3 budPack(vec2 p, float kc, vec2 up) {
   return acc.xyz / ws;
 }
 
+#ifdef FEAT_CBVOL
+// (The volumetric tower's florets: the same pack, its buds' places and sizes
+// read out of the lattice's squares of four rather than hashed — three of
+// one texel's four corners, the texel taken two cells apart so no two
+// buds share one. A third of the arithmetic of hash32, nine times a pixel
+// for each octave; the 8-bit places are fixed for a bud, so nothing steps)
+vec3 budPackQ(vec2 p, float kc, vec2 up) {
+  vec2 ip = floor(p), fp = fract(p);
+  float mx = 0.0, ws = 1.0;
+  vec4 acc = vec4(0.0, 0.0, 1.0, 0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec3 h = NOISEQ_FETCH(((ip + g) * 2.0 + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)}).xyz;
+      vec2 d = g + h.xy - fp;
+      float R = 0.70 + 0.30 * h.z;
+      float iR = 1.0 / R;
+      float q = 1.0 - dot(d, d) * iR * iR;
+      if (q > 0.0) {
+        packAdd(acc, ws, mx, R * q * (1.0 + PACK_TILT * clamp(-dot(d, up) * iR, -1.0, 1.0)),
+                vec4(-d * (iR * PACK_FLAT), (1.0 - q) * (1.0 - q), 0.0), kc);
+      }
+    }
+  }
+  return acc.xyz / ws;
+}
+#endif
+
 // The middle lobes' folds wander at the florets' scale. A fold between two
 // lobes is where one's rim passes in front of the other, and drawn off the
 // lobes alone it was the arc of a circle a hundred pixels long when the
@@ -1583,7 +1611,7 @@ float cbLobeF(float f, vec3 q, float a, float lift) {
 //         exactly: a tap deep in the cloud or well out in the air reads
 //         only the coarse scale, or none
 float cbLobes3(float f, vec3 N, float lift, float oct, float win) {
-  if (abs(f) > win + 0.70 * (g_cbA.x + g_cbA.y)) return f;
+  if (oct < 0.5 || abs(f) > win + 0.70 * (g_cbA.x + g_cbA.y)) return f;
   vec3 p = N * (1.0 / CBV_L0);
   vec3 u = g_cbU * (1.0 / CBV_L0);
   f = cbLobeF(f, p + u * clamp(f, -g_cbA.x, g_cbA.x) + g_cbE0, g_cbA.x, lift);
@@ -4136,20 +4164,23 @@ void main() {
             zL = mix(zL, zg, cF);
           }
         }
-        // (three octaves of them, the coarsest the first under 46 pixels a
-        // cell — fading out from 30, as the finest fades in from 5 to 8 —
-        // so a near or narrow view gets finer florets, not bigger ones:
-        // three octaves fixed at the coarse end left a close view of the
-        // tower with nothing under twenty pixels)
+        // (two octaves of them, the coarser the first under 40 pixels a
+        // cell — fading out from 27, as the finer fades in from 9 to 13,
+        // where the next octave down takes over from it as it leaves — so a
+        // near or narrow view gets finer florets, not bigger ones: two
+        // octaves fixed at the coarse end left a close view of the tower
+        // with nothing under twenty pixels. Three, from five pixels to
+        // forty-six, cost a tenth of the tower's whole frame for florets
+        // the eye takes for the two)
         if (hit || fmax > -wF) {
-          float k0 = max(0.0, ceil(log(1.0 / (46.0 * 7.6 * fpc)) * 1.3478));
-          for (int j = 0; j < 3; j++) {
+          float k0 = max(0.0, ceil(log(1.0 / (40.0 * 7.6 * fpc)) * 1.3478));
+          for (int j = 0; j < 2; j++) {
             float k = k0 + float(j);
             float fq = 7.6 * pow(2.1, k);
             float cellPx = 1.0 / (fpc * fq);
-            float wB = smoothstep(5.0, 8.0, cellPx) * (1.0 - smoothstep(30.0, 46.0, cellPx)) * budW;
+            float wB = smoothstep(9.07, 13.0, cellPx) * (1.0 - smoothstep(27.0, 40.0, cellPx)) * budW;
             if (wB > 0.0) {
-              vec3 bud = budPack(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc);
+              vec3 bud = budPackQ(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc);
               lean += bud.xy * ((0.75 - 0.12 * float(j)) * wB);
               rec += bud.z * (0.14 * wB);
               float q = max(1.0 - sqrt(bud.z), 0.0);
@@ -4228,8 +4259,13 @@ void main() {
         float t0 = smoothstep(-0.002 - wE, 0.002 + wE, F.x + 0.005 * dot(F.yzw, Ls));
         float t1 = smoothstep(-0.005 - wE, 0.005 + wE, F.x + 0.015 * dot(F.yzw, Ls));
         float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 2.0, w2));
-        float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 2.0, 0.050));
-        float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 1.0, 0.120));
+        // (The two longest read fewer scales than they could: the finer
+        // lobes swell the surface by no more than a fifth of the window the
+        // turret-wide tap reads it through, and the coarse ones by a fifth of
+        // the tower-wide one's — what they hold back is the same to within a
+        // shade, at two scales of noise fewer a pixel)
+        float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 1.0, 0.050));
+        float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 0.0, 0.120));
         float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
         // ...and the sky's: up, a lobe off, and back toward the eye — a point
         // in a crease has lobe standing over it and in front of it on the way
