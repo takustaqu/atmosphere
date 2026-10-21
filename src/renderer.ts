@@ -943,13 +943,18 @@ vec4 blobPack(vec2 p, float radius) {
 //   x   q, how far inside the lobe (0 outside)
 //   yz  q's gradient in p, uphill toward the middle
 //   w   the lobe's radius along this bearing
-vec4 lobeCell(vec2 c, vec2 g, vec2 fp, float radius) {
+vec4 lobeCell(vec2 c, vec2 g, vec2 fp, float radius, out vec2 d) {
   vec3 h = vec3(hash12(c), hash12(c + 31.7), hash12(c + 7.3));
-  vec2 d = g + h.xy - fp;
+  d = g + h.xy - fp;
   float r = min(radius * (0.60 + 0.70 * h.z), 0.795);
   float r2 = r * r;
   float dd = dot(d, d);
-  if (dd >= r2 * 1.55) return vec4(0.0);
+  // (the swellings reach out to 1.283 of the radius at most — the three
+  // harmonics' weights against phases of at most a half each way — so the
+  // lobe is let go only past that. Let go at 1.245, as it was, the widest
+  // swellings were cut off along a circle: a step in the sum, which the
+  // shading drew as a hard, stair-stepped arc across the face)
+  if (dd >= r2 * 1.65) return vec4(0.0);
   // (the swellings' phases, stirred out of the three hashes the lobe has)
   vec3 a = fract(h * vec3(41.31, 27.17, 33.71) + h.zxy * 13.7) - 0.5;
   float ir = inversesqrt(dd + 1e-12);
@@ -994,88 +999,175 @@ float lobesS(vec2 p, float radius) {
   for (int j = -1; j <= 1; j++) {
     for (int i = -1; i <= 1; i++) {
       vec2 g = vec2(float(i), float(j));
-      float q = lobeCell(ip + g, g, fp, radius).x;
+      vec2 d;
+      float q = lobeCell(ip + g, g, fp, radius, d).x;
       sum += q * q;
     }
   }
   vec3 nm = lobeNorm(radius);
   return sum * nm.x + nm.y;
 }
-// ...with the way the face climbs: the slope of the lobes' q³, in p's own
-// units, uphill toward the lobes' middles. Each lobe's is scaled by its size,
-// as a height is — a floret leans as far as a lobe, where read raw the
-// smallest leaned the most and their shaded sides came out as dark pits. A
-// sum is smooth everywhere, so a surface read off it has no seam: where two
-// lobes meet it dips into a soft valley between them rather than folding
-// along a line.
-//   x   the sum
-//   yz  the slope
-vec3 lobesG(vec2 p, float radius) {
-  vec2 ip = floor(p), fp = fract(p);
-  float sum = 0.0;
-  vec2 grad = vec2(0.0);
-  for (int j = -1; j <= 1; j++) {
-    for (int i = -1; i <= 1; i++) {
-      vec2 g = vec2(float(i), float(j));
-      vec4 l = lobeCell(ip + g, g, fp, radius);
-      sum += l.x * l.x;
-      grad += l.yz * (l.x * l.x * l.w);
-    }
+// ── The lobes as a pack ──
+// Read as a sum, the lobes are a smooth surface: it swells over each lobe
+// and dips into a soft valley where two meet, and its slope turns the face
+// toward or away from the sun. Shaded that way the tower was putty — a few
+// big, smooth lumps under airbrushed gradients, the lobes' boundaries
+// showing only as the soft valleys between them, nothing at all smaller
+// than the finest octave a pixel or two across, and that octave far from a
+// pixel across once the tower stood large on the screen. A cumulus head is
+// not that. It is a cauliflower: florets on florets, each crowding the
+// next, and where one meets the one beside it there is no valley but a
+// fold, its light changing all at once — the bright top of a floret laid
+// against the shaded underside of the one above it, a crisp line drawn by
+// the light alone, at every scale down to what the eye can separate.
+//
+// So the same lobes are read as a pack as well: at each point the lobe in
+// front wins, and lends the face its own normal (a sphere's, -d/R, flattened
+// a little — a floret is a bulge, not a ball), so where one lobe gives way
+// to the next the face turns over at once. Which lobe is in front is a
+// score: how far inside it the point is (R·q, which climbs out of its rim
+// at a finite slope, so the change-over between two lobes has a width that
+// can be set), raised on a lobe's upper half and lowered on its lower one
+// (PACK_TILT). A cauliflower's flank leans back as it climbs, so the lower
+// floret stands in front of the one above it and its rounded top cuts
+// across that one's shaded underside: the folds come out as arcs bowed
+// upward, scallop over scallop, not as the straight creases between equal
+// circles that read as a tortoise shell. And the change-over is a softmax
+// whose width kc is a pixel or so on the screen, passed in by the caller in
+// p's own units: the fold is as crisp as the screen can draw it, and
+// antialiased — never a step that falls between two pixels.
+//
+// Where no lobe stands — a gap between them, or past a lobe's rim — the
+// floor of the pack wins: the cloud deeper in, seen through the gap, facing
+// the eye. How deep the point lies in the pack (z: 1 in a gap, falling from
+// a lobe's rim to nothing at its middle as (1 − q)²) is how much of it is a
+// recess, which sees less of the sky and less of the sun. Only gently
+// inside a lobe: darkened hard round every rim, the lobes came out as balls
+// each ringed in grey.
+//   x   (lobePack's return) the sum lobesS reads, for the silhouette
+//   pack.xy  the sideways part of the front lobe's normal, in p's axes
+//   pack.z   how deep in the pack: 1 in a gap, 0 at a lobe's middle
+//   pack.w   how high the front lobe stands there, as a sphere's height
+//            (0 in a gap), where its shadow ray starts (lobeShadow)
+// up is the screen's up in p's axes (the tower's dirc), for the tilt
+const float PACK_TILT = 0.55;
+const float PACK_FLAT = 0.82;
+// one lobe into the softmax, kept relative to the best score so far. Its
+// weight is also eased in from nothing over its first three folds' worth
+// of score: at its rim a lobe's score meets the floor's, and taken at full
+// weight there it went from half the say to none at all as the rim passed —
+// its lean dropped by half in a pixel, a step in the light the folds'
+// width did not smooth, and as the lobes drift it crawled, a pixel at a time
+void packAdd(inout vec4 acc, inout float ws, inout float mx, float sc, vec4 v, float kc) {
+  float s = min(sc / (3.0 * kc), 1.0);
+  if (sc > mx) {
+    float e = exp((mx - sc) / kc);
+    acc = acc * e + v * s;
+    ws = ws * e + s;
+    mx = sc;
+  } else {
+    float e = exp((sc - mx) / kc) * s;
+    acc += v * e;
+    ws += e;
   }
-  vec3 nm = lobeNorm(radius);
-  return vec3(sum * nm.x + nm.y, grad * nm.z);
 }
-// The coarse scale keeps its round spheres (blobs()'s, the sum the same),
-// read with the same soft slope, q³'s. Its lobes are wider than a turret
-// and only shade — the shadows they cast, the light their mass holds — at a
-// fifth of the weight of the rest, too broad and too faint for their
-// roundness to show once their rims are soft; and swelling them (and the
-// shadow read off them) cost a third or more of what all the swellings did
-vec3 roundG(vec2 p, float radius) {
+float lobePack(vec2 p, float radius, float kc, vec2 up, out vec4 pack) {
   vec2 ip = floor(p), fp = fract(p);
-  float sum = 0.0;
-  vec2 grad = vec2(0.0);
+  float sum = 0.0, mx = 0.0, ws = 1.0;
+  vec4 acc = vec4(0.0, 0.0, 1.0, 0.0);
   for (int j = -1; j <= 1; j++) {
     for (int i = -1; i <= 1; i++) {
       vec2 g = vec2(float(i), float(j));
-      vec2 o = vec2(hash12(ip + g), hash12(ip + g + 31.7));
-      float r = radius * (0.60 + 0.70 * hash12(ip + g + 7.3));
-      vec2 d = g + o - fp;
-      float q = max(1.0 - dot(d, d) / (r * r), 0.0);
-      sum += q * q;
-      grad += d * (q * q * 2.0 / r);
-    }
-  }
-  return vec3(sum, grad * (3.18 / radius));
-}
-// ...and both at once, with the pack's normal as well: each lobe's own lean
-// (as a sphere's is d/r), weighted by its size and by q², which falls to
-// nothing at its rim with no slope left — so where one lobe gives way to the
-// next the normal turns over a good part of the margin, and no seam is drawn
-// where the nearer one's rim crosses the one behind
-//   dome  the sideways part of the pack's normal
-vec3 lobeDome(vec2 p, float radius, out vec2 dome) {
-  vec2 ip = floor(p), fp = fract(p);
-  float sum = 0.0;
-  vec2 grad = vec2(0.0);
-  vec2 top = vec2(0.0);
-  // (and a floor under the weights, so where the last lobe runs out at
-  // its rim its normal fades to nothing with it)
-  float wsum = 0.04 * radius * radius;
-  for (int j = -1; j <= 1; j++) {
-    for (int i = -1; i <= 1; i++) {
-      vec2 g = vec2(float(i), float(j));
-      vec4 l = lobeCell(ip + g, g, fp, radius);
+      vec2 d;
+      vec4 l = lobeCell(ip + g, g, fp, radius, d);
       sum += l.x * l.x;
-      grad += l.yz * (l.x * l.x * l.w);
-      float wt = l.w * l.w * l.x * l.x;
-      top -= l.yz * (0.5 * l.w) * wt;
-      wsum += wt;
+      if (l.x > 0.0) {
+        float iR = 1.0 / l.w;
+        packAdd(acc, ws, mx, l.w * l.x * (1.0 + PACK_TILT * clamp(-dot(d, up) * iR, -1.0, 1.0)),
+                vec4(-d * (iR * PACK_FLAT), (1.0 - l.x) * (1.0 - l.x), l.w * sqrt(l.x)), kc);
+      }
     }
   }
-  dome = top / wsum;
+  pack = acc / ws;
   vec3 nm = lobeNorm(radius);
-  return vec3(sum * nm.x + nm.y, grad * nm.z);
+  return sum * nm.x + nm.y;
+}
+// The florets below the finest lobes: the same pack, of round buds, one to
+// a cell anywhere in it and up to a cell across (so the 3×3 cells round the
+// point are all that can reach it). Kept as loose as that: held near their
+// cells' middles, and four cells read instead of nine, the buds stood on a
+// lattice, and the face came out quilted — a waffle of rows and columns.
+// Shading only — the silhouette has its grain — and only as many octaves of
+// them as the screen can hold (see the caller): a tower drawn large gets
+// more of them, not bigger ones.
+vec3 budPack(vec2 p, float kc, vec2 up) {
+  vec2 ip = floor(p), fp = fract(p);
+  float mx = 0.0, ws = 1.0;
+  vec4 acc = vec4(0.0, 0.0, 1.0, 0.0);
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec3 h = hash32(ip + g);
+      vec2 d = g + h.xy - fp;
+      float R = 0.70 + 0.30 * h.z;
+      float iR = 1.0 / R;
+      float q = 1.0 - dot(d, d) * iR * iR;
+      if (q > 0.0) {
+        packAdd(acc, ws, mx, R * q * (1.0 + PACK_TILT * clamp(-dot(d, up) * iR, -1.0, 1.0)),
+                vec4(-d * (iR * PACK_FLAT), (1.0 - q) * (1.0 - q), 0.0), kc);
+      }
+    }
+  }
+  return acc.xyz / ws;
+}
+
+// The middle lobes' folds wander at the florets' scale. A fold between two
+// lobes is where one's rim passes in front of the other, and drawn off the
+// lobes alone it was the arc of a circle a hundred pixels long when the
+// tower stood near — a smooth, ruled seam across the face. A real lobe's rim
+// is its florets' outlines, so the point the middle lobes are read at is
+// pushed about by two octaves of noise at about the florets' sizes, a
+// twentieth of a lobe at most: the fold, and the outline the same lobes cut,
+// come out bumpy. Read in the lobes' own drifting frame (wq), so the bumps
+// travel with them rather than the lobes sliding through a fixed ripple
+vec2 lobeWobble(vec2 wq) {
+  return (vec2(vnoise(wq * 7.0 + 3.1), vnoise(wq * 7.0 + 41.7)) - 0.5) * 0.06
+       + (vec2(vnoise(wq * 15.0 + 9.3), vnoise(wq * 15.0 + 27.1)) - 0.5) * 0.03;
+}
+
+// The shadows the lobes cast on one another. The pack's normals say which
+// way each lobe faces, but a cauliflower in the sun is modelled as much by
+// what each floret throws on the one under it: a high sun leaves a pool of
+// shade under every bulge, a raking one a crescent in its lee. So a ray is
+// sent from the point toward the sun — from the height the front lobe stands
+// to there (h0, from lobePack; nothing in a gap) — and tried against the
+// lobes round it as the spheres they nearly are (their middles and radii as
+// lobeCell lays them, without the swellings, which a shadow does not need).
+// A lobe the ray starts inside or on is the one it stands on, whose own
+// turn the normal has already taken; one it passes through, ahead of it,
+// hides the sun. How deep the ray goes into a lobe softens the shadow's
+// edge, over about a twelfth of the lobe's radius — a crisp edge, but never
+// one a pixel can fall between on the lobes this is read for.
+//   L  the sun in p's axes: across the face (xy) and out of it (z)
+float lobeShadow(vec2 p, float radius, float h0, vec3 L) {
+  vec2 ip = floor(p), fp = fract(p);
+  float sh = 0.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 c = ip + g;
+      vec3 h = vec3(hash12(c), hash12(c + 31.7), hash12(c + 7.3));
+      float r = min(radius * (0.60 + 0.70 * h.z), 0.795);
+      vec3 oc = vec3(fp - g - h.xy, h0);
+      float b = dot(oc, L);
+      float cc = dot(oc, oc) - r * r;
+      float ir2 = 1.0 / (r * r);
+      if (b < 0.0 && cc > 0.05 * r * r) {
+        sh = max(sh, smoothstep(0.0, 0.45, (b * b - cc) * ir2) * smoothstep(0.05, 0.40, cc * ir2));
+      }
+    }
+  }
+  return sh;
 }
 
 // Value noise with the blend done here rather than by the texture unit.
@@ -3314,7 +3406,16 @@ void main() {
       // (flank, below), before anything else is known; elsewhere only once
       // the ray is known to come near the cloud
       vec3 pMid = vec3(0.0);
-      vec2 dMid = vec2(0.0);
+      vec4 kMid = vec4(0.0, 0.0, 1.0, 0.0);
+      vec2 dW = vec2(0.0);
+      // How much of the sky a pixel spans, in the lobes' cylinder: the
+      // pixel's angle (pxA) times the cylinder's own scale there, which is
+      // conformal — |cyl| over cos(elevation) a radian, either way. The
+      // folds between the lobes are drawn a pixel or so wide off it, and the
+      // florets laid on below are as fine as it allows
+      float pxA = u_cam.z / u_frame.w;
+      float fpc = pxA * length(cyl) / sqrt(max(1.0 - rd.y * rd.y, 1e-4));
+      const float FOLD = 1.6;
       // (only where the push can tell: not where no turret stands near, and
       // not where the skyline already stands so far over the cap that the
       // cap takes it whatever the push does)
@@ -3322,7 +3423,8 @@ void main() {
       if (flank) {
         warp = vec2(fbm4(cyl * 1.5 + u_evo * 0.30),
                     fbm4(cyl * 1.5 + 31.0 - u_evo * 0.25));
-        pMid = lobeDome((cyl + 0.42 * warp) * 1.55 + 13.0, 0.78, dMid);
+        dW = lobeWobble(cyl + 0.42 * warp);
+        pMid.x = lobePack((cyl + 0.42 * warp + dW) * 1.55 + 13.0, 0.78, fpc * 1.55 * FOLD, dirc, kMid);
       }
       float bMid = pMid.x;
       // ── Lobes on the flanks ──
@@ -3437,26 +3539,31 @@ void main() {
         // cauliflower looking "still cauliflower no matter how close you get" is
         // because the same shape repeats in a nested way.
         // kept separate per scale since shading shifts each one differently.
-        // (The coarse scale only shades — the turrets carry its size in the
-        // silhouette, see below — so it is read only where the tower is drawn)
+        // Each is read as a pack as well as a sum (lobePack): the sum for the
+        // silhouette, the pack for the face's light. (There was a coarser
+        // scale still, of lobes wider than a turret, read only for shading;
+        // its smooth swells and the soft pools of shadow read off them were
+        // most of the airbrushed putty the tower had become, and it is gone —
+        // the turrets carry that size, and the tower's own turn its light)
         // (unread where they cannot act, above: the values left there make no
         // fray at the base)
         if (lobes && !flank) {
           warp = vec2(fbm4(cyl * 1.5 + u_evo * 0.30),
                       fbm4(cyl * 1.5 + 31.0 - u_evo * 0.25));
-          pMid = lobeDome((cyl + 0.42 * warp) * 1.55 + 13.0, 0.78, dMid);
+          dW = lobeWobble(cyl + 0.42 * warp);
+          pMid.x = lobePack((cyl + 0.42 * warp + dW) * 1.55 + 13.0, 0.78, fpc * 1.55 * FOLD, dirc, kMid);
           bMid = pMid.x;
         }
-        vec2 w  = cyl + 0.42 * warp;   // coarse scale
         vec2 wf = cyl + 0.14 * warp;   // fine scale
         vec3 pFine = vec3(0.0), pMicro = vec3(0.0);
+        vec4 kFine = vec4(0.0, 0.0, 1.0, 0.0), kMicro = vec4(0.0, 0.0, 1.0, 0.0);
         float fine = 0.47, wisp = 0.5;
         if (lobes) {
-          pFine   = lobesG(wf * 3.60 + 41.0, 0.74);
+          pFine.x  = lobePack(wf * 3.60 + 41.0, 0.74, fpc * 3.60 * FOLD, dirc, kFine);
           // a fourth octave: real cauliflower is bumps-on-bumps down past what the
           // eye can separate — stopping at three reads as sculpted foam. Each
           // octave roughly halves the size and the weight
-          pMicro  = lobesG(wf * 7.60 + 97.0, 0.72);
+          pMicro.x = lobePack(wf * 7.60 + 97.0, 0.72, fpc * 7.60 * FOLD, dirc, kMicro);
           fine = fbm(wf * 5.5);
 
           // a very fine fray at the edge. Riding this inside the blurred alpha
@@ -3495,7 +3602,7 @@ void main() {
         // 0.05, so a field already under envB − 0.01 is left as it is, and so
         // is one the floor below lifts past it)
         if (field > envB - 0.01 && field > (envT - 0.12) * 2.0) {
-          float bMidB = lobesS((cylB + 0.42 * warp) * 1.55 + 13.0, 0.78);
+          float bMidB = lobesS((cylB + 0.42 * warp + dW) * 1.55 + 13.0, 0.78);
           float fieldB = lobeLayer(envB, (bMidB - 0.60) * near, 0.07, 0.05, hc);
           field = min(field, fieldB + 0.04);
         }
@@ -3560,7 +3667,6 @@ void main() {
         // floating free) shows now as a faint ghost over the sky beside it.
         // And it widens only so far, the steep and the gentle alike, or
         // where the field happens to climb slowly a cap goes glassy again
-        float pxA = u_cam.z / u_frame.w;
         float upE = smoothstep(0.20, 0.90, (ty - baseY) / max(headY - baseY, 0.02));
         float soft = mix(mix(2.0, 1.15, upE), 1.25, skW) * (1.0 - 0.2 * growth) + 1.2 * decay;
         float slope = pxA * cbS * max(25.0 * pow(cbS, -0.4) * (0.35 + 0.65 * mix(near, skP, skW)),
@@ -3660,14 +3766,6 @@ void main() {
 #endif
 
         if (m > 0.001) {
-          vec3 pCoarse = roundG(w * 0.62, 0.82);
-          float bCoarse = pCoarse.x;
-          // match each scale's contribution between silhouette and shading. If
-          // shading alone is strong, it reads as surface blotches/spots rather than lobes.
-          // the micro octave joins mean-neutrally: folding it in raw deepens the
-          // noise floor, and the deeper valleys punch holes through the mass
-          float shape = bCoarse + 0.42 * bMid + 0.34 * bFine + 0.20 * (bMicro - 0.50);
-
           // ── The sun in the tower's own frame ──
           // A face of the tower seen from here has three directions that
           // matter: along the azimuth (sideways on screen), up, and out toward
@@ -3686,39 +3784,44 @@ void main() {
           // in cylindrical coordinates dirc is "up" and its perpendicular runs
           // along the azimuth, so this is the sun's direction across the face
           vec2 tangent = vec2(dirc.y, -dirc.x);
-          vec2 lightOff = (tangent * lt + dirc * lu) / max(lat, 1e-3);
-
-          // ── The lobes as a surface ──
-          // Every lobe scale is a sum of lobes, and a sum is a smooth surface:
-          // it swells over each lobe and dips into a soft valley where two
-          // meet. Its slope (lobesG), scaled by each scale's size — so a floret
-          // tilts the face as far as a lobe does, bumps on bumps all the way
-          // down — is what turns the face toward or away from the sun.
+          // ── The face, floret by floret ──
+          // The lobes are read as a pack (lobePack): at each point the one
+          // in front lends the face its normal, and where it gives way to the
+          // next the face turns over across a fold a pixel or so wide. Each
+          // scale tilts the face of the one above it, bumps on bumps (their
+          // sideways parts summed, so a floret leans out of the side of its
+          // lobe), each a little less than the one above.
           //
-          // It used to be the domes' normals: at each point the tallest of a
-          // pack of spheres (blobPack) lent the face its own, a ball's. That
-          // shaded every lobe as a smooth ball — a bright cap rolling down to a
-          // dark underside, the same on every lobe — and where two met, the
-          // normal flipped in a pixel from one ball's dark rim to the next
-          // one's lit one: a thin dark arc drawn round every lobe. Glossy
-          // bubbles in a heap, metaballs, not cloud. A cloud is lit through
-          // its outer hundred metres, not off a skin: the light that models it
-          // is spread over a good part of a lobe, and nothing in it turns in a
-          // pixel. The middle lobes keep a share of their domes (dMid, the
-          // pack's normal, see lobeDome), enough that a lobe still reads as a
-          // round thing standing out of the face, not as a dent or a swell of
-          // fog. Since the lobes' rims went soft and their outlines irregular
-          // (lobeCell) that share, and the florets' slopes, are taken a third
-          // to a half higher than they were: soft-rimmed, the lobes at the
-          // old weights came out as a soft fog with no lobes in it.
-          // (The coarse and middle scales alone, slB, are the face a lobe's
-          // rim turns toward the sun, below: the florets' own tilt flickered
-          // there as a scatter of lit specks)
-          vec2 slB = pCoarse.yz * (0.82 * 0.25) + pMid.yz * (0.78 * 0.50);
-          vec2 sl = slB + pFine.yz * (0.74 * 0.42) + pMicro.yz * (0.72 * 0.32) - dMid * 0.75;
-          vec2 nL = -vec2(dot(sl, tangent), dot(sl, dirc));
-          // let noise handle only the very finest fraying
-          float micro = (fine - fbm((wf + lightOff * 0.035) * 5.5)) * 1.6;
+          // Below the finest lobes the florets go on (budPack), octave after
+          // octave, for as long as a floret is a few pixels across: the
+          // detail stays about as dense on the screen however large the
+          // tower stands, and a near tower gets more florets, not bigger and
+          // smoother ones. Each octave is faded in from three pixels a cell to
+          // six, so it arrives without a step as the tower draws nearer or the
+          // view narrows — and the number read changes only with the camera,
+          // never from one frame to the next. None of them moves the outline;
+          // the grain the silhouette is frayed with stands in for them there.
+          vec2 lean = kMid.xy * 1.00 + kFine.xy * 0.68 + kMicro.xy * 0.50;
+          // how much of the point is a recess: a gap in a scale's pack, where
+          // the cloud deeper in shows through — the coarse gaps only a little,
+          // being broad: darkened as hard they were grey blots on the face
+          float rec = kMid.z * 0.18 + kFine.z * 0.32 + kMicro.z * 0.28;
+          for (int k = 0; k < 3; k++) {
+            float fq = 16.3 * pow(2.1, float(k));
+            float cellPx = 1.0 / (fpc * fq);
+            if (cellPx < 3.0) break;
+            float wB = smoothstep(3.0, 6.0, cellPx);
+            vec3 bud = budPack(wf * fq + vec2(float(k) * 37.1 + 5.3, 11.3), fpc * fq * FOLD, dirc);
+            lean += bud.xy * ((0.27 - 0.05 * float(k)) * wB);
+            rec += bud.z * (0.06 * wB);
+          }
+          rec = clamp(rec, 0.0, 1.0);
+          // into the tower's frame: along the azimuth, and up
+          vec2 nL = vec2(dot(lean, tangent), dot(lean, dirc));
+          // and the middle lobes' alone, for what reads the face a lobe's rim
+          // turns to the sun (the lining's side, the margin's powder): the
+          // florets' tilt flickers there as a scatter of lit specks
+          vec2 nLB = vec2(dot(kMid.xy, tangent), dot(kMid.xy, dirc)) * 0.6;
 
           // ── The tower's own roundness ──
           // The envelope rise − hgt − 1 is the tower with its lobes shaved off:
@@ -3764,57 +3867,15 @@ void main() {
           outN *= smoothstep(-0.50, -0.05, envX);
           vec3 nT = vec3(outN, sqrt(max(1.0 - dot(outN, outN), 0.0)));
 
-          // the lobes ride on that face, bumps on bumps, each tilting it (nL)
-          vec3 n = normalize(vec3(nT.xy * 1.3 + nL, nT.z));
-          vec3 nB = normalize(vec3(nT.xy * 1.3 - vec2(dot(slB, tangent), dot(slB, dirc)), nT.z));
-          float ndlT = dot(nT, vec3(lt, lu, lz));
-          float ndl = dot(n, vec3(lt, lu, lz));
-
-          // ── Self-shadow ──
-          // A face's tilt only says which way it faces. What makes a
-          // cauliflower read as round is that a lobe standing between a point
-          // and the sun puts it in shadow — the underside of each bulge under a
-          // high sun, the lee of each lobe under a low one. The sums are a
-          // height field, so this is a one-step shadow ray: read them a lobe's
-          // width toward the sun, and if they stand higher than the ray has
-          // climbed by then, the sun is hidden. The ray climbs toward the eye by
-          // lz for every lat it runs across the face, so a sun behind the eye
-          // throws the shadows straight back, behind the lobes, where they
-          // can't be seen. Read off the smooth sums the shadow comes and goes
-          // softly, a blue-grey pool in the lee of a lobe rather than a shape
-          // cut out of the face (off the domes it had the dome's own rim for
-          // an edge). Round to the side of a low sun it gives way to the lit
-          // flank (side, below): a flank turned to the sun is lit, and only
-          // its folds are not. And it comes in over twice the depth it did:
-          // under a lobe that overhangs the next the shade is the light
-          // diffusing round it through the cloud, not an eclipse, and taken
-          // over a shallow climb it drew the lobe's outline again on the face
-          // behind, as a dark crescent hugging the rim
-          float climb = clamp(lz / max(lat, 0.05), -1.0, 4.0) + 0.50;
-          float sCo = (blobs((w + lightOff * 1.30) * 0.62, 0.82) - bCoarse) * (0.82 / 0.62 * 0.45) - 1.30 * climb;
-          float sMi = (lobesS((w + lightOff * 0.42) * 1.55 + 13.0, 0.78) - bMid) * (0.78 / 1.55 * 0.45) - 0.42 * climb;
-          float shadow = max(smoothstep(0.0, 0.50 * 1.30, sCo) * 0.45, smoothstep(-0.02, 0.60 * 0.42, sMi) * 0.55);
-          shadow *= smoothstep(0.0, 0.35, lat) * (1.0 - 0.5 * decay) * (1.0 - 0.7 * side);
-
-          // ── Creases ──
-          // where two lobes meet, or none stands at all, the surface folds in:
-          // the crease sees less of the sky as well as less of the sun
-          // (read off the sums, not the dome heights: a dome's height drops
-          // to nothing at its rim like a cliff, and a crease cut there has a
-          // hard edge; the sum fades out smoothly between its spheres). Only
-          // a little: a cloud's folds are filled with light scattered in from
-          // the lobes round them, and darkened as deep as a solid's, every lobe
-          // came outlined in grey — the seam between two balls again
-          float ao = mix(0.90, 1.0, smoothstep(0.02, 0.55, bMid))
-                   * mix(0.95, 1.0, smoothstep(0.02, 0.40, bFine));
-          // a crease needs lobes on both sides of it. At the silhouette the
-          // sums run low only because the cloud is ending, and darkening there
-          // outlined every turret in grey
-          ao = mix(1.0, ao, smoothstep(0.05, 0.60, depthIn) * (1.0 - 0.5 * decay));
-
-          // clouds are brighter where thicker, from multiple scattering — a
-          // lobe's core holds its light even on the shaded side
-          float core = clamp((shape - 0.60) * 0.50, -0.34, 0.36);
+          // the florets ride on that face, each tilting it (nL). The tower's
+          // own turn is kept, but at less than the florets' weight: it gives
+          // the mountain a sun side and a shade side, and taken stronger it
+          // was most of what the eye saw — a smooth gradient across a smooth
+          // mass, the airbrush
+          vec3 n = normalize(vec3(nT.xy * 0.8 + nL, nT.z));
+          vec3 nB = normalize(vec3(nT.xy * 1.3 + nLB, nT.z));
+          vec3 sunT = vec3(lt, lu, lz);
+          float ndl = dot(n, sunT);
 
           // less light reaches lower down the tower. Reference a slowly-varying
           // height, not the turrets' skyline — that changes abruptly at a
@@ -3823,10 +3884,15 @@ void main() {
           // thrust's height (or the skirt's, for a congestus), not the
           // tropopause's — a small tower or a skirt turret all within the
           // tropopause's reach of shade came out a dark grey lump on the
-          // horizon, where its sunlit head should stay as white as the tower's
+          // horizon, where its sunlit head should stay as white as the tower's.
+          // Only over the foot of it, though: run over the lower 60% of the
+          // cloud, as it was, the whole body sank into one long airbrushed
+          // gradient from a grey middle to a dark foot. A sunlit tower is
+          // white most of the way down; it is the last few hundred metres
+          // over the base, in the shadow of the rest, that go grey
           float cloudH = max(max(topL, skTop) - baseY, 0.04);
-          float depth = 1.0 - smoothstep(baseY, baseY + min(cloudH * 0.6, max((anvilTop - baseY) * 0.65, 0.20)), ty);
-          depth = mix(depth, 1.0 - smoothstep(baseY, skTop + 0.02, ty), skW);
+          float depth = 1.0 - smoothstep(baseY, baseY + min(cloudH * 0.30, max((anvilTop - baseY) * 0.35, 0.10)), ty);
+          depth = mix(depth, 1.0 - smoothstep(baseY, baseY + (skTop + 0.02 - baseY) * 0.6, ty), skW);
 
           // The palette is the plane layers' own light (cloudLight), so the
           // tower is lit by exactly what lights the cotton beside it: the same
@@ -3839,59 +3905,91 @@ void main() {
           // The luminance is the tower's, not the cotton's. A plane layer's lit
           // face runs well past 1.0 by day and the tone shoulder flattens it to
           // white — that is where its cotton look comes from — but a mass this
-          // size needs its lobes modelled, and measured against real photos a
-          // sunlit head sits near 0.92 with the shade sinking to about 0.55. So
-          // the tower takes the cotton's color at its own authored level: the
-          // gain brings a face lit at the cotton's typical lit-ness down to that
-          // head, and is 1 at night, where nothing is overexposed.
+          // size needs its florets modelled, so the tower takes the cotton's
+          // color at its own authored level (gain, 1 at night, where nothing
+          // is overexposed). That level used to be a sunlit head near 0.92
+          // with the shade at about 0.55 — and with the face lit mostly at
+          // half strength by a soft wrap, the whole tower sat in a dull mid
+          // grey under a summer noon. A sunlit head is the brightest thing in
+          // the sky bar the sun: it is taken well over the sky now, to the
+          // edge of the tone shoulder, and the shade is the luminous
+          // blue-grey of a cloud lit through, a good two thirds of it.
           vec3 ambient, glow, sunL, shade, moon, leaden;
           float diffuse;
           cloudLight(dayF, nightM, sunsetF, cloudSun, 0.3, ambient, glow, sunL, shade, moon, leaden, diffuse);
-          float gain = mix(1.0, 0.82, dayF);
+          float gain = mix(1.0, 0.90, dayF);
           vec3 face = ambient + glow + sunL * 0.42;
-          // (the sunlit head a little over the face the shade is mixed
-          // from: lit as cloud rather than as balls, the crowns had gone a
-          // shade greyer than a head boiling up in the sun is — about the
-          // white they stood at before, back on the lit faces alone)
-          vec3 hi = (face + sunL * 0.08 + moon * 0.7) * gain;
-          // the shade is the cotton's thickest shadow — and, as there, an
-          // overcast's diffuse light fills it in part way
-          vec3 lo = (mix(face, shade, 0.85 * (1.0 - diffuse * 0.45)) + moon * 0.3) * gain;
+          // (the sunlit head well over the face the shade is mixed from)
+          vec3 hi = (face + sunL * 0.24 + moon * 0.7) * gain;
+          // the shade: half way to the cotton's thickest shadow, with a
+          // little of the sun carried round inside the cloud — and, as
+          // there, an overcast's diffuse light fills it in part way
+          vec3 lo = (mix(face, shade, 0.50 * (1.0 - diffuse * 0.45)) + sunL * 0.10 + moon * 0.3) * gain;
           // a crease's color: the same sky light, with less of the sky to see
           vec3 deep = (shade * 0.80 + moon * 0.2) * gain;
-
-          // How much of the sun this face gets. The tower's own turn sets the
-          // level, softened into a broad terminator: light scattered inside
-          // the cloud wraps well past the geometric one, so a face square to
-          // the eye under a high or side sun is still nearly white. The lobes'
-          // tilt then rides on that level, through a gentle S that is all but
-          // straight over the tilts the lobes give — run through the same
-          // curve as the level it would flatten out wherever that is near
-          // white, and a front-lit tower would lose its lobes — and a little
-          // over even, so a face lit square on stays white over most of its
-          // lobes rather than greying half of them. Then what the bulges
-          // sunward let through. Overcast light comes from everywhere and
-          // flattens it all
-          float relief = (smoothstep(-2.0, 2.0, ndl - ndlT) - 0.5) * 2.4;
-          float sunVis = smoothstep(-1.10, 0.40, ndlT) + relief + 0.08;
-          sunVis = clamp(sunVis + core * 0.15, 0.0, 1.0) * (1.0 - shadow);
-          sunVis = mix(sunVis, 0.62 + core * 0.4, diffuse * 0.55);
-          // (and a fold keeps a little of its shadow in the sun as well: the
-          // sun reaches into it no better than the sky does)
-          vec3 tcol = mix(mix(deep, lo, ao), hi, sunVis * mix(1.0, ao, 0.30));
+          // How much of the sun this face gets. A cloud is lit through its
+          // outer hundred metres rather than off a skin, so the light wraps
+          // past the geometric terminator — but only so far: every floret
+          // keeps a lit cap and a shaded underside, and the fold between it
+          // and the next is drawn by that change, at full contrast. The
+          // breadth of the wrap is what sets how hard the small scale reads;
+          // the large scale, the tower's turn, is folded into the normal at
+          // a weight that leaves a face square to a high or side sun white
+          // over most of its florets. Overcast light comes from everywhere
+          // and flattens it all
+          float sunVis = smoothstep(-0.55, 1.05, ndl);
+          // and what the lobes and florets above it let through (lobeShadow):
+          // read for the two scales that throw a shadow wider than a few
+          // pixels, and only where a sun can throw one at all
+          // (in the frame of the tower's own face, nT, which the lobes stand
+          // out of: on a crown turned up to a high sun the sun stands high
+          // over the florets and they throw little; laid out on the plane
+          // of the screen instead, a sun high behind the tower raked every
+          // crown flat and the whole head went into shadow)
+          float lzL = dot(nT, sunT);
+          vec2 lxy = sunT.xy - nT.xy * lzL;
+          vec3 Lp = vec3(lxy.x * tangent + lxy.y * dirc, lzL);
+          float latL = length(lxy);
+          float shadow = 0.0;
+          if (sunVis > 0.0 && latL > 0.05) {
+            shadow = max(lobeShadow((cyl + 0.42 * warp + dW) * 1.55 + 13.0, 0.78, kMid.w, Lp) * 0.60,
+                         lobeShadow(wf * 3.60 + 41.0, 0.74, kFine.w, Lp) * 0.80);
+            shadow *= smoothstep(0.05, 0.35, latL) * (1.0 - 0.5 * decay) * (1.0 - 0.7 * side)
+                    // (a sun behind the face lights only what pokes up into
+                    // it, and the normal has already said which that is: the
+                    // shadows on top of that left even the tops grey)
+                    * mix(0.35, 1.0, smoothstep(-0.20, 0.40, lzL));
+          }
+          sunVis *= 1.0 - 0.85 * shadow;
+          sunVis = mix(sunVis, 0.62, diffuse * 0.55);
+          // a recess sees less of the sky, and the sun reaches into it no
+          // better: a fold or a gap goes toward the crease's color, a cool
+          // blue-grey, never black — light scattered in from the florets
+          // round it fills it
+          float ao = 1.0 - rec;
+          // A sun high behind the tower — the hero's noon, looking toward it —
+          // lights the crowns from above and leaves every face turned this
+          // way in the shade; but the light that went in at the crowns comes
+          // out through the faces, kilometres of cloud diffusing it, and the
+          // shaded side of a summer tower is a luminous blue-white, not a
+          // dull grey. Not in the florets' own shadows (they are shade on a
+          // lit face, the contrast that models them), and not with the sun
+          // behind the eye, where no light comes through from behind
+          lo += sunL * gain * 0.40 * smoothstep(0.30, 0.90, sunDir.y) * smoothstep(0.15, -0.45, lz) * (1.0 - shadow);
+          vec3 tcol = mix(mix(deep, lo, ao), hi, sunVis * mix(1.0, ao, 0.5));
           // the sky's own light comes from above, so whatever the sun does the
-          // top of each lobe sees more of it than the underside. It is what
-          // still models a tower with the sun square behind the eye.
+          // top of each floret sees more of it than the underside: it is what
+          // still models a tower with the sun square behind the eye. In the
+          // shade that is all there is to model the florets, so there it goes
+          // deeper: a face turned down sees the ground and the tower's own
+          // shadow, one turned up the whole blue sky.
           // (No highlight on the crowns turned square to the sun: a cloud has
           // no sheen, and a step of light on each lobe's crown was what made
           // the lobes read as glossy balls)
-          tcol *= 0.96 + 0.08 * n.y;
-          // apply grain by **multiplication**, last. Adding it into the tonal
-          // values instead saturates and disappears in the bright areas;
-          // multiplying leaves skin even on a face right at the edge of blowout.
-          // multiplicative grain acts at the same ratio whether bright or dark,
-          // so it adds "skin" without raising overall contrast
-          tcol *= 1.0 + micro * 0.20 + (wisp - 0.5) * 0.12;
+          tcol *= mix(0.90 + 0.34 * n.y, 0.96 + 0.10 * n.y, sunVis);
+          // and a little grain, by multiplication so it holds at the same
+          // ratio on the bright faces as on the dark
+          tcol *= 1.0 + (wisp - 0.5) * 0.08;
           // sink continuously toward the cloud base (never in discrete steps).
           // The base is in the tower's own shadow: no sun reaches it, and no
           // afterglow either — that comes from the sun's side of the sky — so
@@ -3931,13 +4029,18 @@ void main() {
           // light to stand in front of anything.
           if (backT > 0.0) {
             // how much cloud the light crossed: the most deep inside the
-            // silhouette, low down, and through a lobe's dense core
+            // silhouette, low down, and least where a fold or a gap thins it
             float through = smoothstep(0.05, 0.80, depthIn)
-                          * clamp(0.55 + core * 1.2 + depth * 0.35, 0.0, 1.0);
+                          * clamp(0.62 - rec * 0.30 + depth * 0.35, 0.0, 1.0);
             vec3 dark = (shade * mix(0.95, mix(0.55, 0.66, side), through) + moon * 0.3) * gain;
-            // the lobes still show, faintly: their thin margins pass a little
-            // more, and the creases between them stay darker still
-            dark *= (1.0 + micro * 0.16 + (wisp - 0.5) * 0.10) * mix(0.72, 1.0, ao);
+            // the florets still show: the side of each turned toward the sun
+            // across the face catches what comes round and through its thin
+            // margin, the side turned away and the folds between them stay
+            // darker still. (Left out, a tower against the sun was a smooth
+            // dark cut-out with a glowing outline — the putty again, only
+            // darker)
+            float toSun = dot(n.xy, vec2(lt, lu)) / max(lat, 1e-3);
+            dark *= mix(0.84, 1.16, smoothstep(-0.45, 0.60, toSun)) * (1.0 + (wisp - 0.5) * 0.10) * mix(0.72, 1.0, ao);
             float fwd = exp(-sunAng * 5.0);
             // the rim is read off the field, not the alpha: the alpha's ramp is
             // a pixel or two wide, and a lining only that wide never shows. Not
@@ -3947,6 +4050,11 @@ void main() {
             // across a glowing margin
             float rimW = 1.0 - smoothstep(0.0, 0.22, mix(envT, field, 0.5));
             rimW *= rimW * mix(0.70, 1.0, fwd);
+            // (and broken up by the florets as the body is: brightest along
+            // the side of each turned to the sun, dimmed in the folds — read
+            // as one even glow, the lining over a broad head was an
+            // airbrushed band)
+            rimW *= mix(0.55, 1.0, smoothstep(-0.45, 0.60, toSun)) * mix(0.70, 1.0, ao);
             // With the sun round to the side the lining keeps to the edge that
             // faces it: the far edge has the whole tower between it and the
             // sun, and a lining all round read as a cut-out lit from behind
@@ -3957,16 +4065,17 @@ void main() {
             vec3 bcol = mix(dark, rimC * (1.7 + 0.8 * fwd), rimW);
             // and the flank turned toward the sun takes it straight: gold-orange
             // over the shade, as hard against the body as a raking sun makes
-            // it. How far round the face is turned is the front-lit shading's
-            // own reading (sunVis), so the lit flank runs on into the
-            // front-lit tower without a seam as the sun comes round
+            // it. How far round the face is turned is read as the front-lit
+            // shading reads it, so the lit flank runs on into the front-lit
+            // tower without a seam as the sun comes round
             // (and along each lobe's sunward margin, a crescent, the way a
             // ball lit from behind and to the side is)
-            // (judged with most of the lobes' own relief taken back out: it
-            // is the flank that turns to the sun, and read off the full
-            // relief a lobe on the shaded face that happened to lean sunward
-            // lit up alone, a gold blot on the dark wall)
-            float flank = side * max(smoothstep(0.45, 0.85, sunVis - 0.6 * relief),
+            // (judged off the tower's turn and its middle lobes alone, nB,
+            // not the florets: it is the flank that turns to the sun, and
+            // read off every floret's tilt one on the shaded face that
+            // happened to lean sunward lit up alone, a gold blot on the dark
+            // wall)
+            float flank = side * max(smoothstep(0.45, 0.85, smoothstep(-0.32, 0.48, dot(nB, sunT))),
                                      margin * smoothstep(0.05, 0.45, facing));
             vec3 litF = (shade * 0.35 + sunL * (0.80 + 0.40 * facing) + moon * 0.3) * gain;
             bcol = mix(bcol, litF, flank * (1.0 - rimW));
