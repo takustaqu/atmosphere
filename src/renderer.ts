@@ -2741,13 +2741,13 @@ void main() {
     // edge. So a ray well over both meets no cloud, and the turrets and the
     // whole lobe stack are skipped there — exactly: well over is where the
     // envelope has fallen far enough for nothing to show, nor the tower's
-    // decay to be read, and against the sun as far as the glow round a
-    // backlit rim reaches (see aura)
-    float overT = back > 0.0 ? -0.90 : -0.15;
+    // decay to be read, nor the glow round a backlit rim to reach (auraW:
+    // the most of it there can be, at the envelope's own value — see aura)
+    float auraW = back * exp(-sunAng * 3.0);
     float hiY = capV + 0.005;
     float skMax = baseY + skGain + 0.03;
-    bool over = hiY + 0.6 * hiY * hiY - hgt <= overT
-             && (skMax - ty) * 2.5 - 0.03 <= min(overT, -0.08) && ty >= skMax;
+    float overF = max(hiY + 0.6 * hiY * hiY - hgt, (skMax - ty) * 2.5 - 0.03);
+    bool over = overF <= -0.15 && ty >= skMax && auraW * smoothstep(-0.90, -0.11, overF) <= 0.001;
     if (mass > 0.20 && ty > baseY - 0.03 && !over) {
       // A flank read at one azimuth all the way up rules a straight line up
       // the sky, so the rows are read at an azimuth that wanders a little
@@ -3023,19 +3023,41 @@ void main() {
       // skyline, not the thrust here: a turret reaching over a stretch where
       // the thrust is low would otherwise stand bald
       float near = smoothstep(0.02, 0.24, headY);
+      // the skirt's own field: its top less the height, a little steeper
+      // than the tower's, with the same lobes laid on it. Kept solid in its
+      // lower half, so every turret stands on the base
+      float skH = max(skTop - baseY, 1e-3);
+      // (a turret too low to tower over its own base is no congestus, only a
+      // flat grey smear along the horizon: none at all, then)
+      float skP = smoothstep(0.025, 0.06, skH);
+      // Every lobe below is laid on scaled by near or by skP, so where no
+      // turret stands near and no skirt stands either they add nothing: the
+      // field is the bare envelope, too far under the edge to draw (m is 0
+      // there, and nothing is shaded), and once clear of the base the base's
+      // fray cannot cut it. Yet against the sun that field is still read, for
+      // the glow round the rim (aura) — over the whole lower sky on the
+      // sun's side. So there the lobes are not read at all
+      bool lobes = near > 0.0 || skP > 0.0 || ty < baseY + 0.04;
       // the mass itself. A domain-warped 2D field does double duty as both
       // silhouette bumpiness and internal grain.
       // warping is meant to break up the overall shape. Applying the same
       // amount at every scale stretches even fine lumps in the same direction,
       // reading as a diagonal smear.
       // weaken the distortion the finer the scale, to keep it round
-      vec2 warp = vec2(fbm4(cyl * 1.5 + u_evo * 0.30),
-                       fbm4(cyl * 1.5 + 31.0 - u_evo * 0.25));
-      vec2 w  = cyl + 0.42 * warp;   // coarse scale
-      vec2 wf = cyl + 0.14 * warp;   // fine scale
-      // the middle lobes first: they push the flanks out (below) before
-      // anything else is known
-      vec4 pMid = blobPack(w * 1.55 + 13.0, 0.78);
+      vec2 warp = vec2(0.0);
+      // The middle lobes are read first where they push the flanks out
+      // (flank, below), before anything else is known; elsewhere only once
+      // the ray is known to come near the cloud
+      vec4 pMid = vec4(0.0);
+      // (only where the push can tell: not where no turret stands near, and
+      // not where the skyline already stands so far over the cap that the
+      // cap takes it whatever the push does)
+      bool flank = near > 0.0 && headY < capV + 0.10;
+      if (flank) {
+        warp = vec2(fbm4(cyl * 1.5 + u_evo * 0.30),
+                    fbm4(cyl * 1.5 + 31.0 - u_evo * 0.25));
+        pMid = blobPack((cyl + 0.42 * warp) * 1.55 + 13.0, 0.78);
+      }
       float bMid = pMid.x;
       // ── Lobes on the flanks ──
       // A turret's flank is steep, and the lobes laid on below as a lift and
@@ -3046,10 +3068,7 @@ void main() {
       // — and the taller of the two kept: a bulge, never a bite, so nothing
       // on the flank comes loose. Over a level head the push barely changes
       // the height, so it lifts no scraps off it
-      // (only where it can: not where no turret stands near, and not where
-      // the skyline already stands so far over the cap that the cap takes
-      // it whatever the push does)
-      if (near > 0.0 && headY < capV + 0.10) {
+      if (flank) {
         float headB = turretRow(azT + (bMid - 0.60) * 0.06 / (cosEl * cbS), 40.0, 1.05 + 1.35 * cbAmt, 0.0, cosEl, turT, 0.0, ceilN, cbS);
         headY = max(headY, mix(headY, headB, near));
       }
@@ -3132,13 +3151,6 @@ void main() {
       float capW = smoothstep(0.0, 0.5, feed);
       envT = mix(envT, mix(ceilT, envT, hc) - 0.12 * hc * (1.0 - hc), capW);
       hc = mix(1.0, hc, capW);
-      // the skirt's own field: its top less the height, a little steeper
-      // than the tower's, with the same lobes laid on it. Kept solid in its
-      // lower half, so every turret stands on the base
-      float skH = max(skTop - baseY, 1e-3);
-      // (a turret too low to tower over its own base is no congestus, only a
-      // flat grey smear along the horizon: none at all, then)
-      float skP = smoothstep(0.025, 0.06, skH);
       float fieldS = (skTop - ty) * 2.5 - 0.03 - (1.0 - skP) * 0.4;
       // ── Clear of the tower ──
       // Where the envelope, capped, has fallen below the edge by more than
@@ -3146,9 +3158,9 @@ void main() {
       // skirt's has too, the ray meets no cloud: the lobes need not be read
       // at all. Most of a tower's column above its crown is that, and the
       // lobes are the dearest thing in the shader. (Against the sun, again,
-      // out to the glow round the rim)
-      float clearT = back > 0.0 ? -0.90 : -0.08;
-      if (envT > clearT || fieldS > min(clearT, -0.08) || ty < baseY + 0.60 * skH) {
+      // out to where the glow round the rim can still show)
+      float fieldU = max(envT, fieldS);
+      if (fieldU > -0.08 || ty < baseY + 0.60 * skH || auraW * smoothstep(-0.90, -0.11, fieldU) > 0.001) {
         // the silhouette is cut from a sum of spheres (round lobes). But spheres
         // have zero high-frequency content, so alone the silhouette becomes an
         // endlessly smooth blob and detail disappears.
@@ -3158,24 +3170,34 @@ void main() {
         // structure, just a stretched-out smear.
         // cauliflower looking "still cauliflower no matter how close you get" is
         // because the same shape repeats in a nested way.
-        // kept separate per scale since shading shifts each one differently
-        vec4 pCoarse = blobPack(w * 0.62, 0.82);
-        vec4 pFine   = blobPack(wf * 3.60 + 41.0, 0.74);
-        float bCoarse = pCoarse.x, bFine = pFine.x;
-        // a fourth octave: real cauliflower is bumps-on-bumps down past what the
-        // eye can separate — stopping at three reads as sculpted foam. Each
-        // octave roughly halves the size and the weight
-        float bMicro  = blobs(wf * 7.60 + 97.0, 0.72);
-        // match each scale's contribution between silhouette and shading. If
-        // shading alone is strong, it reads as surface blotches/spots rather than lobes.
-        // the micro octave joins mean-neutrally: folding it in raw deepens the
-        // noise floor, and the deeper valleys punch holes through the mass
-        float shape = bCoarse + 0.42 * bMid + 0.34 * bFine + 0.20 * (bMicro - 0.50);
-        float fine = fbm(wf * 5.5);
+        // kept separate per scale since shading shifts each one differently.
+        // (The coarse scale only shades — the turrets carry its size in the
+        // silhouette, see below — so it is read only where the tower is drawn)
+        // (unread where they cannot act, above: the values left there make no
+        // fray at the base)
+        if (lobes && !flank) {
+          warp = vec2(fbm4(cyl * 1.5 + u_evo * 0.30),
+                      fbm4(cyl * 1.5 + 31.0 - u_evo * 0.25));
+          pMid = blobPack((cyl + 0.42 * warp) * 1.55 + 13.0, 0.78);
+          bMid = pMid.x;
+        }
+        vec2 w  = cyl + 0.42 * warp;   // coarse scale
+        vec2 wf = cyl + 0.14 * warp;   // fine scale
+        vec4 pFine = vec4(0.0);
+        float bMicro = 0.0, fine = 0.47, wisp = 0.5;
+        if (lobes) {
+          pFine   = blobPack(wf * 3.60 + 41.0, 0.74);
+          // a fourth octave: real cauliflower is bumps-on-bumps down past what the
+          // eye can separate — stopping at three reads as sculpted foam. Each
+          // octave roughly halves the size and the weight
+          bMicro  = blobs(wf * 7.60 + 97.0, 0.72);
+          fine = fbm(wf * 5.5);
 
-        // a very fine fray at the edge. Riding this inside the blurred alpha
-        // band gives a "blurry, yet detailed" edge. Cheap: just two vnoise calls
-        float wisp = vnoise(wf * 13.0) * 0.62 + vnoise(wf * 27.0 + 7.0) * 0.38;
+          // a very fine fray at the edge. Riding this inside the blurred alpha
+          // band gives a "blurry, yet detailed" edge. Cheap: just two vnoise calls
+          wisp = vnoise(wf * 13.0) * 0.62 + vnoise(wf * 27.0 + 7.0) * 0.38;
+        }
+        float bFine = pFine.x;
         // The lobes ride on the turrets as bumps on bumps, each scale laid on
         // the surface the scale above it left (lobeLayer): a floret can only
         // sit on a lobe, and a lobe only on the turret. Each is centered on its
@@ -3252,12 +3274,20 @@ void main() {
         // just outside a backlit rim the air is not empty: the tower's last
         // wisps, too thin to see, scatter the sun forward into a soft glow that
         // hugs the silhouette. Laid under the tower, so the mass covers its inside
-        float aura = smoothstep(-0.90, -0.11, field) * (1.0 - m) * back * exp(-sunAng * 3.0);
+        float aura = smoothstep(-0.90, -0.11, field) * (1.0 - m) * auraW;
         if (aura > 0.001) {
           OVER(rimC * 1.2, aura * 0.45);
         }
 
         if (m > 0.001) {
+          vec4 pCoarse = blobPack(w * 0.62, 0.82);
+          float bCoarse = pCoarse.x;
+          // match each scale's contribution between silhouette and shading. If
+          // shading alone is strong, it reads as surface blotches/spots rather than lobes.
+          // the micro octave joins mean-neutrally: folding it in raw deepens the
+          // noise floor, and the deeper valleys punch holes through the mass
+          float shape = bCoarse + 0.42 * bMid + 0.34 * bFine + 0.20 * (bMicro - 0.50);
+
           // ── The sun in the tower's own frame ──
           // A face of the tower seen from here has three directions that
           // matter: along the azimuth (sideways on screen), up, and out toward
