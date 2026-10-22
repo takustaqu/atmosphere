@@ -78,12 +78,25 @@ export interface CloudFeatures {
    * from nearer or further. {@link DEFAULT_CB_DISTANCE} when omitted.
    */
   distance: number;
+  /**
+   * 0..1 how soft the volumetric tower's surface is (RendererOptions
+   * `cumulonimbus` 'volumetric', and 'auto' away from a near storm; the 2D
+   * tower ignores it). 0: the cauliflower — crisp lobes and florets, each
+   * rim a clean outline, folds shaded hard. 1: toward cotton candy — the
+   * surface a fuzzy shell the sky shows a little through at the outline,
+   * frayed in fine tufts, the light wrapping round the lobes and filling
+   * the folds. Not a companion form either, and not derived from the
+   * development. {@link DEFAULT_CB_SOFTNESS} when omitted.
+   */
+  softness: number;
 }
 
 /** A middle-distance storm, a few tens of kilometres off */
 export const DEFAULT_CB_DISTANCE = 0.65;
+/** A little of the way from cauliflower toward cotton candy */
+export const DEFAULT_CB_SOFTNESS = 0.6;
 
-export const NO_FEATURES: CloudFeatures = { anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE };
+export const NO_FEATURES: CloudFeatures = { anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS };
 
 /**
  * Derive the companion forms from how developed the cumulonimbus is.
@@ -97,6 +110,7 @@ export function defaultCloudFeatures(cumulonimbus: number): CloudFeatures {
     velum: ramp(cb, 0.22, 0.50) * (1 - ramp(cb, 0.68, 0.95)),
     // how developed a storm is says nothing of where it stands
     distance: DEFAULT_CB_DISTANCE,
+    softness: DEFAULT_CB_SOFTNESS,
   };
 }
 

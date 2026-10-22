@@ -30,6 +30,7 @@ export {
   NO_CLOUDS,
   NO_FEATURES,
   DEFAULT_CB_DISTANCE,
+  DEFAULT_CB_SOFTNESS,
   resolveClouds,
   defaultCloudMix,
   defaultCloudFeatures,

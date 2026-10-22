@@ -4,6 +4,7 @@ import {
   CLOUD_GENERA,
   CLOUD_GENERA_IDS,
   DEFAULT_CB_DISTANCE,
+  DEFAULT_CB_SOFTNESS,
   defaultCloudFeatures,
   defaultCloudMix,
   NO_CLOUDS,
@@ -112,7 +113,7 @@ describe('defaultCloudMix', () => {
 
 describe('defaultCloudFeatures', () => {
   it('no cumulonimbus means no companion forms', () => {
-    expect(defaultCloudFeatures(0)).toEqual({ anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE });
+    expect(defaultCloudFeatures(0)).toEqual({ anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS });
   });
 
   it('the storm stands at the middle distance however developed it is', () => {

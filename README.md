@@ -937,6 +937,17 @@ the distance passes through. As the storm drifts, the volumetric outline and
 the edges between turrets change about 1.2–1.4× as many pixels a frame as
 the 2D tower's at 640×400, and some three times as many at 1280×800.
 
+`features.softness` (0..1, default 0.6) is how soft the volumetric tower's
+surface is. At 0 it is the cauliflower: crisp lobes and florets, each rim a
+clean outline, the folds shaded hard. Toward 1 it moves toward cotton candy:
+the surface becomes a fuzzy shell the sky shows a little through at the
+outline, frayed in fine tufts, with the light wrapping round the lobes and
+filling the folds. The 2D tower ignores it.
+
+```ts
+sky.set({ weather: { convection: 0.9, features: { softness: 1 } } });  // fluffier
+```
+
 `'2d'` draws the 2D tower at every distance — the lighter option — and
 `'volumetric'` the volumetric one at every distance. Each tower is a shader
 variant of its own, so a frame carries only the code it draws; the anvil,

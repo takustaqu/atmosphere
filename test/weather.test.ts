@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveWeather, WEATHER_PRESETS, type WeatherId } from '../src/weather';
-import { aggregateCover, DEFAULT_CB_DISTANCE, defaultCloudFeatures, resolveClouds } from '../src/clouds';
+import { aggregateCover, DEFAULT_CB_DISTANCE, DEFAULT_CB_SOFTNESS, defaultCloudFeatures, resolveClouds } from '../src/clouds';
 
 describe('resolveWeather precipitation', () => {
   it('rain saturates at 30mm/h and stays saturated beyond', () => {
@@ -108,5 +108,16 @@ describe('resolveWeather cumulonimbus features', () => {
   it('the distance is clamped to 0..1', () => {
     expect(resolveWeather({ features: { distance: -2 } }).features.distance).toBe(0);
     expect(resolveWeather({ features: { distance: 7 } }).features.distance).toBe(1);
+  });
+
+  it('the softness defaults, is kept apart from the forms, and is clamped to 0..1', () => {
+    expect(resolveWeather('thunderstorm').features.softness).toBe(DEFAULT_CB_SOFTNESS);
+    const w = { convection: 1, cloudCover: 0.3 };
+    const soft = resolveWeather({ ...w, features: { softness: 1 } }).features;
+    expect(soft.softness).toBe(1);
+    expect(soft.anvil).toBe(resolveWeather(w).features.anvil);
+    expect(soft.distance).toBe(DEFAULT_CB_DISTANCE);
+    expect(resolveWeather({ features: { softness: -1 } }).features.softness).toBe(0);
+    expect(resolveWeather({ features: { softness: 3 } }).features.softness).toBe(1);
   });
 });

@@ -12,7 +12,7 @@ import {
   Atmosphere, AtmosphereRenderer,
   CELESTIAL_IDS, CELESTIAL_PRESETS,
   POLARIZER_IDS, POLARIZER_PRESETS, TONE_IDS, TONE_PRESETS,
-  CLOUD_GENERA, CLOUD_GENERA_IDS, CUBE_FACE_CAMERAS, DEFAULT_CB_DISTANCE,
+  CLOUD_GENERA, CLOUD_GENERA_IDS, CUBE_FACE_CAMERAS, DEFAULT_CB_DISTANCE, DEFAULT_CB_SOFTNESS,
   FILTER_IDS, WEATHER_IDS, WEATHER_PRESETS,
   cloudGenusLabel, filterLabel, weatherLabel,
   formatTod, resolveConditions,
@@ -56,7 +56,7 @@ const ui = {
   cloudMode: 'auto' as 'auto' | 'manual',
   clouds: Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])) as CloudMix,
   featureMode: 'auto' as 'auto' | 'manual',
-  features: { anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE },
+  features: { anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS },
   filter: 'none' as FilterId,
   tone: { ...TONE_PRESETS.neutral } as { exposure: number; contrast: number; knee: number; bleach: number },
   polarizer: { ...POLARIZER_PRESETS.none } as {
@@ -119,9 +119,10 @@ function conditionsNow(): Conditions {
       ...ui.weather,
       // leaving these undefined lets the cloud genus mix build automatically from cloud cover
       clouds: ui.cloudMode === 'manual' ? ui.clouds : undefined,
-      // (the storm's distance is not derived from anything, so it is
-      // passed either way; only the forms follow the development)
-      features: ui.featureMode === 'manual' ? ui.features : { distance: ui.features.distance },
+      // (the storm's distance and softness are not derived from anything,
+      // so they are passed either way; only the forms follow the development)
+      features: ui.featureMode === 'manual' ? ui.features
+        : { distance: ui.features.distance, softness: ui.features.softness },
     } as Weather,
     filter: ui.filter,
     celestial: ui.celestial,
@@ -462,7 +463,7 @@ syncers.push(chips(
   (id) => ui.featureMode === id,
   (id) => {
     if (id === 'manual' && ui.featureMode === 'auto') {
-      ui.features = { ...sky.state.features, distance: ui.features.distance };
+      ui.features = { ...sky.state.features, distance: ui.features.distance, softness: ui.features.softness };
     }
     ui.featureMode = id as 'auto' | 'manual';
   },
@@ -475,6 +476,11 @@ note('How far off the storm stands: near, its base high over the horizon and the
   + 'anvil spreading overhead; far, a small tower on the horizon, washed into its haze.');
 syncers.push(slider('Distance', 0, 1, 0.01,
   () => ui.features.distance, (v) => { ui.features.distance = v; }, (v) => v.toFixed(2)));
+note('How soft the volumetric towers are: 0 the cauliflower, crisp lobes and outlines; '
+  + '1 toward cotton candy, a fuzzy, tufted edge the sky shows through a little and light '
+  + 'wrapping round the lobes. The 2D towers ignore it.');
+syncers.push(slider('Softness', 0, 1, 0.01,
+  () => ui.features.softness, (v) => { ui.features.softness = v; }, (v) => v.toFixed(2)));
 note('How the towers are drawn. Volumetric: ray-marched in depth, turrets standing in '
   + 'front of one another, lobes lit by their own shadows. 2D: a field painted with its '
   + 'lobes and shade, a little lighter. Auto: the volumetric towers, but the 2D ones '

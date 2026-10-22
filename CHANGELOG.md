@@ -4,6 +4,17 @@
 
 ### Added
 
+- **A softer thunderhead: `features.softness`.** The volumetric tower's
+  surface was drawn as a skin, every lobe a hard-edged lump lit as a solid —
+  the outline a clean line, every fold a crease, every floret a bump. It now
+  has a shell its outline fades across, the sky showing a little through its
+  outer part and fine tufts of smooth noise thinning it in place; the face
+  turns more with the body than with each lobe, the light wraps further round
+  and diffuses deeper into the folds, the florets dapple rather than bump, and
+  the shell's outer part is lit through as lining against the sun. 0 is the
+  old cauliflower, 1 toward cotton candy; the default 0.6 is a little of the
+  way. The 2D tower ignores it; the controller has a Softness slider. It costs
+  about 3–5% more GPU time on a frame with the volumetric tower.
 - **A volumetric thunderhead, drawn by default.** The tower is ray-marched
   through a 3D density built on the same turrets: real depth between them,
   with the 2D tower's skyline (each turret's head a dome two fifths of its

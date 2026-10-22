@@ -90,7 +90,7 @@ uniform float u_snow;      // 0..1 snow
 uniform float u_wind;      // 0..1 wind
 uniform float u_thunder;   // 0..1 thunder
 uniform float u_haze;      // 0..1 haze
-uniform vec3  u_cbFeat;    // cumulonimbus companion forms: anvil, veil; and the storm's distance
+uniform vec4  u_cbFeat;    // cumulonimbus companion forms: anvil, veil; the storm's distance; its softness
 uniform float u_windOff;   // wind's integrated offset (speed×dt accumulated on the CPU side)
 uniform float u_evo;       // shape evolution's integrated offset (same idea)
 uniform float u_filtAmt;   // color filter: strength
@@ -1884,7 +1884,10 @@ float cbRay(float z) {
 vec4 cbLobeG(vec4 F, vec4 n, vec3 g, float a, float lam) {
   float s = 2.0 * n.x - 1.0;
   float b = abs(s) - 0.30;
-  float e = 9.0 * g_cbQ.y / lam;
+  // (and on a soft cloud, features.softness, across a quarter of the
+  // noise's range however large the scale: a fold between two lobes is a
+  // rounded valley, not a crease)
+  float e = max(9.0 * g_cbQ.y / lam, 0.25 * u_cbFeat.w);
   // (and a scale under ten pixels across turns the light with less of its
   // slope, none under four: a floret a few pixels wide turned its pixels
   // lit and unlit one by one as it drifted, a sparkle over the face. Its
@@ -4111,6 +4114,38 @@ void main() {
       float bumpS = 0.55 * fp * (1.0 - 0.6 * sv) * budW;
       float wF = wE + 51.0 * bumpS;
 
+      // ── Softness ── (features.softness: 0 the cauliflower, 1 toward
+      // cotton candy)
+      // A cumulus's surface is not a skin but the last hundred metres or so
+      // over which its droplets thin out into the air, and how sharply they
+      // thin is the difference between a crisp, freshly risen head and the
+      // soft, airy look of an older or more mixed one. Drawn as a surface
+      // alone, every lobe was a hard-edged lump lit as a solid: the outline
+      // a clean line, every fold a crease, every floret a bump. So the
+      // surface is given a shell sW deep (storm units: a sixth of a coarse
+      // lobe at the full softness, thinner where the edge is crisp, sv),
+      // which the outline fades across — the sky showing through its thin
+      // outer part — and the light reads it as the fuzzy medium it is: the
+      // near taps see the surface through a wider window, so the shadows a
+      // lobe casts on the next soften; the face turns with less of the lobes'
+      // slope and more of the body's, as the gradient of a blurred density
+      // does; the light wraps further round, and more of it reaches the folds
+      // after scattering. Lobes stay lobes, only less modelled
+      float soft = u_cbFeat.w;
+      // (Not under a storm's gloom, though, which hides the shell as it
+      // hides the florets: there the leaden mass is soft already, and the
+      // shell's wider march cost a dark tower a tenth of its frame for
+      // nothing to see)
+      float sW = soft * 0.014 * (0.7 + 0.6 * sv) * (1.0 - smoothstep(0.5, 0.9, gloom));
+      float wEs = wE + 0.4 * sW;
+      // (and the march must look that much further out: the shell, and the
+      // most its tufts push it out, below)
+      wF += 1.4 * sW;
+      //   fib   the shell's tufts (below), 0..1, mean a half
+      //   thin  how far out in the shell the ray passes: 0 on the surface or
+      //         inside it, 1 at its outer edge
+      float fib = 0.5, thin = 0.0;
+
       float m = 0.0, zL = 0.0, cF = 0.0, crack = 0.0;
       if (fUp > -wF) {
         // ── The march ──
@@ -4209,24 +4244,55 @@ void main() {
             float cellPx = 1.0 / (fpc * fq);
             float wB = smoothstep(9.07, 13.0, cellPx) * (1.0 - smoothstep(27.0, 40.0, cellPx)) * budW;
             if (wB > 0.0) {
-              vec3 bud = budPackQ(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), fpc * fq * 1.6, dirc);
+              vec3 bud = budPackQ(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), max(fpc * fq * 1.6, 0.18 * soft), dirc);
               lean += bud.xy * ((0.75 - 0.12 * float(j)) * wB);
               rec += bud.z * (0.14 * wB);
               float q = max(1.0 - sqrt(bud.z), 0.0);
               bump += q * q * cellPx * (wB / max(budW, 1e-3));
             }
           }
+          // The shell's tufts: two octaves of smooth noise read in the same
+          // drifting sky as the florets, four to nineteen pixels a cell and
+          // eased across from one octave to the next as the florets' are, so
+          // a closer view gets finer tufts, never a pop. Smooth, not ridged:
+          // ridged noise drew the fringe as hair, a caterpillar's fur round
+          // the tower. Only ever a modulation of how much the shell holds and
+          // of the face's brightness, never a surface the march must find —
+          // taken as surface, a scale this fine sparkled as it drifted
+          float fw = 0.0, fs = 0.0;
+          if (soft * budW > 0.0) for (int j = 0; j < 2; j++) {
+            float fq = 7.6 * pow(2.1, k0 + 1.0 + float(j));
+            float c = 1.0 / (fpc * fq);
+            float w = smoothstep(4.3, 9.07, c) * (1.0 - smoothstep(9.07, 19.05, c));
+            fs += vnoise(wfB * fq + vec2(23.7 * (k0 + float(j)), 3.1)) * w; fw += w;
+          }
+          fib = fw > 0.0 ? fs / fw : 0.5;
+          // (and the florets turn the face less: their folds are blurred
+          // across a tenth of a cell as well, budPackQ's kc, so they stay as
+          // a soft dappling rather than a pavement of little domes)
+          lean *= 1.0 - 0.6 * soft;
           rec = clamp(rec, 0.0, 1.0);
           bump *= bumpS;
         }
-        if (!hit && fmax > -wE - bump) {
+        if (!hit && fmax > -wE - bump - 1.4 * sW) {
           // (a ray that grazed the outline: how near it came, read exactly.
           // Through the filter the nearest pass moved in its steps as the
           // lobes drifted, and the fade at the outline with it)
           zL = gmax >= fmax ? zg : zmax;
           fmax = cbRay(zL);
         }
-        m = smoothstep(-wE, 0.0, min(fmax + bump, g_cbY.z));
+        // The fade at the outline, across the shell as well (fo: how near
+        // the ray came, the florets' domes counted in). Its tufts move the
+        // shell's edge in and out a little — only once the ray is clear of
+        // the surface itself, so a ray that meets it is still the whole
+        // cloud — and mostly thin it or thicken it in place: pushed out by
+        // as much as the shell is deep, the tufts stood off the tower as
+        // specks of cloud in the sky, where a density that only thins can
+        // never leave anything past the shell's edge
+        float fo = fmax + bump;
+        fo += (fib - 0.5) * 0.8 * sW * smoothstep(0.0, -0.5 * sW, fo);
+        thin = smoothstep(0.0, -wE - sW, fo);
+        m = smoothstep(-wE - sW, 0.0, min(fo, g_cbY.z)) * clamp(1.0 + (fib - 0.5) * 3.0 * thin, 0.0, 1.0);
         // A ray that passes inside a turret's bare column and still misses
         // has only gone through a crease the lobes cut through the column's
         // edge, where nothing stood behind it: a crack of sky, a pixel or two
@@ -4300,9 +4366,13 @@ void main() {
         // touched: the plane through it, at the slope the field has there)
         float sh = min(F.x, 0.0);
         F.x -= sh; B.x -= sh;
-        float w2 = 0.012 + wE;
-        float t0 = smoothstep(-0.002 - wE, 0.002 + wE, F.x + 0.005 * dot(F.yzw, Ls));
-        float t1 = smoothstep(-0.005 - wE, 0.005 + wE, F.x + 0.015 * dot(F.yzw, Ls));
+        // (a soft surface turns with the blurred density's gradient: less of
+        // the lobes' own slope, more of the body's under them. The near taps,
+        // the face's turn and the light through it all read the blend)
+        F.yzw = mix(F.yzw, B.yzw, 0.5 * soft);
+        float w2 = 0.012 + wEs;
+        float t0 = smoothstep(-0.002 - wEs, 0.002 + wEs, F.x + 0.005 * dot(F.yzw, Ls));
+        float t1 = smoothstep(-0.005 - wEs, 0.005 + wEs, F.x + 0.015 * dot(F.yzw, Ls));
         float t2 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * dot(B.yzw, Ls), P + Ls * 0.045, 1.0, w2));
         // (The longer ones read fewer scales than they could: the finer
         // lobes swell the surface by no more than a fifth of the window the
@@ -4314,12 +4384,14 @@ void main() {
         // window, and the light it gave them is the florets' business)
         float t3 = smoothstep(-0.050, 0.050, cbFinish(B.x + 0.120 * dot(B.yzw, Ls), P + Ls * 0.120, 1.0, 0.050));
         float t4 = smoothstep(-0.120, 0.120, cbFinish(cbBare(P + Ls * 0.300), P + Ls * 0.300, 0.0, 0.120));
-        float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4);
+        // (out in a soft shell the light has little cloud to cross, toward
+        // the sun or the sky: the fringe is lit through, not shaded)
+        float tau = CBV_SIGL * (0.005 * t0 + 0.010 * t1 + 0.030 * t2 + 0.040 * t3 + 0.080 * t4) * (1.0 - 0.6 * thin);
         // ...and the sky's: up, a lobe off, and back toward the eye — a point
         // in a crease has lobe standing over it and in front of it on the way
         // out, where one on a bulge has open air
         float u1 = smoothstep(-w2, w2, cbFinish(B.x + 0.045 * B.z, P + vec3(0.0, 0.045, 0.0), 1.0, w2));
-        float u3 = smoothstep(-0.006 - wE, 0.006 + wE, F.x + 0.006 * F.z - 0.02 * F.w);
+        float u3 = smoothstep(-0.006 - wEs, 0.006 + wEs, F.x + 0.006 * F.z - 0.02 * F.w);
         // (Where the light slides from a turret behind onto the edge of one
         // in front of it, cF, the point it is read at stands in the crease
         // between them, off both surfaces: the taps toward the sky find the
@@ -4333,10 +4405,10 @@ void main() {
         // went with the march's steps, and under a high sun drew the seams
         // in thin white lines)
         float slide = 2.0 * cF * (1.0 - cF);
-        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3) * (1.0 - slide));
+        float ambVis = exp(-CBV_SIGA * (0.07 * u1 + 0.04 * u3) * (1.0 - slide) * (1.0 - thin));
         // ...and how much cloud lies behind the surface along the eye's own
         // ray: little at a grazing margin, where the light comes through
-        float v1 = smoothstep(-0.003 - wE, 0.003 + wE, F.x + 0.010 * F.w);
+        float v1 = smoothstep(-0.003 - wEs, 0.003 + wEs, F.x + 0.010 * F.w);
         float alphaV = 1.0 - exp(-CBV_SIGV * (0.003 + 0.020 * v1));
         // ...and whether another turret stands behind this one, a few
         // hundredths further along the ray (the bare turrets). How near the
@@ -4388,8 +4460,11 @@ void main() {
         // back toward the eye: a cloud's rim is its thin outer skin, lit
         // through rather than shaded as a ball's limb is, and taken edge-on
         // every turret's rim came out a dark line drawn round it)
-        float wrap = smoothstep(-0.55, 1.05, dot(normalize(nrm + vec3(0.0, 0.0, -1.0) * (1.0 + 2.0 * slide)), Ls));
-        tcol *= (0.84 + 0.40 * nrm.y) * (1.0 - 0.5 * rec);
+        // (softer, it wraps further round: the outer hundred metres it is
+        // lit through are deeper in a fuzzy cloud, and the turn modelled
+        // less by the face's own nrm.y and its florets' recesses)
+        float wrap = smoothstep(-0.55 - 0.25 * soft, 1.05 + 0.10 * soft, dot(normalize(nrm + vec3(0.0, 0.0, -1.0) * (1.0 + 2.0 * slide)), Ls));
+        tcol *= (0.84 + (0.40 - 0.10 * soft) * nrm.y) * (1.0 - 0.5 * (1.0 - 0.5 * soft) * rec);
         // The sun's share: what comes straight through, and what comes after
         // scattering many times over, as a second and a third much fainter
         // extinction — what keeps a fold a luminous grey rather than a hole,
@@ -4403,7 +4478,9 @@ void main() {
         float hgB = 0.91 / pow(1.09 + 0.6 * cosT, 1.5);
         float ph = mix(hgF, hgB, 0.35) / 0.537;
         float Tsun = exp(-tau);
-        float ms = 0.55 * exp(-0.12 * tau) + 0.20 * exp(-0.03 * tau);
+        // (a softer cloud's light diffuses further into its folds: the
+        // first of the many-times-scattered terms dies off more slowly)
+        float ms = 0.55 * exp(-(0.12 - 0.04 * soft) * tau) + 0.20 * exp(-0.03 * tau);
         // the powder look: the thin outer skin scatters less of the light
         // back than the cloud under it, a slightly darker rim just inside a
         // sunlit edge — only where the light comes from the eye's side
@@ -4421,7 +4498,7 @@ void main() {
         // greyer than the 2D tower's from the foot to half way up. So the
         // shade has a floor of the scattered light, less where the sky is
         // shut out — a fold keeps its depth)
-        tcol += sunL * (0.48 * Tsun * mix(0.15, 1.0, wrap) * mix(1.0, ph, 0.25) + ((0.13 + 0.55 * (1.0 - Tsun)) * ms + 0.28 * (1.0 - Tsun) * (0.4 + 0.6 * ambVis)) * (1.0 - 0.35 * rec))
+        tcol += sunL * (0.48 * Tsun * mix(0.15 + 0.10 * soft, 1.0, wrap) * mix(1.0, ph, 0.25) + ((0.13 + 0.55 * (1.0 - Tsun)) * ms + 0.28 * (1.0 - Tsun) * (0.4 + 0.6 * ambVis)) * (1.0 - 0.35 * rec))
               * powder * (1.0 - diffuse * 0.75);
         // and where the cloud is thin enough that the light comes on through
         // it toward the eye: the silver lining, hottest by the disc. Thin is
@@ -4432,10 +4509,13 @@ void main() {
         // spreads a little way in from it, so that is laid on by how near
         // the outline is
         float rimW = (1.0 - smoothstep(-0.01, 0.05, bare)) * (1.0 - behind);
-        rimW *= rimW;
+        // (and the soft shell is outermost of all: as thin as cloud gets)
+        rimW = max(rimW * rimW, thin * (1.0 - behind));
         tcol += rimC * min(hgF / 0.40, 8.0) * (0.10 * Tsun * (1.0 - alphaV * 0.85) + 0.10 * rimW * exp(-0.12 * tau))
               * (1.0 - diffuse);
-        tcol *= gain;
+        // (a soft face is fleecy rather than bumpy: the tufts that fray its
+        // shell dapple its light a little, a few pixels across)
+        tcol *= gain * (1.0 + (fib - 0.5) * 0.18 * soft * (1.0 - thin));
 
         // Less light reaches lower down a column kilometres thick than any
         // few taps can find: it comes in at the top and the sun side and is
@@ -4480,7 +4560,8 @@ void main() {
           float edgeS = dot(normalize(nB.xy + vec2(1e-4, 0.0)), Ls.xy / latL);
           float margin = (1.0 - smoothstep(0.0, 0.06, bare)) * (1.0 - behind);
           float rimB = (1.0 - smoothstep(-0.01, 0.07, bare)) * (1.0 - behind);
-          rimB *= rimB * mix(0.70, 1.0, fwd);
+          // (the soft shell's tufts are lining too, the sun through them)
+          rimB = max(rimB * rimB, thin * (1.0 - behind)) * mix(0.70, 1.0, fwd);
           rimB *= mix(0.55, 1.0, smoothstep(-0.45, 0.60, toSun)) * mix(0.70, 1.0, ambVis);
           rimB *= mix(1.0, smoothstep(-0.15, 0.70, edgeS), side);
           dark += cloudSun * fwd * fwd * 0.25 * (1.0 - through * 0.7);
@@ -7778,7 +7859,7 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_wind, s.wind);
     gl.uniform1f(u.u_thunder, s.thunder);
     gl.uniform1f(u.u_haze, s.haze);
-    gl.uniform3f(u.u_cbFeat, s.features.anvil, s.features.velum, s.features.distance);
+    gl.uniform4f(u.u_cbFeat, s.features.anvil, s.features.velum, s.features.distance, s.features.softness);
     gl.uniform1f(u.u_windOff, windOff);
     gl.uniform1f(u.u_evo, evo);
     gl.uniform1f(u.u_filtAmt, s.filter.amount);

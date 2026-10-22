@@ -149,6 +149,7 @@ export function resolveWeather(input: WeatherInput): WeatherState {
       anvil: clamp01(w.features?.anvil ?? auto.anvil),
       velum: clamp01(w.features?.velum ?? auto.velum),
       distance: clamp01(w.features?.distance ?? auto.distance),
+      softness: clamp01(w.features?.softness ?? auto.softness),
     },
     cloudCover,
     rain,
