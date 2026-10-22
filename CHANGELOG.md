@@ -15,6 +15,14 @@
   old cauliflower, 1 toward cotton candy; the default 0.6 is a little of the
   way. The 2D tower ignores it; the controller has a Softness slider. It costs
   about 3–5% more GPU time on a frame with the volumetric tower.
+  Where one turret stands in front of another, its edge now fades over the
+  face behind as a soft cloud's would, the light read on both and blended:
+  before, the light was read in the air between them, and every seam was
+  drawn in a thin dark or light line — and a crease of sky between two
+  turrets was lit as the shell's thin edge, a jagged sky-blue streak down the
+  tower. Nor is the tower ruled with faint vertical lines any more where the
+  turrets the light reads changed from one column of pixels to the next.
+  Another 3–4% on the tower's frame.
 - **A volumetric thunderhead, drawn by default.** The tower is ray-marched
   through a 3D density built on the same turrets: real depth between them,
   with the 2D tower's skyline (each turret's head a dome two fifths of its
