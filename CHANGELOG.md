@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.8.0 — 2026-10-22
+
+The thunderhead in depth. The cumulonimbus is now ray-marched through a 3D
+density by default (`cumulonimbus: 'auto'`): turrets standing in front of one
+another, lit as cloud, with a soft, slightly cotton-candy shell
+(`features.softness`); a storm close overhead is still drawn by the 2D tower,
+crossfaded across distance, and `'2d'` remains the lighter option. The 2D
+tower itself is lit as a cauliflower rather than putty.
+
 ### Added
 
 - **A softer thunderhead: `features.softness`.** The volumetric tower's
