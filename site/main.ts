@@ -49,6 +49,12 @@ const sky = new Atmosphere(canvas, {
   // little smaller than the default and let CSS scale it up. The sky is soft
   // enough that the resample doesn't show
   resolutionScale: Math.min(devicePixelRatio || 1, 1.5) * 0.46,
+  // and on a GPU that cannot hold that at 30 fps — a thunderhead's frame is
+  // three to four times a clear sky's — lower it rather than drop frames
+  // (where the GPU can say how long a frame takes: Chrome and Edge on the
+  // desktop). Under its budget, which an M2 Max's hero frames are by four
+  // times, nothing changes
+  adaptiveResolution: true,
   // the sky is the content here, not interface motion, so it keeps moving
   // under prefers-reduced-motion (Windows sets that whenever "Animation
   // effects" is off). The page's own UI transitions still honor it in CSS
