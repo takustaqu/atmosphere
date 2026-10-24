@@ -63,7 +63,7 @@ describe('SkyCacheScheduler', () => {
 
   it('draws every column of a keyframe once, in order, across its N frames', () => {
     const N = 7;
-    const c = new SkyCacheScheduler({ frames: N });
+    const c = new SkyCacheScheduler({ frames: N, region: 'panorama' });
     const built = new Map<number, [number, number][]>();
     for (let i = 0; i < 8 * N; i++) {
       const p = c.frame(frame({}, i));
@@ -120,7 +120,7 @@ describe('SkyCacheScheduler', () => {
   });
 
   it('maps a panorama from just under the horizon', () => {
-    const c = new SkyCacheScheduler({ frames: 4 });
+    const c = new SkyCacheScheduler({ frames: 4, region: 'panorama' });
     let p = c.frame(frame({}, 0));
     for (let i = 1; i < 12; i++) p = c.frame(frame({}, i));
     expect(p.show!.a.rect.el0).toBe(CACHE_EL0);

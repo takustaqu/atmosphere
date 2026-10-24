@@ -11,6 +11,17 @@
   2D tower (about half). `cloudScale` or `cumulonimbus` given as well wins for
   that setting. The controller's Performance panel has High / Balanced / Low.
 
+- **Sky cache (experimental).** `skyCache: true` draws the cloud stack into
+  keyframes over azimuth × elevation — each built whole, a slice a frame,
+  for the moment it will be shown — and composites every frame from the two
+  either side of it; turning the camera costs the clouds nothing. A cloudy
+  1080p frame takes 0.15–0.3 of the time on an M2 Max; edges at the usual
+  fields of view stay as close to the direct picture as `'balanced'`'s; three
+  half-float maps hold 55–140 MB. Off by default; a frame it cannot stand for
+  (a transition, the tower's crossfade band, a view too narrow for the
+  budget) is drawn directly, and with the option off every frame is drawn as
+  before, to the pixel.
+
 ### Performance
 
 Lighter frames with the same picture: everything below leaves out only work

@@ -26,17 +26,25 @@ import { type Camera } from './state.js';
 
 export interface SkyCacheOptions {
   /**
-   * What each keyframe covers. `'panorama'` (the default): the whole circle
-   * of azimuth, from just under the horizon to a little above the view's top
-   * (the zenith once it is near) — a turn of the camera is free. `'view'`:
-   * a window round the view, widened by how fast the camera turns — a
-   * keyframe costs about twice a frame rather than four to eight, and a
-   * camera turning faster than the window allows is drawn directly.
+   * What each keyframe covers. `'view'` (the default): a window round the
+   * view, its middle where the view will be halfway through the keyframe's
+   * showing and widened by how fast the camera turns — a keyframe some two
+   * frames' worth of texels, 55-140 MB for three at 1080p; a view that
+   * leaves it (a turn that speeds up faster than the window widens) is drawn
+   * directly. `'panorama'`: the whole circle of azimuth, from just under the
+   * horizon to a little above the view's top (the zenith once it is near) —
+   * any turn of the camera free, a keyframe four to eight frames' worth,
+   * 130-310 MB.
    */
   region?: 'panorama' | 'view';
   /** texels per radian, as a multiple of the view's pixels per radian at its middle (height / fov). Defaults to 1 */
   density?: number;
-  /** frames between keyframes (N). Defaults to 30 */
+  /**
+   * frames between keyframes (N). Defaults to 15: what a frame shows between
+   * two keyframes is a mix of them, so an edge that moves is drawn as a
+   * dissolve across the N frames — the fewer, the closer to the edge's own
+   * motion, and the more a keyframe's cost weighs on each frame
+   */
   frames?: number;
   /** the most texels one keyframe's map may hold; a view that needs more is drawn directly. Defaults to 16 million */
   budget?: number;
@@ -214,9 +222,9 @@ export class SkyCacheScheduler {
   texelsBuilt = 0;
 
   constructor(o: SkyCacheOptions = {}) {
-    this.region = o.region === 'view' ? 'view' : 'panorama';
+    this.region = o.region === 'panorama' ? 'panorama' : 'view';
     this.density = o.density ?? 1;
-    this.frames = Math.max(2, Math.round(o.frames ?? 30));
+    this.frames = Math.max(2, Math.round(o.frames ?? 15));
     this.budget = o.budget ?? 16e6;
     this.margin = o.margin ?? 0.12;
   }

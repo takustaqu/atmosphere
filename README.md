@@ -652,6 +652,28 @@ settable later. At 1 the frame is drawn with the one-pass shader, as without
 the option; the variant that splits is compiled the first time the scale goes
 under 1, the frame drawn whole in the meantime.
 
+**`skyCache`** (experimental, off by default) draws the cloud stack into
+keyframes over directions — azimuth × elevation — and reads each frame's
+clouds back from them, instead of drawing them per pixel. The stack depends on
+the direction and the state, not the camera, so turning the camera costs it
+nothing; the wind and the clouds' evolution are followed by a keyframe every
+15 frames (`frames`), each built whole over the frames before it is shown, for
+the moment it is shown, and each frame a mix of the two either side of it.
+On an M2 Max at 1080p a cloudy frame takes 0.15–0.3 of the time (towers wide
+11.9 → 2.1 ms), still or panning; cloud edges at the usual fields of view are
+as close to the direct picture as `'balanced'`'s, and between two keyframes a
+moving edge is a dissolve rather than a motion. A set() transition, a clear
+sky, the `'auto'` tower's crossfade band, or a view that wants more texels than
+`budget` is drawn directly; so is the second it takes to build the first two
+keyframes after one. It holds three half-float maps: 55–140 MB at 1080p (the
+default `'view'` window round the camera), 130–310 MB for `region:
+'panorama'`.
+
+```ts
+new Atmosphere(canvas, { skyCache: true });
+new Atmosphere(canvas, { skyCache: { region: 'panorama', frames: 30 } });
+```
+
 **`adaptiveResolution`** measures each frame's GPU time and lowers the
 resolution when a frame would overrun its budget — by default three quarters of
 the frame interval — and raises it again a step at a time when there is room.
