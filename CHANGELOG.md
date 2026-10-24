@@ -14,13 +14,20 @@
 - **Sky cache (experimental).** `skyCache: true` draws the cloud stack into
   keyframes over azimuth × elevation — each built whole, a slice a frame,
   for the moment it will be shown — and composites every frame from the two
-  either side of it; turning the camera costs the clouds nothing. A cloudy
-  1080p frame takes 0.15–0.3 of the time on an M2 Max; edges at the usual
-  fields of view stay as close to the direct picture as `'balanced'`'s; three
-  half-float maps hold 55–140 MB. Off by default; a frame it cannot stand for
-  (a transition, the tower's crossfade band, a view too narrow for the
-  budget) is drawn directly, and with the option off every frame is drawn as
-  before, to the pixel.
+  either side of it; turning the camera costs the clouds nothing. The
+  keyframes stand at even steps of the clouds' own clock, so frames that
+  come unevenly (a 30 fps cap on a 60 Hz display draws 17, 33 and 50 ms
+  frames) show the clouds at their own moment rather than lurching each
+  keyframe; and each keyframe is moved to the frame's moment before the two
+  are mixed — along the drift every layer is known to have, and along the
+  reshaping found between them — so the clouds move on rather than
+  dissolving from one keyframe into the next. A cloudy 1080p frame takes
+  0.16–0.24 of the time on an M2 Max (a light sky or a strong wind,
+  0.3–0.4); three half-float maps and their motion hold 115–300 MB
+  (`motion: false`: half, the keyframes mixed as they stand). Off by
+  default; a frame it cannot stand for (a transition, the tower's crossfade
+  band, a view too narrow for the budget) is drawn directly, and with the
+  option off every frame is drawn as before, to the pixel.
 
 ### Performance
 

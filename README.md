@@ -656,18 +656,26 @@ under 1, the frame drawn whole in the meantime.
 keyframes over directions — azimuth × elevation — and reads each frame's
 clouds back from them, instead of drawing them per pixel. The stack depends on
 the direction and the state, not the camera, so turning the camera costs it
-nothing; the wind and the clouds' evolution are followed by a keyframe every
-15 frames (`frames`), each built whole over the frames before it is shown, for
-the moment it is shown, and each frame a mix of the two either side of it.
-On an M2 Max at 1080p a cloudy frame takes 0.15–0.3 of the time (towers wide
-11.9 → 2.1 ms), still or panning; cloud edges at the usual fields of view are
-as close to the direct picture as `'balanced'`'s, and between two keyframes a
-moving edge is a dissolve rather than a motion. A set() transition, a clear
-sky, the `'auto'` tower's crossfade band, or a view that wants more texels than
-`budget` is drawn directly; so is the second it takes to build the first two
-keyframes after one. It holds three half-float maps: 55–140 MB at 1080p (the
-default `'view'` window round the camera), 130–310 MB for `region:
-'panorama'`.
+nothing. The clouds' drift and evolution are followed by a keyframe every 15
+frames' worth of their own clock (`frames`) — oftener where the clock runs
+fast for the frame rate, at 30 fps or in a strong wind, down to every 4
+(`windRun`, `evoRun`) — each built whole over the frames before it is shown,
+for the clock it is shown at. A frame shows the two either side of its own
+clock, each moved to the frame's moment before they are mixed — along the
+drift every layer is known to have, and along the reshaping found between the
+two (a tower's flank climbing, a cumulus crumbling) — so a cloud moves on
+continuously rather than sitting still and dissolving into its next place, and
+uneven frame times move it no differently from even ones. On an M2 Max at
+1080p and 60 fps a cloudy frame takes 0.16–0.24 of the time (summer 14.0 →
+2.7 ms), still or panning; a light sky, or a strong wind's oftener keyframes,
+0.3–0.4. What it cannot follow still dissolves, less than it did: a faint fast
+layer over a slower one (the scud over a high sheet), and what appears from
+nothing. A set() transition, a clear sky, the `'auto'` tower's crossfade band,
+or a view that wants more texels than `budget` is drawn directly; so is the
+second it takes to build the first two keyframes after one. It holds three
+half-float maps, each with a map of its motion beside it: 115–300 MB at 1080p
+(the default `'view'` window round the camera), 270–650 MB for `region:
+'panorama'`; `motion: false` mixes the keyframes as they stand, at half that.
 
 ```ts
 new Atmosphere(canvas, { skyCache: true });
