@@ -6890,6 +6890,75 @@ export function featureKeys(s: AtmosphereState, rays = 0, cumulonimbus: Cumuloni
 }
 
 /**
+ * Whether any ray of a view can be lit from behind — whether FEATURE.BACKLIT
+ * can draw anything in it. The light from behind is the one feature whose
+ * gate is a direction: a cloud takes it only within a few tenths of a radian
+ * of the sun as sunApart measures it (the tower's backT out to 0.60–1.65,
+ * by how low the sun is, its aura and its plate's to no further; a cumulus's
+ * to 0.60, its angle squashed differently), and the frame is a window a
+ * radian or so across. Turned away from the sun every one of those terms is
+ * exactly nothing for every pixel, and the program carrying them was some
+ * tenth slower for it (an M2 Max, 1080p: a sky of towers seen with the sun
+ * behind or beside the eye, or a tower close up). So keysFor leaves the
+ * feature out of such a frame — the same picture, pixel for pixel.
+ *
+ * Read off a grid of the view's rays, conservatively: the least angle any
+ * ray takes, less the most any cell of the grid spans (a ray between grid
+ * points lies within a cell's diagonal of one), each in the squashed sky
+ * sunApart reasons in. A lens with drops on it bends rays by up to half the
+ * frame, so the window is widened by that much then.
+ */
+export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number): boolean {
+  const smooth = (a: number, b: number, x: number) => {
+    const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
+    return t * t * (3 - 2 * t);
+  };
+  const ce = Math.cos(s.sunElevation);
+  const sun: [number, number, number] = [ce * Math.sin(s.sunAzimuth), Math.sin(s.sunElevation), ce * Math.cos(s.sunAzimuth)];
+  const sunY = sun[1];
+  const lowS = 1 - smooth(0.20, 0.55, sunY);
+  const lift = smooth(0.15, 0.60, sunY);
+  // [the tower's squash, its reach] and the cumulus's
+  const gates: [number, number][] = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 0.60]];
+  const drops = s.rain > 0.05 && s.lens.droplets > 0.001;
+  const span = drops ? 1.6 : 1;
+  const NX = 24, NY = 16;
+  const t = Math.tan(camera.fov * 0.5);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  // the view's rays on the grid, as the shader's viewRay casts them
+  const rays: [number, number, number][] = [];
+  for (let j = 0; j <= NY; j++) {
+    for (let i = 0; i <= NX; i++) {
+      const x = (i / NX * 2 - 1) * span * aspect * t, y = (j / NY * 2 - 1) * span * t;
+      const l = Math.hypot(x, y, 1);
+      const dx = x / l, dy0 = y / l, dz0 = 1 / l;
+      const dy = dy0 * cp + dz0 * sp, dz = -dy0 * sp + dz0 * cp;
+      rays.push([dx * cy + dz * sy, dy, -dx * sy + dz * cy]);
+    }
+  }
+  const squash = (v: [number, number, number], q: number): [number, number, number] => {
+    const l = Math.hypot(v[0], v[1] * q, v[2]);
+    return [v[0] / l, v[1] * q / l, v[2] / l];
+  };
+  const ang = (a: number[], b: number[]) => Math.acos(Math.min(Math.max(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1), 1));
+  for (const [q, reach] of gates) {
+    const b = squash(sun, q);
+    const r = rays.map((v) => squash(v, q));
+    let least = Infinity, cell = 0;
+    for (let j = 0; j <= NY; j++) {
+      for (let i = 0; i <= NX; i++) {
+        const k = j * (NX + 1) + i;
+        least = Math.min(least, ang(r[k], b));
+        if (i < NX && j < NY) cell = Math.max(cell, ang(r[k], r[k + NX + 2]), ang(r[k + 1], r[k + NX + 1]));
+      }
+    }
+    if (least - cell < reach + 0.02) return true;
+  }
+  return false;
+}
+
+/**
  * The bit of a variant's key that marks the split program (CLOUD_SPLIT,
  * {@link RendererOptions.cloudScale}) — not a feature of the state but of
  * how the frame is drawn, so kept clear of {@link ALL_FEATURES}. A renderer
@@ -7301,7 +7370,7 @@ export class AtmosphereRenderer {
    * featureKeys; null: the one that draws anything — under 'auto' the
    * volumetric tower, which the middle distance every sky is set at takes)
    */
-  private keysFor(s: AtmosphereState | null): { key: number; share: number }[] {
+  private keysFor(s: AtmosphereState | null, camera?: Camera, aspect = 1): { key: number; share: number }[] {
     // (the split program only for a frame that splits: see SPLIT_KEY)
     const sp = this.cloudScale < 1 || this.rays > 0 ? SPLIT_KEY : 0;
     const all = (ALL_FEATURES & ~FEATURE.CBVOL) | (this.cbMode !== '2d' ? FEATURE.CBVOL : 0) | sp;
@@ -7316,6 +7385,17 @@ export class AtmosphereRenderer {
       for (const k of ks) k.key = (ALL_FEATURES & ~FEATURE.CBVOL) | (k.key & FEATURE.CBVOL);
     }
     for (const k of ks) k.key |= sp;
+    // and the light from behind only in a view it can be seen in (see
+    // backlitInView) — not under the 2D tower, whose lobes' cast shadows
+    // take a share of it however far round the sun is, nor in the one
+    // program that carries everything, nor where the variants link on the
+    // spot: a view turning away from the sun would stop the page for a
+    // compile, and a bake's faces looking away from it would compile a
+    // second program for the sake of a frame or two
+    if (camera && this.parallel && this.opts.variants !== false && (ks[0].key & FEATURE.BACKLIT)
+        && !backlitInView(s, camera, aspect)) {
+      for (const k of ks) if (!(k.key & FEATURE.CB) || (k.key & FEATURE.CBVOL)) k.key &= ~FEATURE.BACKLIT;
+    }
     return ks;
   }
 
@@ -7724,7 +7804,7 @@ export class AtmosphereRenderer {
     evo = 0,
   ): void {
     this.advanceSnow(timeSec, camera);
-    const passes = this.passes(s);
+    const passes = this.passes(s, camera, this.canvas.width / Math.max(1, this.canvas.height));
     if (!passes) return;
     const gl = this.gl!;
     const w = this.canvas.width, h = this.canvas.height;
@@ -7741,9 +7821,17 @@ export class AtmosphereRenderer {
    * the same tower): while one of them links, the other draws alone, whole,
    * rather than a tower faded halfway into nothing. null: nothing yet
    */
-  private passes(s: AtmosphereState): { v: Variant; share: number }[] | null {
+  private passes(s: AtmosphereState, camera?: Camera, aspect = 1): { v: Variant; share: number }[] | null {
     if (!this.gl || this.lost) return null;
-    const ks = this.keysFor(s);
+    const ks = this.keysFor(s, camera, aspect);
+    // (a view that leaves the light from behind out has the variants that
+    // carry it compiling behind it, for when it turns toward the sun: drawn
+    // for this view while they link, they draw the same picture, but the
+    // other way round a frame would wait on them — see backlitInView)
+    if (camera && this.parallel) {
+      const whole = this.keysFor(s);
+      whole.forEach((k, i) => { if (k.key !== ks[i]?.key) this.ensure(k.key); });
+    }
     if (ks.length === 1) {
       this.wantedVol = -1;
       const v = this.pick(ks[0].key);
@@ -7956,7 +8044,9 @@ export class AtmosphereRenderer {
   ): LightMeasurement | null {
     const [cols, rows] = options.grid ?? [8, 6];
     const layout = probeLayout(cols, rows, options.environment ?? true);
-    const passes = this.passes(s);
+    // (the cube faces look all round, the light from behind included)
+    const passes = this.passes(s, layout.environment ? undefined : camera,
+      this.canvas.width / Math.max(1, this.canvas.height));
     const gl = this.gl;
     if (!passes || !gl || !this.probeTarget(gl, layout)) return null;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
