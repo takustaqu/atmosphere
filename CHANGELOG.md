@@ -25,6 +25,12 @@ with other work, so to within some ±3%:
   do `variants: false` and a renderer without parallel compiling: the
   variant with the light is compiled in the background behind a view that
   leaves it out, so turning toward the sun never waits on a compile.
+- **One octave of florets at a time.** The volumetric tower laid two octaves
+  of florets on its light at once, from nine pixels a cell to forty; it now
+  lays one, twelve to thirty pixels a cell, handing it on to the next octave
+  across the last seventh of its range so the dappling neither thins nor pops
+  as the view closes in. The face is a shade smoother close up (mean 0.1–0.8
+  levels at 1080p); tower frames take 0.98–1.00 of the time.
 - **The crossfade draws the sky once.** Inside the `'auto'` band the
   volumetric tower's frame was drawn whole over the 2D one's; now it writes
   nothing wherever neither tower nor the anvil's plate can stand, and a frame

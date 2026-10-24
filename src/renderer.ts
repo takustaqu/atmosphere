@@ -4383,24 +4383,28 @@ void main() {
             zF = zg;
           }
         }
-        // (two octaves of them, the coarser the first under 40 pixels a
-        // cell — fading out from 27, as the finer fades in from 9 to 13,
-        // where the next octave down takes over from it as it leaves — so a
-        // near or narrow view gets finer florets, not bigger ones: two
-        // octaves fixed at the coarse end left a close view of the tower
-        // with nothing under twenty pixels. Three, from five pixels to
-        // forty-six, cost a tenth of the tower's whole frame for florets
-        // the eye takes for the two)
+        // (one octave of them at a time, twelve to thirty pixels a cell,
+        // handed on to the next octave down across the last seventh of its
+        // range as the next takes it up — the two weights sum to one there,
+        // so the dappling neither thins nor pops — so a near or narrow view
+        // gets finer florets, not bigger ones: an octave fixed at the coarse
+        // end left a close view of the tower with nothing under twenty
+        // pixels. Two at once, from nine pixels to forty, cost a twelfth of
+        // the tower's frame for a second layer the eye barely tells from
+        // one; three, from five to forty-six, a tenth)
         if (hit || fmax > -wF) {
-          float k0 = max(0.0, ceil(log(1.0 / (40.0 * 7.6 * fpc)) * 1.3478));
+          // kc: the octave, counted continuously, whose cells are 13 px
+          float kc = log(1.0 / (13.0 * 7.6 * fpc)) * 1.3478;
+          float kb = max(0.0, ceil(kc - 1.15));
           for (int j = 0; j < 2; j++) {
-            float k = k0 + float(j);
-            float fq = 7.6 * pow(2.1, k);
-            float cellPx = 1.0 / (fpc * fq);
-            float wB = smoothstep(9.07, 13.0, cellPx) * (1.0 - smoothstep(27.0, 40.0, cellPx)) * budW;
+            float k = kb + float(j);
+            float u = kc - k;
+            float wB = smoothstep(-0.15, 0.15, u) * (1.0 - smoothstep(0.85, 1.15, u)) * budW;
             if (wB > 0.0) {
+              float fq = 7.6 * pow(2.1, k);
+              float cellPx = 1.0 / (fpc * fq);
               vec3 bud = budPackQ(wfB * fq + vec2(k * 37.1 + 5.3, 11.3), max(fpc * fq * 1.6, 0.18 * soft), dirc);
-              lean += bud.xy * ((0.75 - 0.12 * float(j)) * wB);
+              lean += bud.xy * (0.69 * wB);
               rec += bud.z * (0.14 * wB);
               float q = max(1.0 - sqrt(bud.z), 0.0);
               bump += q * q * cellPx * (wB / max(budW, 1e-3));
@@ -4415,6 +4419,7 @@ void main() {
           // of the face's brightness, never a surface the march must find —
           // taken as surface, a scale this fine sparkled as it drifted
           float fw = 0.0, fs = 0.0;
+          float k0 = max(0.0, ceil(log(1.0 / (40.0 * 7.6 * fpc)) * 1.3478));
           if (soft * budW > 0.0) for (int j = 0; j < 2; j++) {
             float fq = 7.6 * pow(2.1, k0 + 1.0 + float(j));
             float c = 1.0 / (fpc * fq);
