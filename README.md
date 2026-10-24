@@ -630,9 +630,10 @@ and the 22° halo is laid under the whole stack rather than between the
 cirrostratus and the layers above it. A frame with no clouds at all is drawn
 in one pass whatever the setting, since splitting nothing out would only add
 work. Needs half-float render targets; without them it draws in one pass.
-Giving the option at all — 1 included — compiles a variant of the shader that
-can split, which is what makes `sky.cloudScale` settable later; that variant
-costs about 10% when not splitting, so leave the option out unless you use it.
+Giving the option at all — 1 included — is what makes `sky.cloudScale`
+settable later. At 1 the frame is drawn with the one-pass shader, as without
+the option; the variant that splits is compiled the first time the scale goes
+under 1, the frame drawn whole in the meantime.
 
 **`adaptiveResolution`** measures each frame's GPU time and lowers the
 resolution when a frame would overrun its budget — by default three quarters of
@@ -767,7 +768,10 @@ loop to come back on; do not do it for anything on screen.
 The shader is compiled per combination of features a sky needs — the sea,
 the aurora, the halos, the rainbow, the rain shafts and the rest are each compiled in only
 when their state is on, because a block that is never run still costs every
-frame by being there. A feature coming on later gets its variant compiled
+frame by being there. The light from behind — the backlit and side-lit
+shading of the towers and the cumulus — is left out of a view turned away
+from the sun as well, where none of it can show: a frame of towers seen with
+the sun behind or beside you is about a tenth lighter for it. A feature coming on later gets its variant compiled
 then, in the background; the frames in between are drawn with the previous
 variant, so the feature appears a fraction of a second after it is asked for
 rather than the picture blanking. `set()` starts that compile ahead of the
@@ -932,8 +936,9 @@ storm draws nearer or recedes across 0.42–0.52 the two are crossfaded, so
 neither pops in. A frame with the volumetric tower costs about 1.10–1.19×
 what it does with the 2D one at 1080p (an M2 Max; pair it with
 `cloudScale: 0.5` where that matters), a near storm costs what the 2D tower
-does, and a frame inside the crossfade draws both, about 2.3× — only while
-the distance passes through. As the storm drifts, the volumetric outline and
+does, and a frame inside the crossfade draws both towers, about twice the
+2D tower's frame (the sky outside the towers is drawn once) — only while the
+distance passes through. As the storm drifts, the volumetric outline and
 the edges between turrets change about 1.2–1.4× as many pixels a frame as
 the 2D tower's at 640×400, and some three times as many at 1280×800.
 

@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Performance
+
+Lighter frames with the same picture: everything below leaves out only work
+whose result could never show, and draws the same frame to within a level on
+the odd pixel (checked over every scene of the test set, yaw sweeps at five
+pitches and fields of view, the crossfade's distances and the storm's
+lifecycle; the stability films at 640×400 are unchanged to the pixel). GPU
+time per frame, an M2 Max at 1080p, against 0.8.0 — measured on a GPU shared
+with other work, so to within some ±3%:
+
+- **No light from behind in a view turned away from the sun.** The towers'
+  and the cumulus's backlit and side-lit shading — the lining, the glow round
+  a rim, the gold flank — was compiled into every frame with a sun up and a
+  cloud to light, wherever the camera looked; every term of it is exactly
+  nothing past a few tenths of a radian from the sun. It is now left out of a
+  frame whose view cannot reach it (read off a grid of the view's rays each
+  frame, conservatively; a lens with drops on it widens the window, and the
+  light probe's cube faces keep it). Towers seen with the sun behind or
+  beside the eye take 0.89–0.92 of the time, a tower close up 0.89–0.92. The
+  2D tower keeps it (its lobes' shadows take a share of it at any angle), as
+  do `variants: false` and a renderer without parallel compiling: the
+  variant with the light is compiled in the background behind a view that
+  leaves it out, so turning toward the sun never waits on a compile.
+- **The crossfade draws the sky once.** Inside the `'auto'` band the
+  volumetric tower's frame was drawn whole over the 2D one's; now it writes
+  nothing wherever neither tower nor the anvil's plate can stand, and a frame
+  in the band takes 0.86–0.92 of the time (with an anvil, 0.89–0.95) — what it
+  still costs is the two towers' own pixels.
+- **A cloud scale of 1 draws with the one-pass shader.** Giving `cloudScale`
+  compiled every variant split, and at 1 the split program drew the one pass
+  a tenth slower for carrying its code — as the controller does, to switch
+  it live. Now the split program is compiled the first time the scale goes
+  under 1 (or rays are on): with `cloudScale: 1`, a fair or an overcast sky
+  takes 0.89–0.90 of the time.
+- The storm's block is skipped outright under the lowest base a tower can
+  have and out of the anvil's reach — the ground and the band over the
+  horizon under the towers (within noise, 0–3%).
+- The site's hero holds its frames under a budget (`adaptiveResolution`): on
+  a GPU that keeps up nothing changes; on a slow one the resolution gives way
+  before frames drop.
+
 ## 0.8.0 — 2026-10-22
 
 The thunderhead in depth. The cumulonimbus is now ray-marched through a 3D
