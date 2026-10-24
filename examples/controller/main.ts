@@ -95,6 +95,13 @@ const sky = new Atmosphere(canvas, {
   // than auto's (the chips under "Cumulonimbus companion forms" switch it
   // live too)
   cumulonimbus: cbParam(new URLSearchParams(location.search).get('cb')),
+  // ?cache=1 draws the cloud stack from the experimental sky cache
+  // (?cache=panorama for the whole round of the sky rather than the view's
+  // window); it can only be chosen when the sky is made
+  skyCache: (() => {
+    const v = new URLSearchParams(location.search).get('cache');
+    return v === 'panorama' ? { region: 'panorama' as const } : v === '1' || v === 'view';
+  })(),
   adaptiveResolution: true,
   onLight: (light) => {
     // cam, not sky.camera: this can fire from inside the constructor (a still
@@ -657,12 +664,15 @@ note('Crepuscular rays: shafts of sunlit air through the gaps in a deck, read of
   + 'the split\'s cloud stack. Best with a low sun behind broken cloud.');
 syncers.push(slider('Crepuscular rays', 0, 1, 0.01,
   () => sky.rays, (v) => { sky.rays = v; }, (v) => v.toFixed(2)));
+note('Sky cache (experimental): open the page with ?cache=1 to draw the clouds once into a '
+  + 'map of the sky every few frames and read the frame from it, a fraction of the cost.');
 const perfEl = document.createElement('p');
 perfEl.className = 'note';
 host.append(perfEl);
 setInterval(() => {
   perfEl.textContent = `adaptive resolution: ×${sky.resolution.toFixed(3)} — `
-    + `drawing ${canvas.width}×${canvas.height}, clouds ×${sky.cloudScale}`;
+    + `drawing ${canvas.width}×${canvas.height}, clouds ×${sky.cloudScale}`
+    + (new URLSearchParams(location.search).get('cache') ? ', sky cache on' : '');
 }, 500);
 
 section('Camera');
