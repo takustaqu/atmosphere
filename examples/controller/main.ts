@@ -87,8 +87,9 @@ const sky = new Atmosphere(canvas, {
   // under prefers-reduced-motion (Windows sets that whenever "Animation
   // effects" is off)
   respectReducedMotion: false,
-  // given at all, cloudScale compiles the shader that can split the clouds
-  // out — which is what lets the Performance panel switch it live
+  // given at all, cloudScale is what lets the Performance panel switch it
+  // live (at 1 the one-pass shader draws; under it, the one that splits the
+  // clouds out, compiled the first time it is asked for)
   cloudScale: 1,
   // ?cb=2d or ?cb=volumetric opens on one tower at every distance rather
   // than auto's (the chips under "Cumulonimbus companion forms" switch it

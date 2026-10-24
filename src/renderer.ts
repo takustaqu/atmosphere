@@ -6889,6 +6889,20 @@ export function featureKeys(s: AtmosphereState, rays = 0, cumulonimbus: Cumuloni
   return [{ key: k & ~FEATURE.CBVOL, share: 1 }, { key: k | FEATURE.CBVOL, share: v }];
 }
 
+/**
+ * The bit of a variant's key that marks the split program (CLOUD_SPLIT,
+ * {@link RendererOptions.cloudScale}) — not a feature of the state but of
+ * how the frame is drawn, so kept clear of {@link ALL_FEATURES}. A renderer
+ * given a cloud scale used to compile every variant split, and at a scale of
+ * 1 drew the one pass with a program that merely carried the split's code —
+ * which cost that pass a tenth on a fair or an overcast sky, a fiftieth
+ * under a tower (an M2 Max, 1080p). Now only a frame that splits (a scale
+ * under 1, or the rays) asks for it, and a scale of 1 takes the one-pass
+ * program; changing it at run time compiles the other, the last one
+ * drawing while it links.
+ */
+const SPLIT_KEY = 32768;
+
 /** how many variants to keep linked at once; the least recently drawn goes first */
 const MAX_VARIANTS = 8;
 
@@ -7051,10 +7065,13 @@ export interface RendererOptions {
    * filtering, and a half-float color buffer) and is ignored without them —
    * {@link AtmosphereRenderer.cloudScale} reads back what is in effect.
    *
-   * Giving it at all — 1 included — compiles a variant of the shader that can
-   * split, and only that makes it changeable at run time through that
-   * setter. Left out, the shader is the one-pass one, untouched: the split
-   * variant costs that pass 6-16% just by carrying the code.
+   * Giving it at all — 1 included — is what makes it changeable at run time
+   * through that setter. A frame that splits (a scale under 1, or the rays)
+   * is drawn with a variant of the shader compiled to split, the first such
+   * frame compiling it; at a scale of 1 it is the one-pass shader, untouched
+   * — the split variant drawing one pass cost it up to a tenth just by
+   * carrying the code. Changing the scale across 1 at run time links the other program,
+   * the one in use drawing (the whole frame, at full resolution) meanwhile.
    */
   cloudScale?: number;
   /**
@@ -7176,7 +7193,8 @@ export class AtmosphereRenderer {
   // under 'auto' inside the band, the second of the two variants a frame is
   // drawn with: kept from eviction as `wanted` is
   private wantedVol = -1;
-  // whether the program is the split variant: decided once, at construction
+  // whether the split variant may be drawn with (a cloud scale given at
+  // construction): which frames do is SPLIT_KEY, in keysFor
   private readonly split: boolean;
   private cloudSupport: boolean | null = null;   // null = not asked yet on this context
   private cloudFbo: WebGLFramebuffer | null = null;
@@ -7251,9 +7269,10 @@ export class AtmosphereRenderer {
   /**
    * The cloud stack's resolution relative to the frame, as in effect: what
    * was asked for, or 1 where half-float targets are missing. Setting it
-   * takes effect on the next frame — but only on a renderer constructed with
-   * {@link RendererOptions.cloudScale} (any value, 1 included), which is what
-   * compiles the split variant of the shader. Without it this stays 1.
+   * takes effect on the next frame (once the split variant of the shader has
+   * linked, the first time it goes under 1) — but only on a renderer
+   * constructed with {@link RendererOptions.cloudScale} (any value, 1
+   * included). Without it this stays 1.
    */
   get cloudScale(): number {
     return !this.split || this.cloudSupport === false ? 1 : clampCloudScale(this.cloudScaleWanted);
@@ -7283,7 +7302,9 @@ export class AtmosphereRenderer {
    * volumetric tower, which the middle distance every sky is set at takes)
    */
   private keysFor(s: AtmosphereState | null): { key: number; share: number }[] {
-    const all = (ALL_FEATURES & ~FEATURE.CBVOL) | (this.cbMode !== '2d' ? FEATURE.CBVOL : 0);
+    // (the split program only for a frame that splits: see SPLIT_KEY)
+    const sp = this.cloudScale < 1 || this.rays > 0 ? SPLIT_KEY : 0;
+    const all = (ALL_FEATURES & ~FEATURE.CBVOL) | (this.cbMode !== '2d' ? FEATURE.CBVOL : 0) | sp;
     if (s === null) return [{ key: all, share: 1 }];
     const ks = featureKeys(s, this.rays, this.cbMode);
     if (this.opts.variants === false) {
@@ -7294,6 +7315,7 @@ export class AtmosphereRenderer {
       if (!(ks[0].key & FEATURE.CB)) return [{ key: all, share: 1 }];
       for (const k of ks) k.key = (ALL_FEATURES & ~FEATURE.CBVOL) | (k.key & FEATURE.CBVOL);
     }
+    for (const k of ks) k.key |= sp;
     return ks;
   }
 
@@ -7417,7 +7439,7 @@ export class AtmosphereRenderer {
       return sh;
     };
     const vs = compile(gl.VERTEX_SHADER, VERT);
-    const fs = compile(gl.FRAGMENT_SHADER, fragSource(this.explicitLod, this.split, key));
+    const fs = compile(gl.FRAGMENT_SHADER, fragSource(this.explicitLod, (key & SPLIT_KEY) !== 0, key));
     const prog = vs && fs ? gl.createProgram() : null;
     if (!vs || !fs || !prog) {
       if (vs) gl.deleteShader(vs);
@@ -7765,8 +7787,10 @@ export class AtmosphereRenderer {
     // none of the split's two extra steps
     let mode = 0;
     const scale = this.cloudScale;
-    // the rays are read off the cloud stack's target, so they too want the split
-    if ((scale < 1 || this.rays > 0) && hasCloudStack(s.clouds)) {
+    // the rays are read off the cloud stack's target, so they too want the
+    // split (and only the split program can: a one-pass one standing in
+    // while it links draws the frame whole)
+    if ((scale < 1 || this.rays > 0) && hasCloudStack(s.clouds) && (v.key & SPLIT_KEY)) {
       const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
       if (this.cloudTarget(gl, cw, ch)) {
         // the target's texture must not sit on a unit the program samples
