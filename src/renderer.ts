@@ -19,6 +19,7 @@ import {
   type LightMeasurement, type ProbeLayout,
 } from './light.js';
 import { NOISE_SIZE, noiseLattice, noiseQuads } from './noise.js';
+import { SkyCacheScheduler, stackSignature, type CacheFramePlan, type SkyCacheOptions } from './skycache.js';
 import { SKIRT_TURRETS, TOWER_TURRETS, TURRET_ROWS, TURRET_SLOTS, stormAmount, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
@@ -116,8 +117,38 @@ uniform float u_rays;      // 0..1 crepuscular rays, in the split variant's comp
 uniform float u_xfade;     // the share this draw is laid over the last at: the volumetric tower over the 2D one's inside the 'auto' crossfade, else 0 (see cbXfadeSkip)
 #endif
 #ifdef CLOUD_SPLIT
+#ifdef CLOUD_CACHE
+// The sky cache's two programs (RendererOptions.skyCache) each draw one of
+// the split's modes only — the keyframe build (1), the composite (2) — so
+// the mode is a constant here, and every branch on it, with the whole of
+// the code behind the branch not taken, folds away when the program
+// compiles: the composite carries none of the cloud stack, the build none
+// of the sky after it
+#define u_cloudMode CLOUD_CACHE
+uniform vec4 u_map0;       // a keyframe's map: azimuth at its middle, elevation at its foot, the azimuth and elevation it spans (radians)
+uniform vec4 u_map1;       // the composite's second keyframe's map (the build's is u_map0)
+uniform vec3 u_mapStep;    // build: one texel's azimuth and elevation steps, and the pixel angle of the view it is built for
+uniform float u_mapMix;    // composite: the share of the second keyframe
+uniform sampler2D u_clouds;  // the composite's first keyframe: rgb = what the stack adds, a = what it lets through
+uniform sampler2D u_clouds2; // its second
+#else
 uniform float u_cloudMode; // 0 = one pass, 1 = the cloud stack alone, 2 = composite it from u_clouds
 uniform sampler2D u_clouds; // the cloud stack drawn by mode 1: rgb = what it adds, a = what it lets through
+#endif
+#endif
+
+// How much of the sky one pixel spans, the angle every footprint-dependent
+// width in the cloud stack is taken from (the florets' octave, the folds'
+// and the outline's fades). On screen that is the view's own: its fov over
+// its height. In a sky cache's keyframe it is the texel's — its elevation
+// step, or its azimuth step across the parallel where that is the wider —
+// but never finer than the view the keyframe is built for: a keyframe
+// denser than the screen would draw edges sharper than a pixel, and the
+// composite's bilinear read of them, minifying with no mip, would alias
+#ifdef CACHE_BUILD
+#define PX_ANGLE(d) max(u_mapStep.z, max(u_mapStep.y, u_mapStep.x * sqrt(max(1.0 - (d).y * (d).y, 0.0))))
+#else
+#define PX_ANGLE(d) (u_cam.z / u_frame.w)
 #endif
 
 const float PI = 3.14159265;
@@ -2653,6 +2684,31 @@ vec3 waveSlopeHeight(vec2 p, vec2 k, float a, float w, float t) {
 #define SKY_LIGHT true
 #endif
 
+#ifdef CLOUD_CACHE
+// A direction's cloud stack, read off the sky cache: the two keyframes that
+// bracket this frame in time, each on its own azimuth × elevation map, mixed
+// by how far the frame has come from the first to the second. Each map is
+// an equirectangular grid over the whole circle of azimuth (a texel to
+// spare either side of its seam, so the bilinear read across the seam
+// finds the far side's texels drawn and not clamped) or a window of it, its
+// middle where the view stood when it was built; the renderer draws from
+// the cache only while the view lies inside both windows. Below a map's
+// foot the read clamps to its lowest row, where the stack has long since
+// faded to nothing under the ground's own fade (the layers carry
+// horizonFade, nil under the horizon)
+vec4 cacheFetch(vec3 d) {
+  float az = atan(d.x, d.z);
+  float el = asin(clamp(d.y, -1.0, 1.0));
+  // azimuth off each map's middle, wrapped into -π..π
+  float a0 = az - u_map0.x, a1 = az - u_map1.x;
+  a0 -= 6.2831853 * floor(a0 / 6.2831853 + 0.5);
+  a1 -= 6.2831853 * floor(a1 / 6.2831853 + 0.5);
+  vec4 k0 = CLOUD_FETCH(vec2(0.5 + a0 / u_map0.z, (el - u_map0.y) / u_map0.w));
+  vec4 k1 = CLOUD_FETCH2(vec2(0.5 + a1 / u_map1.z, (el - u_map1.y) / u_map1.w));
+  return mix(k0, k1, u_mapMix);
+}
+#endif
+
 void main() {
   // Normally the viewport is the whole canvas and these reduce to the obvious.
   // The light probe draws the same frame into a far smaller viewport — and
@@ -2685,6 +2741,12 @@ void main() {
 
   // ── View ray ──
   vec3 rd = viewRay(p * 2.0 - 1.0, u_cam.x, u_cam.y, u_cam.z, aspect);
+#ifdef CACHE_BUILD
+  // a sky cache's keyframe: not a camera's ray but this texel's direction on
+  // the keyframe's azimuth × elevation map (u_frame is the whole map, so p
+  // is the texel's middle, 0..1 across it)
+  rd = dirFromAngles(u_map0.y + p.y * u_map0.w, u_map0.x + (p.x - 0.5) * u_map0.z);
+#endif
   float el = asin(clamp(rd.y, -1.0, 1.0));
   float h = clamp(el / (PI * 0.5), 0.0, 1.0);   // horizon=0, zenith=1
 
@@ -3279,6 +3341,12 @@ void main() {
       flash = exp(-ltPh * 9.0) * (0.65 + 0.35 * sin(ltPh * 70.0 + p1 * 30.0));
     }
   }
+#ifdef CACHE_BUILD
+  // a keyframe is shown for dozens of frames and a flash lasts a handful:
+  // built in, a flash would be smeared across the keyframe's whole span, or
+  // missed. So it is built dark and the flash laid on in the composite
+  flash = 0.0;
+#endif
 
   // ── Clouds, precipitation: back to display space ──
   // From here to the snow, every step is an overlay() — a wash authored as a
@@ -4081,7 +4149,7 @@ void main() {
       // to a row read the same picture and held a fifth more of the state
       // every read of the body works from, live the whole way through the
       // tower: the shader ran a tenth slower for it
-      float fp = u_cam.z / u_frame.w * cbS;
+      float fp = PX_ANGLE(rd) * cbS;
       cbLobeSetup(fp, lobe);
       g_cbQ = vec4(baseY, fp, lobe, ty);
       float A = cbLobeRest(0.0);
@@ -4239,7 +4307,7 @@ void main() {
       // of another too, it took the light from the face behind to the edge
       // in front over a ragged band where the march's nearest pass came and
       // went, and the seams sparkled)
-      float fpc = u_cam.z / u_frame.w * length(cyl) / sqrt(max(1.0 - rd.y * rd.y, 1e-4));
+      float fpc = PX_ANGLE(rd) * length(cyl) / sqrt(max(1.0 - rd.y * rd.y, 1e-4));
       vec2 wfB = cyl - dirc * (u_evo * 0.026);
       // (and under a storm's gloom, which takes all but a sixth of the
       // tower's own light, not at all)
@@ -4823,7 +4891,7 @@ void main() {
       // conformal — |cyl| over cos(elevation) a radian, either way. The
       // folds between the lobes are drawn a pixel or so wide off it, and the
       // florets laid on below are as fine as it allows
-      float pxA = u_cam.z / u_frame.w;
+      float pxA = PX_ANGLE(rd);
       float fpc = pxA * length(cyl) / sqrt(max(1.0 - rd.y * rd.y, 1e-4));
       const float FOLD = 1.6;
       // (only where the push can tell: not where no turret stands near, and
@@ -6019,7 +6087,20 @@ void main() {
     // sampled where this pixel's ray was cast — after any lens droplet bent
     // it — since mode 1 drew the stack for the undistorted rays over the same
     // 0..1 frame
+#ifdef CLOUD_CACHE
+    // (the sky cache: read by direction, the ray as bent, from the
+    // keyframes either side of this frame — see cacheFetch)
+    vec4 ct = cacheFetch(rd);
+    // The flash the keyframes were built without (see the lightning). Every
+    // layer takes it in last and linearly — cloudColor's 0.35..1 by density,
+    // the towers' and the decks' own 0.4..0.6 — so what it adds through the
+    // whole stack is near enough the flash times the stack's own cover; 0.6
+    // is that weight across the densities a lit cloud has. An approximation:
+    // a thin layer over a thick one is lit as the two together
+    ct.rgb += flash * vec3(0.75, 0.80, 1.0) * 0.6 * (1.0 - ct.a);
+#else
     vec4 ct = CLOUD_FETCH(p);
+#endif
     cC = ct.rgb;
     cT = ct.a;
   } else if (u_cloudMode > 0.5) {
@@ -6051,7 +6132,11 @@ void main() {
         float f = (float(i) + jitter) / float(N);
         vec2 q = clamp(p + dp * f, 0.0, 1.0);
         float wgt = 1.0 - f * 0.5;
+#ifdef CLOUD_CACHE
+        lit += cacheFetch(viewRay(q * 2.0 - 1.0, u_cam.x, u_cam.y, u_cam.z, aspect)).a * wgt;
+#else
         lit += CLOUD_FETCH(q).a * wgt;
+#endif
         wsum += wgt;
       }
       // squared: a line half in cloud is a shadow, not half a shaft
@@ -6711,7 +6796,24 @@ function fragSource(explicitLod: boolean, split: boolean, key: number): string {
     // the composite's read of the cloud stack sits in a branch too; same reason
     ? '#define CLOUD_FETCH(uv) texture2DLodEXT(u_clouds, (uv), 0.0)\n'
     : '#define CLOUD_FETCH(uv) texture2D(u_clouds, (uv))\n'
-  ) + (split ? '#define CLOUD_SPLIT\n' : '') + defines + FRAG;
+  ) + (split ? '#define CLOUD_SPLIT\n' : '') + cacheDefines(explicitLod, key) + defines + FRAG;
+}
+
+/**
+ * The sky cache's two programs (see CACHE_BUILD): the split's code with its
+ * mode fixed, the build's or the composite's. Nothing for any other key, so
+ * every other program's source is what it always was
+ */
+function cacheDefines(explicitLod: boolean, key: number): string {
+  if (!(key & CACHE_BITS)) return '';
+  // (the composite's code is still in the build's source, behind a branch
+  // on the mode that folds away; it has to compile all the same)
+  return (key & CACHE_BUILD
+    ? '#define CLOUD_SPLIT\n#define CLOUD_CACHE 1.0\n#define CACHE_BUILD\n'
+    : '#define CLOUD_SPLIT\n#define CLOUD_CACHE 2.0\n#define CACHE_COMP\n')
+    + (explicitLod
+      ? '#define CLOUD_FETCH2(uv) texture2DLodEXT(u_clouds2, (uv), 0.0)\n'
+      : '#define CLOUD_FETCH2(uv) texture2D(u_clouds2, (uv))\n');
 }
 
 /**
@@ -6977,6 +7079,19 @@ export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number
  */
 const SPLIT_KEY = 32768;
 
+/**
+ * The bits of a variant's key that mark the sky cache's programs
+ * ({@link RendererOptions.skyCache}): the cloud stack alone, drawn into a
+ * keyframe over azimuth × elevation (CACHE_BUILD), and the frame with the
+ * stack read back from two keyframes by direction (CACHE_COMP). Like
+ * SPLIT_KEY a matter of how the frame is drawn, not of the state; and
+ * unlike it never a stand-in for any other key, nor any other for them —
+ * neither draws a frame on its own
+ */
+const CACHE_BUILD = 65536;
+const CACHE_COMP = 131072;
+const CACHE_BITS = CACHE_BUILD | CACHE_COMP;
+
 /** how many variants to keep linked at once; the least recently drawn goes first */
 const MAX_VARIANTS = 8;
 
@@ -7069,6 +7184,7 @@ const UNIFORM_NAMES = [
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift',
   'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset',
   'u_cloudMode', 'u_clouds', 'u_xfade',
+  'u_map0', 'u_map1', 'u_mapStep', 'u_mapMix', 'u_clouds2',
 ] as const;
 
 export interface RendererOptions {
@@ -7184,6 +7300,25 @@ export interface RendererOptions {
    */
   cumulonimbus?: CumulonimbusMode;
   /**
+   * **Experimental.** Draw the cloud stack into a cache over directions
+   * (azimuth × elevation) and read each frame's clouds back from it, rather
+   * than drawing them per pixel. Off by default; `true` takes the defaults of
+   * {@link SkyCacheOptions}.
+   *
+   * The stack depends on the direction and the state, not on the camera, so
+   * a frame turning the camera costs it nothing; what moves it is the wind
+   * and the clouds' evolution, which the cache follows as a series of
+   * keyframes, each built whole for one moment over the frames before it is
+   * shown, and each frame shown as a mix of the two either side of it. A
+   * frame the cache cannot draw as it would be drawn directly — the state
+   * animating faster than keyframes can follow (a set() transition), a view
+   * that wants more texels than the budget allows (a narrow fov), the 'auto'
+   * tower's crossfade band, a view outside a 'view' window — is drawn
+   * directly. Needs half-float render targets, as cloudScale does, and is
+   * ignored without them; while it is on, cloudScale is not used.
+   */
+  skyCache?: boolean | SkyCacheOptions;
+  /**
    * Measure how long each frame takes on the GPU (`EXT_disjoint_timer_query`),
    * for {@link AtmosphereRenderer.takeGpuTimes}. Off by default; the
    * measurement is asynchronous and does not stall, but there is no reason to
@@ -7274,6 +7409,15 @@ export class AtmosphereRenderer {
   private cloudFbo: WebGLFramebuffer | null = null;
   private cloudTex: WebGLTexture | null = null;
   private cloudSize: [number, number] = [0, 0];
+  // the sky cache (RendererOptions.skyCache): its schedule, its three
+  // keyframe slots, and the programs it drew the last frame with
+  private sky: SkyCacheScheduler | null = null;
+  private skyTex: (WebGLTexture | null)[] = [null, null, null];
+  private skyFbo: (WebGLFramebuffer | null)[] = [null, null, null];
+  private skySize: [number, number] = [0, 0];
+  private skySupport: boolean | null = null;
+  private skyKeys: number[] = [];
+  private skyReason = 'off';
   // GPU timing (RendererOptions.timing): queries in flight, and finished results
   private timer: TimerQueryExt | null = null;
   private pending: { q: WebGLQuery; pixels: number }[] = [];
@@ -7302,6 +7446,7 @@ export class AtmosphereRenderer {
     this.raysWanted = options.rays ?? 0;
     this.cbMode = cbModeOf(options.cumulonimbus);
     this.split = options.cloudScale !== undefined;
+    if (options.skyCache) this.sky = new SkyCacheScheduler(options.skyCache === true ? {} : options.skyCache);
     canvas.addEventListener('webglcontextlost', this.onLost);
     canvas.addEventListener('webglcontextrestored', this.onRestored);
     this.init();
@@ -7435,6 +7580,12 @@ export class AtmosphereRenderer {
     this.cloudTex = null;
     this.cloudSize = [0, 0];
     this.cloudSupport = null;
+    this.skyTex = [null, null, null];
+    this.skyFbo = [null, null, null];
+    this.skySize = [0, 0];
+    this.skySupport = null;
+    this.skyKeys = [];
+    this.sky?.reset();
     this.pending = [];
     const gl = this.canvas.getContext('webgl', {
       alpha: false, antialias: false, depth: false, stencil: false,
@@ -7503,6 +7654,13 @@ export class AtmosphereRenderer {
     const ks = this.keysFor(s);
     if (this.current === null) this.wanted = ks[0].key;
     for (const k of ks) this.ensure(k.key);
+    // and the sky cache's two programs, behind them: until both link, the
+    // frames are drawn directly
+    if (this.sky && ks.length === 1 && hasCloudStack(s.clouds)) {
+      const key = ks[0].key & ~SPLIT_KEY;
+      this.ensure(key | CACHE_BUILD);
+      this.ensure(key | CACHE_COMP);
+    }
   }
 
   /** the variant for a key, compiling it if this is the first ask */
@@ -7567,7 +7725,7 @@ export class AtmosphereRenderer {
       const base = this.ensure(0);
       return base?.linked ? base : null;
     }
-    return this.standIn(key) ?? (this.current?.linked ? this.current : null);
+    return this.standIn(key) ?? (this.current?.linked && !(this.current.key & CACHE_BITS) ? this.current : null);
   }
 
   /**
@@ -7582,6 +7740,8 @@ export class AtmosphereRenderer {
     for (const v of this.variants.values()) {
       if (!v.linked || (v.key & key) !== key) continue;
       if ((key & FEATURE.CB) && ((v.key ^ key) & FEATURE.CBVOL)) continue;
+      // (the sky cache's programs draw half a frame each: never in another's place)
+      if ((v.key ^ key) & CACHE_BITS) continue;
       if (!best || popcount(v.key) < popcount(best.key)) best = v;
     }
     return best;
@@ -7594,7 +7754,7 @@ export class AtmosphereRenderer {
     while (this.variants.size > MAX_VARIANTS) {
       let victim: Variant | null = null;
       for (const v of this.variants.values()) {
-        if (v === this.current || v.key === this.wanted || v.key === this.wantedVol || !(v.linked || v.failed)) continue;
+        if (v === this.current || v.key === this.wanted || v.key === this.wantedVol || this.skyKeys.includes(v.key) || !(v.linked || v.failed)) continue;
         if (!victim || v.used < victim.used) victim = v;
       }
       if (!victim) return;
@@ -7739,6 +7899,7 @@ export class AtmosphereRenderer {
     gl.uniform1i(v.u.u_clouds, 1);
     gl.uniform1i(v.u.u_noiseQ, 2);
     gl.uniform1i(v.u.u_turrets, 3);
+    gl.uniform1i(v.u.u_clouds2, 4);
     v.linked = true;
     if (!this.reported && v.key === this.wanted) {
       this.reported = true;
@@ -7814,9 +7975,165 @@ export class AtmosphereRenderer {
     const gl = this.gl!;
     const w = this.canvas.width, h = this.canvas.height;
     const query = this.beginTiming(w * h);
-    passes.forEach((p, i) => this.drawFrame(gl, p.v, i > 0 ? p.share : 1, timeSec, s, camera, windOff, evo));
+    if (!this.sky || !this.drawCached(gl, passes.length, timeSec, s, camera, windOff, evo)) {
+      passes.forEach((p, i) => this.drawFrame(gl, p.v, i > 0 ? p.share : 1, timeSec, s, camera, windOff, evo));
+    }
     if (query) this.timer!.endQueryEXT(this.timer!.TIME_ELAPSED_EXT);
   }
+
+  /**
+   * What the sky cache did with the last frame, for measurement: why it was
+   * drawn directly ('ok' when it was drawn from the cache), the maps'
+   * density and size, their memory, and the texels built since the last read
+   */
+  takeSkyCacheStats(): { reason: string; texelsPerRad: number; size: [number, number]; bytes: number; texelsBuilt: number } | null {
+    const c = this.sky;
+    if (!c) return null;
+    const out = { reason: this.skyReason, texelsPerRad: c.texelsPerRad, size: c.size, bytes: c.bytes, texelsBuilt: c.texelsBuilt };
+    c.texelsBuilt = 0;
+    return out;
+  }
+
+  /**
+   * One frame through the sky cache: this frame's slice of the keyframe
+   * being built, then — when the cache can stand for the direct draw — the
+   * frame composited from the two keyframes either side of it. false: the
+   * frame is to be drawn directly (the slice, if any, is drawn regardless,
+   * so the cache keeps up while a frame it cannot draw goes by)
+   */
+  private drawCached(
+    gl: WebGLRenderingContext, passCount: number,
+    timeSec: number, s: AtmosphereState, camera: Camera, windOff: number, evo: number,
+  ): boolean {
+    const sky = this.sky!;
+    const no = (reason: string): boolean => { sky.reset(); this.skyReason = reason; return false; };
+    // (the 'auto' tower's crossfade band is two programs' frames laid one
+    // over the other; a cache for each would be twice the memory for the
+    // band's sake alone)
+    if (passCount > 1) return no('band');
+    if (!hasCloudStack(s.clouds)) return no('clear');
+    if (this.skySupport === false) return no('unsupported');
+    // the whole sky's key, the light from behind kept in: a panorama looks
+    // every way. Not the split program's: the cache is a split of its own
+    const key = this.keysFor(s)[0].key & ~SPLIT_KEY;
+    const kb = key | CACHE_BUILD, kc = key | CACHE_COMP;
+    this.skyKeys = [kb, kc];
+    const vb = this.ensure(kb), vc = this.ensure(kc);
+    if (!vb?.linked || !vc?.linked) return no(vb?.failed || vc?.failed ? 'failed' : 'compiling');
+    const w = this.canvas.width, h = this.canvas.height;
+    const plan = sky.frame({
+      sig: stackSignature(s), clocks: { time: timeSec, wind: windOff, evo }, camera,
+      width: w, height: h, maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
+    });
+    this.skyReason = plan.reason;
+    if ((plan.build || plan.show) && !this.skyTargets(gl, plan.size)) return no('unsupported');
+    if (plan.build) this.drawKeyframeSlice(gl, vb, plan.build, s);
+    if (!plan.show) return false;
+    const { a, b, mix } = plan.show;
+    this.bind(vc, timeSec, s, windOff, evo);
+    const u = this.u;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.skyTex[a.slot]);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.skyTex[b.slot]);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.uniform4f(u.u_map0, a.rect.azC, a.rect.el0, a.rect.azSpan, a.rect.elSpan);
+    gl.uniform4f(u.u_map1, b.rect.azC, b.rect.el0, b.rect.azSpan, b.rect.elSpan);
+    gl.uniform1f(u.u_mapMix, mix);
+    gl.uniform1f(u.u_xfade, 0);
+    gl.uniform1f(u.u_aspect, w / Math.max(1, h));
+    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
+    gl.uniform4f(u.u_frame, 0, 0, w, h);
+    gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
+    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
+    gl.uniform1f(u.u_lensFx, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    return true;
+  }
+
+  /**
+   * A slice of columns of a keyframe, drawn for the clocks it will be shown
+   * at. The scissor keeps the draw to the slice; the viewport and u_frame
+   * stay the whole map, so every texel's direction is the map's own
+   */
+  private drawKeyframeSlice(gl: WebGLRenderingContext, v: Variant, build: NonNullable<CacheFramePlan['build']>, s: AtmosphereState): void {
+    const { key, c0, c1, step } = build;
+    const [W, H] = this.skySize;
+    this.bind(v, key.clocks.time, s, key.clocks.wind, key.clocks.evo);
+    const u = this.u;
+    // no slot may sit on a unit while one of them is drawn into
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.skyFbo[key.slot]);
+    gl.viewport(0, 0, W, H);
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(c0, key.box.r0, c1 - c0, key.box.r1 - key.box.r0);
+    gl.uniform4f(u.u_frame, 0, 0, W, H);
+    gl.uniform4f(u.u_map0, key.rect.azC, key.rect.el0, key.rect.azSpan, key.rect.elSpan);
+    gl.uniform3f(u.u_mapStep, step[0], step[1], key.viewPx);
+    gl.uniform1f(u.u_xfade, 0);
+    gl.uniform1f(u.u_aspect, 1);
+    gl.uniform1f(u.u_lensDrops, 0);
+    gl.uniform1f(u.u_p3, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  /**
+   * The sky cache's three keyframe slots, half-float, (re)made to size.
+   * false — and the cache stays off for this context — where half floats
+   * cannot be rendered to and filtered
+   */
+  private skyTargets(gl: WebGLRenderingContext, size: [number, number]): boolean {
+    if (this.skySupport === false) return false;
+    if (this.skyFbo[0] && this.skySize[0] === size[0] && this.skySize[1] === size[1]) return true;
+    const hf = gl.getExtension('OES_texture_half_float');
+    const hfLinear = gl.getExtension('OES_texture_half_float_linear');
+    gl.getExtension('EXT_color_buffer_half_float');
+    if (!hf || !hfLinear) { this.skySupport = false; return false; }
+    this.freeSky(gl);
+    for (let i = 0; i < 3; i++) {
+      const tex = gl.createTexture(), fbo = gl.createFramebuffer();
+      if (!tex || !fbo) { this.freeSky(gl); this.skySupport = false; return false; }
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size[0], size[1], 0, gl.RGBA, hf.HALF_FLOAT_OES, null);
+      // NPOT: clamped, and no mips — the composite reads it bilinear, and
+      // the seam's spare texels stand in for a repeat
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      this.skyTex[i] = tex;
+      this.skyFbo[i] = fbo;
+      if (!ok) { this.freeSky(gl); this.skySupport = false; return false; }
+    }
+    this.skySupport = true;
+    this.skySize = [size[0], size[1]];
+    return true;
+  }
+
+  private freeSky(gl: WebGLRenderingContext): void {
+    for (let i = 0; i < 3; i++) {
+      if (this.skyFbo[i]) gl.deleteFramebuffer(this.skyFbo[i]);
+      if (this.skyTex[i]) gl.deleteTexture(this.skyTex[i]);
+      this.skyFbo[i] = null;
+      this.skyTex[i] = null;
+    }
+    this.skySize = [0, 0];
+  }
+
 
   /**
    * The variants this frame is drawn with, and the share each is laid over
@@ -8230,6 +8547,7 @@ export class AtmosphereRenderer {
       if (this.turrets) gl.deleteTexture(this.turrets);
       this.freeProbe(gl);
       this.freeClouds(gl);
+      this.freeSky(gl);
       for (const p of this.pending) this.timer?.deleteQueryEXT(p.q);
       this.pending = [];
       if (options.loseContext) {

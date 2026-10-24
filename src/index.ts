@@ -14,6 +14,7 @@ export {
   QUALITY_IDS, QUALITY_PRESETS, resolveQuality, qualityOf,
   type QualityPreset, type QualitySettings,
 } from './quality.js';
+export { type SkyCacheOptions } from './skycache.js';
 export { ResolutionGovernor, type GovernorOptions } from './governor.js';
 export { StateAnimator, lerpWrapped, type AnimatorOptions } from './animator.js';
 export { renderCubeFaces, type CubeFacesOptions } from './cubemap.js';

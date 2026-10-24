@@ -14,6 +14,7 @@ import {
 } from './light.js';
 import { ResolutionGovernor } from './governor.js';
 import { AtmosphereRenderer, type CumulonimbusMode, type ProbeOptions } from './renderer.js';
+import { type SkyCacheOptions } from './skycache.js';
 import { qualityOf, resolveQuality, QUALITY_PRESETS, type QualityPreset } from './quality.js';
 import {
   resolveCamera, resolveConditions,
@@ -123,6 +124,12 @@ export interface AtmosphereOptions extends Conditions {
    */
   quality?: QualityPreset;
   /**
+   * **Experimental**: draw the clouds from a cache over directions,
+   * refreshed as keyframes, rather than per pixel each frame — see
+   * {@link RendererOptions.skyCache}. Off by default.
+   */
+  skyCache?: boolean | SkyCacheOptions;
+  /**
    * Hold each frame inside a GPU time budget by lowering the resolution when
    * it would run over, and raising it back when there is room — for large
    * canvases (1080p, 2160p) and busy skies, where a frame that sometimes
@@ -223,6 +230,7 @@ export class Atmosphere {
       variants: options.variants,
       cumulonimbus: q.cumulonimbus,
       timing: !!adaptive,
+      skyCache: options.skyCache,
     });
     // start the shader variant this sky needs linking now, not at the first frame
     this.renderer.prepare(this.target);
