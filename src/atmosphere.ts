@@ -14,6 +14,7 @@ import {
 } from './light.js';
 import { ResolutionGovernor } from './governor.js';
 import { AtmosphereRenderer, type CumulonimbusMode, type ProbeOptions } from './renderer.js';
+import { qualityOf, resolveQuality, QUALITY_PRESETS, type QualityPreset } from './quality.js';
 import {
   resolveCamera, resolveConditions,
   type AtmosphereState, type Camera, type Conditions,
@@ -113,6 +114,15 @@ export interface AtmosphereOptions extends Conditions {
    */
   cumulonimbus?: CumulonimbusMode;
   /**
+   * A picture quality preset, setting `cloudScale` and `cumulonimbus`
+   * together: `'high'` (clouds at full resolution, the volumetric tower — the
+   * default picture), `'balanced'` (clouds at 0.75 of the resolution; a cloudy
+   * frame about 0.8 of the time) or `'low'` (clouds at 0.5 and the 2D tower;
+   * about half). Either setting given as well takes the preset's place for
+   * that setting. Changeable at run time through {@link Atmosphere.quality}.
+   */
+  quality?: QualityPreset;
+  /**
    * Hold each frame inside a GPU time budget by lowering the resolution when
    * it would run over, and raising it back when there is room — for large
    * canvases (1080p, 2160p) and busy skies, where a frame that sometimes
@@ -204,13 +214,14 @@ export class Atmosphere {
         min: o.min,
       });
     }
+    const q = resolveQuality(options.quality, { cloudScale: options.cloudScale, cumulonimbus: options.cumulonimbus });
     this.renderer = new AtmosphereRenderer(canvas, {
       colorSpace: options.colorSpace,
       onReady: this.onRendererReady,
-      cloudScale: options.cloudScale,
+      cloudScale: q.cloudScale,
       rays: options.rays === true ? 1 : options.rays === false ? 0 : options.rays,
       variants: options.variants,
-      cumulonimbus: options.cumulonimbus,
+      cumulonimbus: q.cumulonimbus,
       timing: !!adaptive,
     });
     // start the shader variant this sky needs linking now, not at the first frame
@@ -271,6 +282,23 @@ export class Atmosphere {
     this.renderer.cumulonimbus = v;
     this.renderer.prepare(this.target);
     if (this.wantRunning && !this.raf) this.draw(performance.now());
+  }
+
+  /**
+   * The quality preset the settings in effect amount to — see
+   * {@link AtmosphereOptions.quality} — or undefined when `cloudScale` and
+   * `cumulonimbus` have been set to a pair no preset names. Setting it sets
+   * both. The clouds' resolution only changes on an Atmosphere constructed
+   * with `quality` or `cloudScale` given (as {@link Atmosphere.cloudScale});
+   * without either, a preset still sets the towers.
+   */
+  get quality(): QualityPreset | undefined {
+    return qualityOf({ cloudScale: this.cloudScale, cumulonimbus: this.cumulonimbus });
+  }
+  set quality(v: QualityPreset) {
+    const p = QUALITY_PRESETS[v];
+    this.renderer.cloudScale = p.cloudScale;
+    this.cumulonimbus = p.cumulonimbus;
   }
 
   /** the crepuscular rays' strength in effect — see {@link AtmosphereOptions.rays} */

@@ -621,6 +621,23 @@ new Atmosphere(canvas, { resolutionScale: 1, fps: 60, cloudScale: 0.5 });
 new Atmosphere(canvas, { resolutionScale: 1, fps: 60, adaptiveResolution: true });
 ```
 
+**`quality`** sets the clouds' resolution and how the towers are drawn
+together, for when you'd rather pick a level than tune two settings:
+
+| preset | `cloudScale` | `cumulonimbus` | a cloudy frame |
+|---|---|---|---|
+| `'high'` | 1 | `'auto'` | the default picture |
+| `'balanced'` | 0.75 | `'auto'` | about 0.8 of the time, cloud edges a little softer |
+| `'low'` | 0.5 | `'2d'` | about half, a towering one less |
+
+```ts
+const sky = new Atmosphere(canvas, { quality: 'balanced' });
+sky.quality = 'low';   // switch at run time; sky.quality reads it back
+```
+
+Either setting given as well wins for that setting
+(`{ quality: 'low', cumulonimbus: 'auto' }` keeps the volumetric tower).
+
 **`cloudScale`** draws the cloud stack — three quarters or more of a cloudy
 frame — at that fraction of the resolution, each way, and lays it over a sky
 drawn at full resolution; the sun, moon, stars, rain, snow, lens and ground keep

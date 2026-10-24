@@ -568,6 +568,23 @@ new Atmosphere(canvas, { resolutionScale: 1, fps: 60, cloudScale: 0.5 });
 new Atmosphere(canvas, { resolutionScale: 1, fps: 60, adaptiveResolution: true });
 ```
 
+**`quality`** は、雲の解像度と塔の描き方をまとめて決める画質プリセットです。2つの設定を個別に
+調整する代わりに、段階を選ぶだけで済みます。
+
+| プリセット | `cloudScale` | `cumulonimbus` | 曇りのフレーム |
+|---|---|---|---|
+| `'high'` | 1 | `'auto'` | 既定の画 |
+| `'balanced'` | 0.75 | `'auto'` | 時間はおよそ 0.8 倍、雲の縁が少しやわらかく |
+| `'low'` | 0.5 | `'2d'` | およそ半分、積乱雲のある空はそれ以下 |
+
+```ts
+const sky = new Atmosphere(canvas, { quality: 'balanced' });
+sky.quality = 'low';   // 実行中に切り替え。sky.quality で読み出せます
+```
+
+どちらかの設定を併せて渡すと、その設定はプリセットより優先されます
+（`{ quality: 'low', cumulonimbus: 'auto' }` ならボリュメトリックの塔のまま）。
+
 **`cloudScale`** は、曇りのフレームのコストの4分の3以上を占める雲を、縦横それぞれ
 その倍率の解像度で描き、通常の解像度で描いた空に重ねます。太陽・月・星・雨・雪・レンズ・
 地面は元の解像度のままです。1回で描く場合と比べると、0.5 で 0.49〜0.62 倍、0.75 で

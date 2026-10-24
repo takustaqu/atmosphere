@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **Quality presets.** `quality: 'high' | 'balanced' | 'low'` (and
+  `sky.quality` at run time) sets the clouds' resolution and how the towers
+  are drawn together: `'high'` the default picture, `'balanced'` clouds at
+  0.75 (a cloudy frame about 0.8 of the time), `'low'` clouds at 0.5 and the
+  2D tower (about half). `cloudScale` or `cumulonimbus` given as well wins for
+  that setting. The controller's Performance panel has High / Balanced / Low.
+
 ### Performance
 
 Lighter frames with the same picture: everything below leaves out only work

@@ -13,12 +13,12 @@ import {
   CELESTIAL_IDS, CELESTIAL_PRESETS,
   POLARIZER_IDS, POLARIZER_PRESETS, TONE_IDS, TONE_PRESETS,
   CLOUD_GENERA, CLOUD_GENERA_IDS, CUBE_FACE_CAMERAS, DEFAULT_CB_DISTANCE, DEFAULT_CB_SOFTNESS,
-  FILTER_IDS, WEATHER_IDS, WEATHER_PRESETS,
+  FILTER_IDS, QUALITY_IDS, WEATHER_IDS, WEATHER_PRESETS,
   cloudGenusLabel, filterLabel, weatherLabel,
   formatTod, resolveConditions,
   type CloudMix, type Conditions,
   type CelestialId, type FilterId, type PolarizerId, type ToneId, type GeoLocation, type Weather, type WeatherId,
-  type AtmosphereLight, type LightSample, type CumulonimbusMode,
+  type AtmosphereLight, type LightSample, type CumulonimbusMode, type QualityPreset,
 } from '../../src';
 import { Figure } from './figure';
 
@@ -636,6 +636,14 @@ syncers.push(chips(
 ));
 
 section('Performance');
+note('Quality presets set the clouds\u2019 resolution and how the towers are drawn '
+  + 'together. High: clouds at full resolution, the volumetric towers. Balanced: clouds '
+  + 'at 0.75, about 0.8 of a cloudy frame. Low: clouds at 0.5 and the 2D towers, about half.');
+syncers.push(chips(
+  QUALITY_IDS.map((id) => ({ id, label: id[0].toUpperCase() + id.slice(1) })),
+  (id) => sky.quality === id,
+  (id) => { sky.quality = id as QualityPreset; },
+));
 note('Clouds are most of a cloudy frame’s cost. Drawing them at a fraction of '
   + 'the resolution and laying them over the full-resolution sky roughly halves '
   + 'the frame at 0.5; only their edges soften. The adaptive resolution below '
