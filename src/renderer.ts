@@ -112,6 +112,9 @@ uniform vec2  u_sunset;    // sunset: the warmth of the band on the sun's side, 
 uniform float u_aurora;    // 0..1 how much aurora is in the sky
 uniform float u_contrails; // 0..1 how often a jet draws a trail
 uniform float u_rays;      // 0..1 crepuscular rays, in the split variant's composite
+#ifdef FEAT_CBVOL
+uniform float u_xfade;     // the share this draw is laid over the last at: the volumetric tower over the 2D one's inside the 'auto' crossfade, else 0 (see cbXfadeSkip)
+#endif
 #ifdef CLOUD_SPLIT
 uniform float u_cloudMode; // 0 = one pass, 1 = the cloud stack alone, 2 = composite it from u_clouds
 uniform sampler2D u_clouds; // the cloud stack drawn by mode 1: rgb = what it adds, a = what it lets through
@@ -1318,6 +1321,32 @@ float cbUnshape(float h, float ceil) {
   return x / 0.70;
 }
 
+// Whether the storm can show along rd at all — false only where that is
+// certain from the gates in main, read here as they are read there (the
+// storm's scale, cbS; the tropopause, ceilN) and with a margin for the
+// rounding of reading them twice. A tower is drawn only over its base, less
+// the 0.03 the block reads down to, and no base stands under 0.12; the
+// veil hangs well above that; and the anvil's plate reaches no lower in the
+// sky than its own gate says (anvilPlate's, in main). Everything else the
+// block works out under the base — the thrust's mass and its two rings of
+// erosion, the tropopause's undulation, the skyline's turrets — is read for
+// a gate that then fails: in a framed shot the ground and the band of sky
+// over the horizon, under the towers, are a third or more of the frame
+bool cbPlateReach(vec3 rd, float cbS, float ceilN) {
+  if (u_cbFeat.x <= 0.001 || rd.y <= 0.0) return false;
+  float tE = rd.y / max(length(rd.xz), 1e-4);
+  float D0 = sqrt(1.0 - ceilN * ceilN) / ceilN;
+  float elC = asin(ceilN) / cbS;
+  float pS = cos(elC) / (sin(elC) * cbS * D0);
+  float D = D0 * cbS;
+  float L = D0 * (0.50 + 0.75 * u_cbFeat.x);
+  return tE * pS * (D + 0.25 * (1.5 * L + 0.3 + 0.45 * D)) > 0.80;
+}
+bool cbCanStand(vec3 rd, float cbS, float ceilN) {
+  return cbPlateReach(rd, cbS, ceilN)
+      || sin(clamp(asin(clamp(rd.y, -1.0, 1.0)) * cbS, -1.5707, 1.5707)) >= 0.085;
+}
+
 // The cells of a row of n round the sky (rowCell: laid out on the CPU, see
 // rowCenter in storm.ts, and read back by rowTurret below). Each holds a
 // turret at a jittered place in it; n need not be whole: the cells are a
@@ -1992,6 +2021,40 @@ vec4 cbNear(float z, vec3 Ls, float wEs, bool fr, out vec4 B, out vec4 F) {
   float v1 = smoothstep(-0.003 - wEs, 0.003 + wEs, F.x + 0.010 * F.w);
   return vec4(0.005 * t0 + 0.010 * t1 + 0.030 * t2, u1, u3, v1);
 }
+
+// ── The crossfade's second draw ──
+// Inside CB_AUTO_BAND a frame is drawn twice: the 2D tower's variant, and
+// over it the volumetric one's at its share (u_xfade). The two programs are
+// the same but for the tower — its turrets, and how the anvil's plate is laid
+// over them — so wherever neither can stand the second draw only repeats the
+// first, pixel for pixel, at the whole cost of a frame. There it is dropped,
+// wherever that is certain from the storm's own gates, read as the tower's
+// block reads them and with a margin for the rounding of reading them twice:
+// no storm at all, or none that can stand here (cbCanStand), or no plate
+// within reach and the thrust's mass under the 0.20 below which no turret
+// is read and the skyline is nothing. The rest of the sky the tower's block
+// itself rules out, where its gate fails (see there). Under the towers'
+// bases and between them that is a third of a framed shot, and a frame in
+// the band, some twenty milliseconds where either tower alone is eight to
+// eleven (an M2 Max, 1080p), came out a tenth shorter for it; what it still
+// costs is the two towers' own pixels, each drawn by its own program.
+//
+// Dropped by writing nothing over it: the draw is blended by the alpha it
+// writes (the share, or 0 here) rather than by a constant, since a discard
+// anywhere in the program cost every frame the volumetric tower draws, in
+// the band or not, some 3-5% — the GPU runs a program that may discard a
+// pixel in a slower mode. So it is only the one-pass draw that drops pixels
+// (mode 0): the split's cloud stack is drawn into its own target without a
+// blend, where a pixel left alone would have to be discarded
+bool cbXfadeSkip(vec3 rd, float gloom) {
+  if (u_low.w * (1.0 - gloom * 0.6) < 0.0009) return true;
+  float cbS = cbScale(u_cbFeat.z);
+  float ceilN = 0.44 + 0.11 * max(u_low.w, 0.30) * (1.0 - gloom * 0.6);
+  if (cbPlateReach(rd, cbS, ceilN)) return false;
+  if (!cbCanStand(rd, cbS, ceilN)) return true;
+  float azw = atan(rd.x, rd.z) + u_windOff * 0.15;
+  return fbm4HQ(vec2(sin(azw), cos(azw)) * (0.85 * cbS) + vec2(0.0, cbClock())) < 0.195;
+}
 #endif
 
 // The anvil's plate, where the view ray crosses a level plane at the
@@ -2644,6 +2707,15 @@ void main() {
   // ── Severity of the weather (rebuilt from rain/snow/wind instead of the old "storm") ──
   float gloom = clamp(max(u_rain, max(u_snow * 0.5, u_wind * 0.7)), 0.0, 1.0);
   float churn = clamp(u_wind * 0.9 + u_rain * 0.3, 0.0, 1.0);
+#ifdef FEAT_CBVOL
+  // (the crossfade's second draw, only where it can differ from the first —
+  // see cbXfadeSkip)
+#ifdef CLOUD_SPLIT
+  if (u_xfade > 0.0 && u_cloudMode < 0.5 && cbXfadeSkip(rd, gloom)) { gl_FragColor = vec4(0.0); return; }
+#else
+  if (u_xfade > 0.0 && cbXfadeSkip(rd, gloom)) { gl_FragColor = vec4(0.0); return; }
+#endif
+#endif
 
   // How much this pixel should reach past sRGB, accumulated by the sections
   // below (magic hour, stars, moon, sun, lightning) and spent at the very end.
@@ -3415,7 +3487,9 @@ void main() {
   // (a sky with no tower in it is compiled without any of this — see
   // FEATURE.CB — and the layers below see an empty cbMask)
 #ifdef FEAT_CB
-  if (cbAmt > 0.001 && stack) {
+  // (and only where it can stand at all: see cbCanStand)
+  if (cbAmt > 0.001 && stack
+      && cbCanStand(rd, cbScale(u_cbFeat.z), 0.44 + 0.11 * max(u_low.w, 0.30) * (1.0 - gloom * 0.6))) {
     // how much of the storm stands (see cbLive, and the skyline below)
     float stand = cbLive();
     // and how big a storm it is. The towers' thrust grows with the amount,
@@ -3704,6 +3778,10 @@ void main() {
     // drawn out in strands.
     vec3 anvCol = vec3(0.0);
     float anvA = 0.0, anvNear = 1.0;
+#ifdef FEAT_CBVOL
+    // (whether the plate was laid on here at all: see the crossfade, below)
+    float anvSeen = 0.0;
+#endif
     if (u_cbFeat.x > 0.001 && rd.y > 0.0) {
       float hor = length(rd.xz);
       float tE = rd.y / max(hor, 1e-4);
@@ -3949,6 +4027,7 @@ void main() {
           // in the sky than its towers' tops, at the plane's height, and
           // where it hangs overhead there is no tower in front of it — so
           // behind the turrets, all of it
+          anvSeen = 1.0;
           OVER(anvCol, anvA);
           anvA = 0.0;
 #else
@@ -4681,6 +4760,15 @@ void main() {
         cbBack = backT;
       }
     }
+    // The crossfade's second draw (cbXfadeSkip): where neither tower's gate
+    // above lets it stand — the same gate, read off the same skyline — and no
+    // plate was laid on, everything from here on is the 2D variant's own
+    // picture, which the first draw has already put there
+#ifdef CLOUD_SPLIT
+    else if (u_xfade > 0.0 && u_cloudMode < 0.5 && anvSeen <= 0.0) { gl_FragColor = vec4(0.0); return; }
+#else
+    else if (u_xfade > 0.0 && anvSeen <= 0.0) { gl_FragColor = vec4(0.0); return; }
+#endif
 #else
     // Where neither row stands above the base, and under the base itself,
     // there is nothing to draw — the envelope tops out at the base, and the
@@ -6577,7 +6665,12 @@ void main() {
   // drawing buffer actually quantizes
   sky += (hash12(gl_FragCoord.xy + fract(u_time)) - 0.5) * (2.0 / 255.0);
 
+#ifdef FEAT_CBVOL
+  // (laid over the last draw at its share, inside the crossfade: see blendOver)
+  gl_FragColor = vec4(sky, u_xfade > 0.0 ? u_xfade : 1.0);
+#else
   gl_FragColor = vec4(sky, 1.0);
+#endif
 }
 `;
 
@@ -6887,7 +6980,7 @@ const UNIFORM_NAMES = [
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift',
   'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset',
-  'u_cloudMode', 'u_clouds',
+  'u_cloudMode', 'u_clouds', 'u_xfade',
 ] as const;
 
 export interface RendererOptions {
@@ -7660,6 +7753,9 @@ export class AtmosphereRenderer {
     this.bind(v, timeSec, s, windOff, evo);
     const u = this.u;
     const w = this.canvas.width, h = this.canvas.height;
+    // (the crossfade's second draw leaves alone whatever it would only
+    // repeat of the first: see cbXfadeSkip in the shader)
+    gl.uniform1f(u.u_xfade, share < 1 ? share : 0);
     gl.uniform1f(u.u_aspect, w / Math.max(1, h));
     gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
 
@@ -7703,20 +7799,22 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_lensFx, 1);
     // (only the frame itself is laid over the last: the cloud stack's own
     // pass above replaces its target's contents, as it always does)
-    if (share < 1) this.blendOver(gl, share);
+    if (share < 1) this.blendOver(gl);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (share < 1) gl.disable(gl.BLEND);
   }
 
   /**
-   * draw the next draws over what the target holds at `share`: a straight
-   * mix of the two pictures, each already toned and encoded — the two are
-   * the same sky but for the tower, so it is the tower alone that fades
+   * draw the next draws over what the target holds at their share: a
+   * straight mix of the two pictures, each already toned and encoded — the
+   * two are the same sky but for the tower, so it is the tower alone that
+   * fades. The share is the alpha the volumetric variant writes (u_xfade),
+   * 0 where it leaves the first draw's pixel as it is (cbXfadeSkip); the
+   * target's own alpha is kept
    */
-  private blendOver(gl: WebGLRenderingContext, share: number): void {
+  private blendOver(gl: WebGLRenderingContext): void {
     gl.enable(gl.BLEND);
-    gl.blendColor(0, 0, 0, share);
-    gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE_MINUS_CONSTANT_ALPHA);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
   }
 
   /** start a timer query for this frame, if timing is on and not too many are in flight */
@@ -7840,8 +7938,8 @@ export class AtmosphereRenderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.probeFbo);
     // (crossfaded inside the band as the frame is, every draw of the second)
     passes.forEach((p, i) => {
-      if (i > 0) this.blendOver(gl, p.share);
-      this.drawProbe(gl, p.v, layout, timeSec, s, camera, windOff, evo);
+      if (i > 0) this.blendOver(gl);
+      this.drawProbe(gl, p.v, layout, timeSec, s, camera, windOff, evo, i > 0 ? p.share : 0);
       if (i > 0) gl.disable(gl.BLEND);
     });
     const px = this.probePixels!;
@@ -7855,9 +7953,11 @@ export class AtmosphereRenderer {
   private drawProbe(
     gl: WebGLRenderingContext, v: Variant, layout: ProbeLayout,
     timeSec: number, s: AtmosphereState, camera: Camera, windOff: number, evo: number,
+    xfade = 0,
   ): void {
     this.bind(v, timeSec, s, windOff, evo);
     const u = this.u;
+    gl.uniform1f(u.u_xfade, xfade);
     // sRGB regardless of the canvas: these numbers leave the GPU for someone
     // else's pipeline, and sRGB is the one every consumer assumes
     gl.uniform1f(u.u_p3, 0);
