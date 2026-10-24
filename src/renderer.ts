@@ -19,7 +19,7 @@ import {
   type LightMeasurement, type ProbeLayout,
 } from './light.js';
 import { NOISE_SIZE, noiseLattice, noiseQuads } from './noise.js';
-import { SkyCacheScheduler, stackSignature, type CacheFramePlan, type SkyCacheOptions } from './skycache.js';
+import { SkyCacheScheduler, stackSignature, type CacheBuild, type Keyframe as CacheKeyframe, type SkyCacheOptions } from './skycache.js';
 import { SKIRT_TURRETS, TOWER_TURRETS, TURRET_ROWS, TURRET_SLOTS, stormAmount, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
@@ -131,6 +131,20 @@ uniform vec3 u_mapStep;    // build: one texel's azimuth and elevation steps, an
 uniform float u_mapMix;    // composite: the share of the second keyframe
 uniform sampler2D u_clouds;  // the composite's first keyframe: rgb = what the stack adds, a = what it lets through
 uniform sampler2D u_clouds2; // its second
+#ifdef CACHE_MOTION
+// The keyframes' motion (see cacheFetch): each keyframe's second target holds,
+// per texel, how its stack drifts — xy the velocity across the cloud plane
+// per unit of wind (see OVERM), times the stack's cover, z, so a bilinear
+// read of it averages as the stack does
+uniform sampler2D u_flow;    // the first keyframe's motion
+uniform sampler2D u_flow2;   // the second's
+uniform vec4 u_box0;         // the texels each keyframe holds, as directions: azimuth off its middle, low and high, then elevation
+uniform vec4 u_box1;
+uniform vec2 u_mapWind;      // how far the wind has run since the first keyframe, and how far it has yet to run to the second
+uniform vec2 u_mapTexels;    // the keyframes' size in texels (every slot's the same)
+uniform sampler2D u_morph;   // the second keyframe's morph from the first (see MORPH_FRAG): xy radians of azimuth and elevation
+uniform float u_evoPerWind;  // build: how far evolution runs for each unit of wind (the stratiform sheets crawl with it)
+#endif
 #else
 uniform float u_cloudMode; // 0 = one pass, 1 = the cloud stack alone, 2 = composite it from u_clouds
 uniform sampler2D u_clouds; // the cloud stack drawn by mode 1: rgb = what it adds, a = what it lets through
@@ -2684,28 +2698,142 @@ vec3 waveSlopeHeight(vec2 p, vec2 k, float a, float w, float t) {
 #define SKY_LIGHT true
 #endif
 
+// A layer's wash, and how the layer moves: v, the velocity across the cloud
+// plane (rd.xz / rdY) at which a point of its pattern drifts, per unit of
+// u_windOff (it moves by -v·dw). Everywhere but a sky cache's keyframe the
+// motion is dropped unread and this is OVER. In the keyframe the texel's
+// one velocity is taken from its layers, for the composite to move its
+// picture by (see cacheFetch). One picture of several layers can only move
+// one way: where layers cross, whichever is followed, the rest are moved
+// wrongly and dissolve where they belong, or worse, a faint fast layer
+// over a slow textured one drags the texture along with it and snaps it
+// back each keyframe, a shimmer in the grain. So each layer counts by the
+// square of how much of the texel it is, behind what lies in front of it
+// (mvW the sum; the whole wash, as the colour is, so a layer in front
+// scales every one behind it by (1 - a)²), and by how slowly it moves: the
+// most of the texel wins, and between two alike the slower — a fast faint
+// scud over a cirrocumulus sheet dissolves as the cache always drew it
+// rather than dragging the sheet
+#if defined(CACHE_BUILD) && defined(CACHE_MOTION)
+#define OVERM(col, a, v) { float a_ = (a); cC = mix(cC, (col), a_); cT *= 1.0 - a_; vec2 v_ = (v); float k_ = (1.0 - a_) * (1.0 - a_), s_ = a_ * a_ / (0.25 + dot(v_, v_)); mvP = mvP * k_ + v_ * s_; mvW = mvW * k_ + s_; }
+// a plane layer read at planeUV(rd, rdY, alt, u_windOff * k): its pattern
+// slides k·(1, 0.15) a unit of wind, which across the plane is that over alt
+#define MV_PLANE(alt, k) (vec2(1.0, 0.15) * ((k) / (alt)))
+// a stratiform sheet: the same, and the crawl stratiform() gives its
+// pattern with evolution (u_evo × 0.15 along x), in units of wind
+#define MV_STRAT(alt, k) ((vec2(1.0, 0.15) * (k) + vec2(0.15 * u_evoPerWind, 0.0)) / (alt))
+// something turning round the zenith at r radians of azimuth a unit of wind
+// (the towers, their anvils, the rain under them: az + u_windOff × 0.15),
+// as the velocity across the plane at this ray: the bearing's tangent, R long
+#define MV_AZ(r) ((r) * vec2(rd.z, -rd.x) / rdY)
+// the cumulus's wobble in a high wind (see wob), its rate a unit of wind
+#define MV_WOB(alt) (u_wind * 0.1 * vec2(cos(u_windOff * 10.0 + rd.y * 8.0), -0.74 * sin(u_windOff * 7.4 + rd.x * 6.0)) / (alt))
+#else
+#define OVERM(col, a, v) OVER(col, a)
+#endif
+
 #ifdef CLOUD_CACHE
-// A direction's cloud stack, read off the sky cache: the two keyframes that
-// bracket this frame in time, each on its own azimuth × elevation map, mixed
-// by how far the frame has come from the first to the second. Each map is
-// an equirectangular grid over the whole circle of azimuth (a texel to
-// spare either side of its seam, so the bilinear read across the seam
-// finds the far side's texels drawn and not clamped) or a window of it, its
-// middle where the view stood when it was built; the renderer draws from
-// the cache only while the view lies inside both windows. Below a map's
-// foot the read clamps to its lowest row, where the stack has long since
-// faded to nothing under the ground's own fade (the layers carry
-// horizonFade, nil under the horizon)
-vec4 cacheFetch(vec3 d) {
-  float az = atan(d.x, d.z);
-  float el = asin(clamp(d.y, -1.0, 1.0));
-  // azimuth off each map's middle, wrapped into -π..π
-  float a0 = az - u_map0.x, a1 = az - u_map1.x;
-  a0 -= 6.2831853 * floor(a0 / 6.2831853 + 0.5);
-  a1 -= 6.2831853 * floor(a1 / 6.2831853 + 0.5);
-  vec4 k0 = CLOUD_FETCH(vec2(0.5 + a0 / u_map0.z, (el - u_map0.y) / u_map0.w));
-  vec4 k1 = CLOUD_FETCH2(vec2(0.5 + a1 / u_map1.z, (el - u_map1.y) / u_map1.w));
+// a direction on a keyframe's map: its azimuth off the map's middle, wrapped
+// into -π..π, and its elevation; and those as the map's 0..1 across and up
+vec2 mapAngles(vec4 map, vec3 d) {
+  float a = atan(d.x, d.z) - map.x;
+  a -= 6.2831853 * floor(a / 6.2831853 + 0.5);
+  return vec2(a, asin(clamp(d.y, -1.0, 1.0)));
+}
+vec2 mapUV(vec4 map, vec2 ae) {
+  return vec2(0.5 + ae.x / map.z, (ae.y - map.y) / map.w);
+}
+// the two keyframes as they stand, mixed (the rays' march, below, reads this:
+// a shadow blurred down the line to the sun has no edge to ghost)
+vec4 cacheFetchStill(vec3 d) {
+  vec4 k0 = CLOUD_FETCH(mapUV(u_map0, mapAngles(u_map0, d)));
+  vec4 k1 = CLOUD_FETCH2(mapUV(u_map1, mapAngles(u_map1, d)));
   return mix(k0, k1, u_mapMix);
+}
+#ifdef CACHE_MOTION
+// The direction whose cloud drifts to d after the wind runs dw more: back
+// along the plane by v·dw. A plane layer's point is exactly the plane's
+// (rd.xz / rdY), so this is exact for every plane layer whatever the
+// elevation, the zenith included — where the azimuth itself turns without
+// bound. Under the plane's floor (rdY's 0.03) only the bearing moves, as
+// in the stack, which reads every ray there at that floor
+vec3 cacheShift(vec3 d, vec2 v, float dw) {
+  vec2 X = d.xz / max(d.y, 0.03) + v * dw;
+  if (d.y > 0.03) return normalize(vec3(X.x, 1.0, X.y));
+  vec2 h = normalize(X) * length(d.xz);
+  return vec3(h.x, d.y, h.y);
+}
+// A keyframe read through a Catmull-Rom filter (five bilinear taps: the
+// 4×4 footprint's corners dropped, which carry under 2% of the weight), not
+// the plain bilinear read. Moved by the wind, the picture is read a little
+// further off its texel grid every frame, and a bilinear read is a box
+// blur that comes and goes with that offset — sharp on the grid, its
+// widest half a texel off: the moved keyframes pulsed soft and sharp once
+// a keyframe as a drifting edge crossed a texel. The cubic's blur barely
+// depends on where between texels the read falls (and it is sharper all
+// through). Its lobes can overshoot, so the result is held to what a
+// stack can be
+vec4 cacheCubic(sampler2D s, vec2 uv) {
+  vec2 pos = uv * u_mapTexels - 0.5;
+  vec2 c = floor(pos);
+  vec2 f = pos - c;
+  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  vec2 w3 = f * f * (-0.5 + 0.5 * f);
+  vec2 w12 = w1 + w2;
+  vec2 t0 = (c - 0.5) / u_mapTexels, t3 = (c + 2.5) / u_mapTexels;
+  vec2 t12 = (c + 0.5 + w2 / w12) / u_mapTexels;
+  vec4 r = MAP_FETCH(s, vec2(t12.x, t0.y)) * (w12.x * w0.y)
+         + MAP_FETCH(s, vec2(t0.x, t12.y)) * (w0.x * w12.y)
+         + MAP_FETCH(s, t12) * (w12.x * w12.y)
+         + MAP_FETCH(s, vec2(t3.x, t12.y)) * (w3.x * w12.y)
+         + MAP_FETCH(s, vec2(t12.x, t3.y)) * (w12.x * w3.y);
+  r /= w12.x * (w0.y + w12.y + w3.y) + (w0.x + w3.x) * w12.y;
+  return vec4(max(r.rgb, 0.0), clamp(r.a, 0.0, 1.0));
+}
+#endif
+// A direction's cloud stack, read off the sky cache: the two keyframes that
+// bracket this frame on the clouds' clock, each on its own azimuth ×
+// elevation map, mixed by how far the frame has come from the first to the
+// second. Each map is an equirectangular grid over the whole circle of
+// azimuth (a texel to spare either side of its seam, so the bilinear read
+// across the seam finds the far side's texels drawn and not clamped) or a
+// window of it, its middle where the view stood when it was built; the
+// renderer draws from the cache only while the view lies inside both
+// windows. Below a map's foot the read clamps to its lowest row, where the
+// stack has long since faded to nothing under the ground's own fade (the
+// layers carry horizonFade, nil under the horizon)
+vec4 cacheFetch(vec3 d) {
+#ifdef CACHE_MOTION
+  // Moved to the frame's moment. Each keyframe is a still of the stack at
+  // its own moment, and mixed as they stand a drifting cloud sat still and
+  // dissolved into its next place a keyframe later, a double edge between:
+  // a step the eye caught every keyframe, plain to see as a crossfade. So
+  // each is read where the cloud now at d stood at its moment: the first
+  // back along the drift by the wind run since it, the second on along it
+  // by the wind yet to run. Both then show the cloud where it is now, and
+  // the mix is of two pictures of the same thing. The drift is both
+  // keyframes' at d, each weighted by its cover there: at a cloud's leading
+  // edge only the second has it at d, at the trailing edge only the first —
+  // and neither has anything to move where both are clear. The reads are
+  // kept inside the texels each keyframe holds
+  vec2 ae0 = mapAngles(u_map0, d), ae1 = mapAngles(u_map1, d);
+  vec4 f0 = FLOW_FETCH(mapUV(u_map0, ae0)), f1 = FLOW_FETCH2(mapUV(u_map1, ae1));
+  vec2 v = (f0.xy + f1.xy) / max(f0.z + f1.z, 1e-3);
+  // and each along the reshaping between them (MORPH_FRAG): the first by
+  // the share of it done by now, the second back by the share still to do
+  vec2 r = MAP_FETCH(u_morph, mapUV(u_map1, ae1)).xy;
+  ae0 = mapAngles(u_map0, cacheShift(d, v, u_mapWind.x)) + r * u_mapMix;
+  ae1 = mapAngles(u_map1, cacheShift(d, v, -u_mapWind.y)) - r * (1.0 - u_mapMix);
+  ae0 = clamp(ae0, u_box0.xz, u_box0.yw);
+  ae1 = clamp(ae1, u_box1.xz, u_box1.yw);
+  vec4 k0 = cacheCubic(u_clouds, mapUV(u_map0, ae0));
+  vec4 k1 = cacheCubic(u_clouds2, mapUV(u_map1, ae1));
+  return mix(k0, k1, u_mapMix);
+#else
+  return cacheFetchStill(d);
+#endif
 }
 #endif
 
@@ -2773,9 +2901,9 @@ void main() {
   // (the crossfade's second draw, only where it can differ from the first —
   // see cbXfadeSkip)
 #ifdef CLOUD_SPLIT
-  if (u_xfade > 0.0 && u_cloudMode < 0.5 && cbXfadeSkip(rd, gloom)) { gl_FragColor = vec4(0.0); return; }
+  if (u_xfade > 0.0 && u_cloudMode < 0.5 && cbXfadeSkip(rd, gloom)) { FRAG_OUT = vec4(0.0); return; }
 #else
-  if (u_xfade > 0.0 && cbXfadeSkip(rd, gloom)) { gl_FragColor = vec4(0.0); return; }
+  if (u_xfade > 0.0 && cbXfadeSkip(rd, gloom)) { FRAG_OUT = vec4(0.0); return; }
 #endif
 #endif
 
@@ -3389,6 +3517,11 @@ void main() {
   vec3 cC = vec3(0.0);
   float cT = 1.0;
 #endif
+#if defined(CACHE_BUILD) && defined(CACHE_MOTION)
+  // the stack's motion, accumulated as its colour is (see OVERM)
+  vec2 mvP = vec2(0.0);
+  float mvW = 0.0;
+#endif
   bool stack = CLOUD_STACK;
 
   // ── High layer, 5000–13000m ─────────────────────────
@@ -3399,7 +3532,7 @@ void main() {
     float f = filament(planeUV(rd, rdY, ALT_HIGH, u_windOff * 0.3) + vec2(u_windOff * 0.14, 0.0));
     vec3 col = mix(vec3(1.0), vec3(1.05, 0.62, 0.55), sunsetF);
     col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
-    OVER(col, f * u_high.x * 0.72 * horizonFade * (1.0 - gloom * 0.8));
+    OVERM(col, f * u_high.x * 0.72 * horizonFade * (1.0 - gloom * 0.8), vec2(0.44, 0.045) / ALT_HIGH);
   }
 #ifdef FEAT_CONTRAILS
   // ── Contrails ──
@@ -3436,7 +3569,7 @@ void main() {
         float w = 0.012 + since * 0.0004;           // the ice drifts apart
         float body = exp(-n * n / (w * w)) * exp(-since / 150.0);
         body *= 0.55 + 0.45 * vnoise(vec2(s * 6.0, slot));
-        OVER(col, body * 0.75 * horizonFade * (1.0 - gloom * 0.8));
+        OVERM(col, body * 0.75 * horizonFade * (1.0 - gloom * 0.8), vec2(0.0));
       }
     }
   }
@@ -3454,7 +3587,7 @@ void main() {
       float moonLit = moonVis * u_moon.z * nightF;
       vec3 nightCol = vec3(0.22, 0.26, 0.38) * (1.0 + moonLit * (0.9 + 2.4 * exp(-moonAng * 2.2)));
       col = mix(nightCol, col, max(dayF, sunsetF * 0.8));
-      OVER(col, s.x * u_high.y * 0.45 * (1.0 + moonLit * 0.5) * horizonFade);
+      OVERM(col, s.x * u_high.y * 0.45 * (1.0 + moonLit * 0.5) * horizonFade, MV_STRAT(ALT_HIGH * 0.5, 0.3));
     }
     // the 22° halo (refraction through ice crystals). Added light, so it is the
     // one term in this stretch that has to leave display space — and only on
@@ -3483,7 +3616,7 @@ void main() {
   if (u_high.z > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir);
     vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 1.0);
-    OVER(col, g.x * u_high.z * 0.85 * horizonFade);
+    OVERM(col, g.x * u_high.z * 0.85 * horizonFade, MV_PLANE(ALT_HIGH * 5.5, 0.3));
   }
 
   // ── Mid layer, 2000–7000m ───────────────────────────
@@ -3511,13 +3644,13 @@ void main() {
          * through * (1.0 - thick * 0.75) * 0.85;
     col += flash * vec3(0.75, 0.80, 1.0) * 0.5;
 
-    OVER(col, s.x * u_mid.x * 0.95 * horizonFade);
+    OVERM(col, s.x * u_mid.x * 0.95 * horizonFade, MV_STRAT(ALT_MID * 0.55, 0.6));
   }
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
   if (u_mid.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun, 0.5);
-    OVER(col, g.x * u_mid.y * 0.95 * horizonFade);
+    OVERM(col, g.x * u_mid.y * 0.95 * horizonFade, MV_PLANE(ALT_MID * 2.2, 0.6));
   }
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
   if (u_mid.z > 0.001 && above && stack) {
@@ -3530,7 +3663,7 @@ void main() {
     // the thicker the cloud, the lower the dark end sinks
     vec3 col = lit * mix(0.74, mix(0.40, 0.20, u_mid.z), s.y);
     col += flash * vec3(0.75, 0.80, 1.0) * 0.6;
-    OVER(col, s.x * u_mid.z * 0.99 * horizonFade);
+    OVERM(col, s.x * u_mid.z * 0.99 * horizonFade, MV_STRAT(ALT_MID * 0.30, 0.6));
   }
 
   // ── Cumulonimbus Cb (thunderhead) ──
@@ -4096,10 +4229,10 @@ void main() {
           // where it hangs overhead there is no tower in front of it — so
           // behind the turrets, all of it
           anvSeen = 1.0;
-          OVER(anvCol, anvA);
+          OVERM(anvCol, anvA, MV_AZ(0.15));
           anvA = 0.0;
 #else
-          OVER(anvCol, anvA * (1.0 - anvNear));
+          OVERM(anvCol, anvA * (1.0 - anvNear), MV_AZ(0.15));
 #endif
         }
       }
@@ -4561,7 +4694,7 @@ void main() {
       float aura = smoothstep(-0.30, 0.0, min(fA + 0.6 * A + 0.0125, 10.0 * (ty - baseY)))
                  * smoothstep(0.0, 0.02, max(headY - baseY, skTop - baseY - 0.004)) * (1.0 - m) * auraW;
       if (aura > 0.001) {
-        OVER(rimC * 1.2, aura * 0.45);
+        OVERM(rimC * 1.2, aura * 0.45, MV_AZ(0.15));
       }
 #endif
       if (m > 0.001) {
@@ -4828,7 +4961,7 @@ void main() {
         m *= mix(1.0, alphaV, (0.3 + 0.7 * sv) * (1.0 - smoothstep(0.0, 0.03, bare)) * (1.0 - behind) * step(cF, 0.0));
         m *= smoothstep(0.03, 0.35, stand);
         cbMask = clamp(m, 0.0, 1.0);
-        OVER(tcol, cbMask);
+        OVERM(tcol, cbMask, MV_AZ(0.15));
         cbCol = tcol;
         cbBack = backT;
       }
@@ -4838,9 +4971,9 @@ void main() {
     // plate was laid on, everything from here on is the 2D variant's own
     // picture, which the first draw has already put there
 #ifdef CLOUD_SPLIT
-    else if (u_xfade > 0.0 && u_cloudMode < 0.5 && anvSeen <= 0.0) { gl_FragColor = vec4(0.0); return; }
+    else if (u_xfade > 0.0 && u_cloudMode < 0.5 && anvSeen <= 0.0) { FRAG_OUT = vec4(0.0); return; }
 #else
-    else if (u_xfade > 0.0 && anvSeen <= 0.0) { gl_FragColor = vec4(0.0); return; }
+    else if (u_xfade > 0.0 && anvSeen <= 0.0) { FRAG_OUT = vec4(0.0); return; }
 #endif
 #else
     // Where neither row stands above the base, and under the base itself,
@@ -5239,7 +5372,7 @@ void main() {
 #ifdef FEAT_BACKLIT
         float aura = smoothstep(-0.90, -0.11, field) * (1.0 - m) * auraW;
         if (aura > 0.001) {
-          OVER(rimC * 1.2, aura * 0.45);
+          OVERM(rimC * 1.2, aura * 0.45, MV_AZ(0.15));
         }
 #endif
 
@@ -5618,7 +5751,7 @@ void main() {
           air += (1.0 - air) * thinM * 0.15 * (1.0 + smoothstep(1.0, 3.5, cbS));
           tcol = mix(tcol, airCol, air);
           cbMask = clamp(m, 0.0, 1.0);
-          OVER(tcol, cbMask);
+          OVERM(tcol, cbMask, MV_AZ(0.15));
           cbCol = tcol;
           cbBack = backT;
         }
@@ -5627,7 +5760,7 @@ void main() {
 #endif
     // and the anvil's near side, over the tower's head
     if (anvA > 0.001) {
-      OVER(anvCol, anvA * anvNear);
+      OVERM(anvCol, anvA * anvNear, MV_AZ(0.15));
       cbCol = cbMask > 0.0 ? mix(cbCol, anvCol, anvA * anvNear) : anvCol;
       cbBack = max(cbBack, backI);
       cbMask = max(cbMask, anvA * anvNear);
@@ -5708,7 +5841,7 @@ void main() {
           // is kept, the collar's smoothness over the florets)
           vcol = mix(vcol, cbCol, cbMask * 0.85);
 #endif
-          OVER(vcol, v * 0.70 * horizonFade);
+          OVERM(vcol, v * 0.70 * horizonFade, MV_AZ(0.15));
         }
       }
     }
@@ -5735,7 +5868,7 @@ void main() {
       col = overTower(col, 1.0 - g.x, cbMask, cbCol, cbBack, mix(cloudSun, vec3(1.0, 0.86, 0.58), 0.35 * sunsetF));
     }
 #endif
-    OVER(col, scA);
+    OVERM(col, scA, MV_PLANE(ALT_LOW * 1.9, 1.2));
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
   if (u_low.z > 0.02 && above && stack) {
@@ -5852,7 +5985,7 @@ void main() {
 #ifdef FEAT_CB
       if (cbMask > 0.001) tc = overTower(tc, 1.0 - smoothstep(tedge, tedge + 0.30, tl.z), cbMask, cbCol, cbBack, cbGlow);
 #endif
-      OVER(tc, talpha * 0.97);
+      OVERM(tc, talpha * 0.97, MV_PLANE(ALT_LOW * 2.5 * 1.32, 1.0) + MV_WOB(ALT_LOW * 2.5 * 1.32));
     }
 
     // the base: flat, narrower than the crown, in the lump's own shadow and
@@ -5900,7 +6033,7 @@ void main() {
 #ifdef FEAT_CB
     if (cbMask > 0.001) c = overTower(c, 1.0 - smoothstep(bedge, bedge + 0.30, dl.z), cbMask, cbCol, cbBack, cbGlow);
 #endif
-    OVER(c, alpha * 0.97);
+    OVERM(c, alpha * 0.97, MV_PLANE(ALT_LOW * 2.5, 1.0) + MV_WOB(ALT_LOW * 2.5));
 
     // fast-moving ragged clouds nearby (fragments of cumulus)
     vec2 fuv = planeUV(rd, rdY, ALT_LOW * 1.2, u_windOff * 1.9) + 51.7;
@@ -5917,7 +6050,7 @@ void main() {
 #ifdef FEAT_CB
     if (cbMask > 0.001) fc = overTower(fc, 1.0 - smoothstep(fedge, fedge + 0.30, fl.z), cbMask, cbCol, cbBack, cbGlow);
 #endif
-    OVER(fc, falpha * 0.95);
+    OVERM(fc, falpha * 0.95, MV_PLANE(ALT_LOW * 1.2, 1.9));
   }
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
   if (u_low.x > 0.001 && above && stack) {
@@ -5925,7 +6058,7 @@ void main() {
     vec3 col = cloudColor(0.95, -0.25, 0.60,
                           dayF, nightM, sunsetF, flash, gloom, 1.2, cloudSun, 0.0) * 0.86;
     float lowBias = mix(1.0, 0.40, smoothstep(0.05, 0.55, rd.y));
-    OVER(col, s.x * u_low.x * lowBias * 0.95 * horizonFade);
+    OVERM(col, s.x * u_low.x * lowBias * 0.95 * horizonFade, MV_STRAT(ALT_LOW * 0.5, 1.2));
   }
 
   // ── Light leaking in under the cloud base ──
@@ -5937,7 +6070,7 @@ void main() {
     vec3 leak = mix(vec3(0.055, 0.058, 0.066), vec3(0.70, 0.70, 0.63), dayF);
     leak = mix(leak, vec3(0.86, 0.60, 0.40), sunsetF * 0.7);
     float band = smoothstep(0.22, 0.005, rd.y) * smoothstep(-0.02, 0.02, rd.y);
-    OVER(leak, band * deck * 0.88);
+    OVERM(leak, band * deck * 0.88, vec2(0.0));
   }
 
 #ifdef FEAT_SHAFTS
@@ -6052,7 +6185,7 @@ void main() {
         a *= 1.0 + 0.60 * side * sunsetF;
         col += moon * 0.2;
         col += flash * vec3(0.75, 0.80, 1.0) * 0.40;
-        OVER(col, clamp(a, 0.0, 1.0));
+        OVERM(col, clamp(a, 0.0, 1.0), MV_AZ(0.15));
       }
     }
   }
@@ -6071,7 +6204,7 @@ void main() {
     float pedge = 0.90 - u_mid.z * 0.22;
     vec3 fr = cloudField(fuv, churn + 0.45, ldir, pedge, ramp * 2.2, pedge - 0.01);
     vec3 fcol = mix(vec3(0.030, 0.033, 0.040), vec3(0.26, 0.27, 0.29), dayF);
-    OVER(fcol, fr.x * u_mid.z * fband * 0.80);
+    OVERM(fcol, fr.x * u_mid.z * fband * 0.80, MV_PLANE(ALT_LOW * 0.42, 2.4));
   }
 
   // ── Applying the stack (the split variant) ──
@@ -6104,7 +6237,12 @@ void main() {
     cC = ct.rgb;
     cT = ct.a;
   } else if (u_cloudMode > 0.5) {
-    gl_FragColor = vec4(cC, cT);
+    FRAG_OUT = vec4(cC, cT);
+#if defined(CACHE_BUILD) && defined(CACHE_MOTION)
+    // the keyframe's second target: its velocity, times the stack's cover so a
+    // bilinear read of it weights each texel as the stack does, and the cover
+    gl_FragData[1] = vec4(mvP / max(mvW, 1e-6) * (1.0 - cT), 1.0 - cT, 0.0);
+#endif
     return;
   }
   disp = disp * cT + cC;
@@ -6133,7 +6271,7 @@ void main() {
         vec2 q = clamp(p + dp * f, 0.0, 1.0);
         float wgt = 1.0 - f * 0.5;
 #ifdef CLOUD_CACHE
-        lit += cacheFetch(viewRay(q * 2.0 - 1.0, u_cam.x, u_cam.y, u_cam.z, aspect)).a * wgt;
+        lit += cacheFetchStill(viewRay(q * 2.0 - 1.0, u_cam.x, u_cam.y, u_cam.z, aspect)).a * wgt;
 #else
         lit += CLOUD_FETCH(q).a * wgt;
 #endif
@@ -6757,10 +6895,139 @@ void main() {
 
 #ifdef FEAT_CBVOL
   // (laid over the last draw at its share, inside the crossfade: see blendOver)
-  gl_FragColor = vec4(sky, u_xfade > 0.0 ? u_xfade : 1.0);
+  FRAG_OUT = vec4(sky, u_xfade > 0.0 ? u_xfade : 1.0);
 #else
-  gl_FragColor = vec4(sky, 1.0);
+  FRAG_OUT = vec4(sky, 1.0);
 #endif
+}
+`;
+
+/**
+ * The sky cache's morph: how the stack reshapes between two keyframes in
+ * place, past the drift its motion target already moves it by.
+ *
+ * Moved by the wind, the two keyframes either side of a frame line up for
+ * every cloud the wind carries — but much of what a cloud does is not to
+ * be carried. Its outline crumbles and swells on the evolution clock (a
+ * tower climbs, a lobe buds, a cumulus's warp drifts), and between two
+ * keyframes all of that could only dissolve: a tower's flank that grew by
+ * a few texels sat still and faded to its new place, a step each keyframe
+ * up its outline. That reshaping is no sum of velocities the layers know,
+ * but it can be seen: between the earlier keyframe (moved on by the wind
+ * run between them) and the later, each patch of the stack has moved by
+ * some small offset. This finds it — Lucas–Kanade: the offset that best
+ * takes the earlier's patch onto the later's, over a 5×5 grid of reads 1.5
+ * texels apart, refined once — for every 4×4 texels of the later keyframe,
+ * in the earlier's angles. It reads the whole stack, so where layers
+ * cross it follows whichever carries the texture. Where the window holds
+ * none to tell by (a clear sky, a flat deck) it finds nothing and leaves
+ * the dissolve; a move over three texels is not believed (an outline in
+ * the way, or something new) and is held to that. The composite moves each
+ * keyframe along it by its share of the interval, as it does along the drift.
+ *
+ * A program of its own, not the sky's: some 120 reads a texel at a
+ * sixteenth of a keyframe's texels, found column by column as the
+ * keyframe's columns are built
+ */
+const MORPH_FRAG = `
+precision highp float;
+uniform sampler2D u_ka;     // the earlier keyframe
+uniform sampler2D u_kb;     // the later
+uniform sampler2D u_fa;     // their motion targets (see the composite's cacheFetch)
+uniform sampler2D u_fb;
+uniform vec4 u_mapA;        // their maps (see u_map0)
+uniform vec4 u_mapB;
+uniform vec4 u_boxA;        // the texels the earlier holds, as directions (see u_box0)
+uniform vec4 u_boxB;        // the texels the later holds, as its uv: low and high across, then up
+uniform vec2 u_texels;      // a keyframe's size in texels
+uniform vec2 u_out;         // this target's
+uniform float u_dw;         // the wind run from the earlier keyframe to the later
+
+const int K = 3;
+const int G = 7;
+const float SP = 1.5;
+
+vec3 dirOn(vec4 map, vec2 uv) {
+  float el = map.y + uv.y * map.w, az = map.x + (uv.x - 0.5) * map.z;
+  float ce = cos(el);
+  return vec3(ce * sin(az), sin(el), ce * cos(az));
+}
+vec2 anglesOn(vec4 map, vec3 d) {
+  float a = atan(d.x, d.z) - map.x;
+  a -= 6.2831853 * floor(a / 6.2831853 + 0.5);
+  return vec2(a, asin(clamp(d.y, -1.0, 1.0)));
+}
+vec2 uvOn(vec4 map, vec2 ae) {
+  return vec2(0.5 + ae.x / map.z, (ae.y - map.y) / map.w);
+}
+// (the composite's cacheShift)
+vec3 shift(vec3 d, vec2 v, float dw) {
+  vec2 X = d.xz / max(d.y, 0.03) + v * dw;
+  if (d.y > 0.03) return normalize(vec3(X.x, 1.0, X.y));
+  vec2 h = normalize(X) * length(d.xz);
+  return vec3(h.x, d.y, h.y);
+}
+// what the offset is matched on: the stack's light and its cover together
+float sig(vec4 c) {
+  return dot(c.rgb, vec3(0.30, 0.55, 0.15)) + 0.5 * (1.0 - c.a);
+}
+
+void main() {
+  vec2 uv0 = gl_FragCoord.xy / u_out;
+  vec2 px = 1.0 / u_texels;
+  // radians a texel, across and up
+  vec2 tex = vec2(u_mapB.z, u_mapB.w) / u_texels;
+  // the drift here, as the composite blends it
+  vec3 d0 = dirOn(u_mapB, uv0);
+  vec4 f0 = texture2D(u_fa, uvOn(u_mapA, anglesOn(u_mapA, d0))), f1 = texture2D(u_fb, uv0);
+  vec2 v = (f0.xy + f1.xy) / max(f0.z + f1.z, 1e-3);
+  // the later keyframe over the window, and the earlier where the wind
+  // carried each of its texels from
+  float b[49];
+  float a[49];
+  vec2 ae[49];
+  for (int j = 0; j < G; j++) {
+    for (int i = 0; i < G; i++) {
+      vec2 uv = clamp(uv0 + vec2(float(i - K), float(j - K)) * SP * px, u_boxB.xz, u_boxB.yw);
+      b[j * G + i] = sig(texture2D(u_kb, uv));
+      ae[j * G + i] = clamp(anglesOn(u_mapA, shift(dirOn(u_mapB, uv), v, u_dw)), u_boxA.xz, u_boxA.yw);
+      a[j * G + i] = sig(texture2D(u_ka, uvOn(u_mapA, ae[j * G + i])));
+    }
+  }
+  // the inner 5×5, its gradients from the samples either side; the
+  // earlier's patch moved by r matches the later's: g·r = b - a
+  float m00 = 0.0, m01 = 0.0, m11 = 0.0;
+  vec2 rhs = vec2(0.0);
+  for (int j = 1; j < G - 1; j++) {
+    for (int i = 1; i < G - 1; i++) {
+      vec2 g = vec2(b[j * G + i + 1] - b[j * G + i - 1], b[j * G + i + G] - b[j * G + i - G]) / (2.0 * SP);
+      m00 += g.x * g.x; m01 += g.x * g.y; m11 += g.y * g.y;
+      rhs += g * (b[j * G + i] - a[j * G + i]);
+    }
+  }
+  float det = m00 * m11 - m01 * m01;
+  float tr = m00 + m11;
+  // the window's weaker direction of texture: nothing to tell by, no move
+  float lmin = 0.5 * (tr - sqrt(max(tr * tr - 4.0 * det, 0.0)));
+  float trust = smoothstep(1e-4, 1e-3, lmin);
+  vec2 r = vec2(0.0);
+  if (trust > 0.0) {
+    mat2 inv = mat2(m11, -m01, -m01, m00) / det;
+    r = inv * rhs;
+    r *= min(1.0, 3.0 / max(length(r), 1e-6));
+    // refined once: the earlier read again where r puts it
+    vec2 rhs2 = vec2(0.0);
+    for (int j = 1; j < G - 1; j++) {
+      for (int i = 1; i < G - 1; i++) {
+        vec2 g = vec2(b[j * G + i + 1] - b[j * G + i - 1], b[j * G + i + G] - b[j * G + i - G]) / (2.0 * SP);
+        vec2 q = clamp(ae[j * G + i] + r * tex, u_boxA.xz, u_boxA.yw);
+        rhs2 += g * (b[j * G + i] - sig(texture2D(u_ka, uvOn(u_mapA, q))));
+      }
+    }
+    r += inv * rhs2;
+    r *= min(1.0, 3.0 / max(length(r), 1e-6)) * trust;
+  }
+  gl_FragColor = vec4(r * tex, trust, 1.0);
 }
 `;
 
@@ -6780,7 +7047,7 @@ void main() {
  * right picture — it just pays the flattened cost, the way it would have with
  * the arithmetic hash this replaced.
  */
-function fragSource(explicitLod: boolean, split: boolean, key: number): string {
+function fragSource(explicitLod: boolean, split: boolean, key: number, motion = false): string {
   let defines = '';
   for (const [bit, name] of FEATURE_DEFINES) if (key & bit) defines += `#define ${name}\n`;
   // an #extension directive has to precede every non-preprocessor token
@@ -6796,7 +7063,7 @@ function fragSource(explicitLod: boolean, split: boolean, key: number): string {
     // the composite's read of the cloud stack sits in a branch too; same reason
     ? '#define CLOUD_FETCH(uv) texture2DLodEXT(u_clouds, (uv), 0.0)\n'
     : '#define CLOUD_FETCH(uv) texture2D(u_clouds, (uv))\n'
-  ) + (split ? '#define CLOUD_SPLIT\n' : '') + cacheDefines(explicitLod, key) + defines + FRAG;
+  ) + (split ? '#define CLOUD_SPLIT\n' : '') + cacheDefines(explicitLod, key, motion) + defines + FRAG;
 }
 
 /**
@@ -6804,16 +7071,32 @@ function fragSource(explicitLod: boolean, split: boolean, key: number): string {
  * mode fixed, the build's or the composite's. Nothing for any other key, so
  * every other program's source is what it always was
  */
-function cacheDefines(explicitLod: boolean, key: number): string {
-  if (!(key & CACHE_BITS)) return '';
+function cacheDefines(explicitLod: boolean, key: number, motion: boolean): string {
+  // (every program writes its colour through FRAG_OUT: gl_FragColor, but in
+  // a keyframe build with motion gl_FragData[0] — a shader that writes one
+  // may not write the other, even on a line it never reaches)
+  if (!(key & CACHE_BITS)) return '#define FRAG_OUT gl_FragColor\n';
+  const build = (key & CACHE_BUILD) !== 0;
   // (the composite's code is still in the build's source, behind a branch
   // on the mode that folds away; it has to compile all the same)
-  return (key & CACHE_BUILD
-    ? '#define CLOUD_SPLIT\n#define CLOUD_CACHE 1.0\n#define CACHE_BUILD\n'
-    : '#define CLOUD_SPLIT\n#define CLOUD_CACHE 2.0\n#define CACHE_COMP\n')
+  return (motion && build
+    // the keyframe's motion is its second target (WEBGL_draw_buffers);
+    // the directive has to come before every other token, as above
+    ? '#extension GL_EXT_draw_buffers : require\n#define FRAG_OUT gl_FragData[0]\n'
+    : '#define FRAG_OUT gl_FragColor\n')
+    + (build
+      ? '#define CLOUD_SPLIT\n#define CLOUD_CACHE 1.0\n#define CACHE_BUILD\n'
+      : '#define CLOUD_SPLIT\n#define CLOUD_CACHE 2.0\n#define CACHE_COMP\n')
+    + (motion ? '#define CACHE_MOTION\n' : '')
     + (explicitLod
       ? '#define CLOUD_FETCH2(uv) texture2DLodEXT(u_clouds2, (uv), 0.0)\n'
-      : '#define CLOUD_FETCH2(uv) texture2D(u_clouds2, (uv))\n');
+        + '#define MAP_FETCH(s, uv) texture2DLodEXT((s), (uv), 0.0)\n'
+        + '#define FLOW_FETCH(uv) texture2DLodEXT(u_flow, (uv), 0.0)\n'
+        + '#define FLOW_FETCH2(uv) texture2DLodEXT(u_flow2, (uv), 0.0)\n'
+      : '#define CLOUD_FETCH2(uv) texture2D(u_clouds2, (uv))\n'
+        + '#define MAP_FETCH(s, uv) texture2D((s), (uv))\n'
+        + '#define FLOW_FETCH(uv) texture2D(u_flow, (uv))\n'
+        + '#define FLOW_FETCH2(uv) texture2D(u_flow2, (uv))\n');
 }
 
 /**
@@ -7185,6 +7468,7 @@ const UNIFORM_NAMES = [
   'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset',
   'u_cloudMode', 'u_clouds', 'u_xfade',
   'u_map0', 'u_map1', 'u_mapStep', 'u_mapMix', 'u_clouds2',
+  'u_flow', 'u_flow2', 'u_box0', 'u_box1', 'u_mapWind', 'u_mapTexels', 'u_evoPerWind', 'u_morph',
 ] as const;
 
 export interface RendererOptions {
@@ -7414,10 +7698,22 @@ export class AtmosphereRenderer {
   private sky: SkyCacheScheduler | null = null;
   private skyTex: (WebGLTexture | null)[] = [null, null, null];
   private skyFbo: (WebGLFramebuffer | null)[] = [null, null, null];
+  // each slot's motion, its second target (null: no motion compensation),
+  // and the extension that draws both at once, asked for when the context
+  // is made (the build's source depends on it)
+  private skyFlow: (WebGLTexture | null)[] = [null, null, null];
+  private skyDraw: WEBGL_draw_buffers | null = null;
+  // each slot's morph from the keyframe before it (MORPH_FRAG), a quarter
+  // the size each way, and the program that finds it
+  private skyMorph: (WebGLTexture | null)[] = [null, null, null];
+  private skyMorphFbo: (WebGLFramebuffer | null)[] = [null, null, null];
+  private morph: { program: WebGLProgram; u: Uniforms } | null = null;
+  private morphFailed = false;
   private skySize: [number, number] = [0, 0];
   private skySupport: boolean | null = null;
   private skyKeys: number[] = [];
   private skyReason = 'off';
+  private skyMix = -1;
   // GPU timing (RendererOptions.timing): queries in flight, and finished results
   private timer: TimerQueryExt | null = null;
   private pending: { q: WebGLQuery; pixels: number }[] = [];
@@ -7582,6 +7878,11 @@ export class AtmosphereRenderer {
     this.cloudSupport = null;
     this.skyTex = [null, null, null];
     this.skyFbo = [null, null, null];
+    this.skyFlow = [null, null, null];
+    this.skyMorph = [null, null, null];
+    this.skyMorphFbo = [null, null, null];
+    this.morph = null;
+    this.morphFailed = false;
     this.skySize = [0, 0];
     this.skySupport = null;
     this.skyKeys = [];
@@ -7604,6 +7905,10 @@ export class AtmosphereRenderer {
     }
 
     this.explicitLod = gl.getExtension('EXT_shader_texture_lod') !== null;
+    // the sky cache's keyframes carry their motion in a second target where
+    // one draw can fill two (see cacheFetch); where it cannot they are
+    // mixed as they stand
+    this.skyDraw = this.sky?.motion ? gl.getExtension('WEBGL_draw_buffers') : null;
     // On Windows, linkProgram is where ANGLE hands the whole shader to the
     // D3D compiler, and reading LINK_STATUS is what waits for it. Asking the
     // driver whether it's finished instead keeps the page alive through it.
@@ -7682,7 +7987,7 @@ export class AtmosphereRenderer {
       return sh;
     };
     const vs = compile(gl.VERTEX_SHADER, VERT);
-    const fs = compile(gl.FRAGMENT_SHADER, fragSource(this.explicitLod, (key & SPLIT_KEY) !== 0, key));
+    const fs = compile(gl.FRAGMENT_SHADER, fragSource(this.explicitLod, (key & SPLIT_KEY) !== 0, key, this.skyDraw !== null));
     const prog = vs && fs ? gl.createProgram() : null;
     if (!vs || !fs || !prog) {
       if (vs) gl.deleteShader(vs);
@@ -7900,6 +8205,9 @@ export class AtmosphereRenderer {
     gl.uniform1i(v.u.u_noiseQ, 2);
     gl.uniform1i(v.u.u_turrets, 3);
     gl.uniform1i(v.u.u_clouds2, 4);
+    gl.uniform1i(v.u.u_flow, 5);
+    gl.uniform1i(v.u.u_flow2, 6);
+    gl.uniform1i(v.u.u_morph, 7);
     v.linked = true;
     if (!this.reported && v.key === this.wanted) {
       this.reported = true;
@@ -7983,13 +8291,15 @@ export class AtmosphereRenderer {
 
   /**
    * What the sky cache did with the last frame, for measurement: why it was
-   * drawn directly ('ok' when it was drawn from the cache), the maps'
-   * density and size, their memory, and the texels built since the last read
+   * drawn directly ('ok' when it was drawn from the cache), how far it was
+   * from the first keyframe to the second (-1 when drawn directly), the
+   * maps' density and size, their memory, and the texels built since the
+   * last read
    */
-  takeSkyCacheStats(): { reason: string; texelsPerRad: number; size: [number, number]; bytes: number; texelsBuilt: number } | null {
+  takeSkyCacheStats(): { reason: string; mix: number; texelsPerRad: number; size: [number, number]; bytes: number; texelsBuilt: number } | null {
     const c = this.sky;
     if (!c) return null;
-    const out = { reason: this.skyReason, texelsPerRad: c.texelsPerRad, size: c.size, bytes: c.bytes, texelsBuilt: c.texelsBuilt };
+    const out = { reason: this.skyReason, mix: this.skyMix, texelsPerRad: c.texelsPerRad, size: c.size, bytes: c.bytes, texelsBuilt: c.texelsBuilt };
     c.texelsBuilt = 0;
     return out;
   }
@@ -8006,7 +8316,7 @@ export class AtmosphereRenderer {
     timeSec: number, s: AtmosphereState, camera: Camera, windOff: number, evo: number,
   ): boolean {
     const sky = this.sky!;
-    const no = (reason: string): boolean => { sky.reset(); this.skyReason = reason; return false; };
+    const no = (reason: string): boolean => { sky.reset(); this.skyReason = reason; this.skyMix = -1; return false; };
     // (the 'auto' tower's crossfade band is two programs' frames laid one
     // over the other; a cache for each would be twice the memory for the
     // band's sake alone)
@@ -8026,8 +8336,13 @@ export class AtmosphereRenderer {
       width: w, height: h, maxTexture: gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
     });
     this.skyReason = plan.reason;
-    if ((plan.build || plan.show) && !this.skyTargets(gl, plan.size)) return no('unsupported');
-    if (plan.build) this.drawKeyframeSlice(gl, vb, plan.build, s);
+    this.skyMix = plan.show ? plan.show.mix : -1;
+    if ((plan.builds.length || plan.show) && !this.skyTargets(gl, plan.size)) return no('unsupported');
+    for (const b of plan.builds) {
+      this.drawKeyframeSlice(gl, vb, b, s);
+      // and as much of how it reshapes from the one before it as its built columns tell
+      if (this.skyMorph[b.key.slot]) this.drawMorph(gl, b.key, b.prev, b.done);
+    }
     if (!plan.show) return false;
     const { a, b, mix } = plan.show;
     this.bind(vc, timeSec, s, windOff, evo);
@@ -8036,10 +8351,32 @@ export class AtmosphereRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.skyTex[a.slot]);
     gl.activeTexture(gl.TEXTURE4);
     gl.bindTexture(gl.TEXTURE_2D, this.skyTex[b.slot]);
+    // their motion (without it — no second target on this context — the
+    // composite reads nothing to move and mixes them as they stand)
+    gl.activeTexture(gl.TEXTURE5);
+    gl.bindTexture(gl.TEXTURE_2D, this.skyFlow[a.slot]);
+    gl.activeTexture(gl.TEXTURE6);
+    gl.bindTexture(gl.TEXTURE_2D, this.skyFlow[b.slot]);
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D, this.skyMorph[b.slot]);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform4f(u.u_map0, a.rect.azC, a.rect.el0, a.rect.azSpan, a.rect.elSpan);
     gl.uniform4f(u.u_map1, b.rect.azC, b.rect.el0, b.rect.azSpan, b.rect.elSpan);
     gl.uniform1f(u.u_mapMix, mix);
+    // the wind run since the first keyframe's moment and still to run to the
+    // second's: the frame's own wind against each one's
+    gl.uniform2f(u.u_mapWind, windOff - a.clocks.wind, b.clocks.wind - windOff);
+    // the texels each holds, as directions, a texel and a half in from its
+    // edge: the moved reads are held inside, with room for the cubic's reach
+    const [W, H] = this.skySize;
+    gl.uniform2f(u.u_mapTexels, W, H);
+    const box = (k: typeof a): [number, number, number, number] => {
+      const c = k.cover, f = (x: number) => Math.max(-1e4, Math.min(1e4, x));
+      const iAz = 1.5 * k.rect.azSpan / W, iEl = 1.5 * k.rect.elSpan / H;
+      return [f(c.azLo + iAz), f(c.azHi - iAz), f(c.elLo + iEl), f(c.elHi - iEl)];
+    };
+    gl.uniform4f(u.u_box0, ...box(a));
+    gl.uniform4f(u.u_box1, ...box(b));
     gl.uniform1f(u.u_xfade, 0);
     gl.uniform1f(u.u_aspect, w / Math.max(1, h));
     gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
@@ -8056,17 +8393,19 @@ export class AtmosphereRenderer {
    * at. The scissor keeps the draw to the slice; the viewport and u_frame
    * stay the whole map, so every texel's direction is the map's own
    */
-  private drawKeyframeSlice(gl: WebGLRenderingContext, v: Variant, build: NonNullable<CacheFramePlan['build']>, s: AtmosphereState): void {
+  private drawKeyframeSlice(gl: WebGLRenderingContext, v: Variant, build: CacheBuild, s: AtmosphereState): void {
     const { key, c0, c1, step } = build;
     const [W, H] = this.skySize;
     this.bind(v, key.clocks.time, s, key.clocks.wind, key.clocks.evo);
     const u = this.u;
-    // no slot may sit on a unit while one of them is drawn into
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, null);
-    gl.activeTexture(gl.TEXTURE4);
-    gl.bindTexture(gl.TEXTURE_2D, null);
+    // no slot (nor its motion) may sit on a unit while one of them is drawn into
+    for (const unit of [gl.TEXTURE1, gl.TEXTURE4, gl.TEXTURE5, gl.TEXTURE6, gl.TEXTURE7]) {
+      gl.activeTexture(unit);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+    }
     gl.activeTexture(gl.TEXTURE0);
+    // (the sheets' crawl with evolution, in units of wind: see MV_STRAT)
+    gl.uniform1f(u.u_evoPerWind, build.evoPerWind);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.skyFbo[key.slot]);
     gl.viewport(0, 0, W, H);
     gl.enable(gl.SCISSOR_TEST);
@@ -8085,6 +8424,110 @@ export class AtmosphereRenderer {
   }
 
   /**
+   * A keyframe's morph from the one before it (MORPH_FRAG), into its slot's
+   * quarter-size target: as its columns are built, the morph's columns whose
+   * reads they hold (a window reaches five texels round), and the rest once
+   * it is whole — spread over its build as the build is, rather than a whole
+   * keyframe's search in one frame. With no keyframe before it (the first of
+   * a run) there is nothing to find, and the target is cleared: nothing moves
+   */
+  private drawMorph(gl: WebGLRenderingContext, key: CacheKeyframe, prev: CacheKeyframe | null, done: boolean): void {
+    const fbo = this.skyMorphFbo[key.slot];
+    if (!fbo) return;
+    const [W, H] = this.skySize;
+    const w = Math.ceil(W / 4), h = Math.ceil(H / 4);
+    // the morph's columns to find this frame: from where it stands to as far
+    // as the built columns hold every read
+    const m0 = Math.max(key.morphed, Math.floor(key.box.c0 / 4) - 1, 0);
+    const m1 = Math.min(w, done ? Math.ceil(key.box.c1 / 4) + 1 : Math.floor((key.box.c0 + key.built - 10) / 4));
+    if (m1 <= m0) return;
+    key.morphed = m1;
+    const y0 = Math.max(0, Math.floor(key.box.r0 / 4) - 1), y1 = Math.min(h, Math.ceil(key.box.r1 / 4) + 1);
+    const p = prev ? this.morphProgram(gl) : null;
+    // no target may sit on a unit while it is drawn into
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.viewport(0, 0, w, h);
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(m0, y0, m1 - m0, y1 - y0);
+    if (!p || !prev) {
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    } else {
+      gl.useProgram(p.program);
+      const u = p.u;
+      const units: [number, WebGLTexture | null][] = [
+        [gl.TEXTURE1, this.skyTex[prev.slot]], [gl.TEXTURE4, this.skyTex[key.slot]],
+        [gl.TEXTURE5, this.skyFlow[prev.slot]], [gl.TEXTURE6, this.skyFlow[key.slot]],
+      ];
+      for (const [unit, tex] of units) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, tex); }
+      gl.activeTexture(gl.TEXTURE0);
+      const r = (k: CacheKeyframe): [number, number, number, number] => [k.rect.azC, k.rect.el0, k.rect.azSpan, k.rect.elSpan];
+      gl.uniform4f(u.u_mapA, ...r(prev));
+      gl.uniform4f(u.u_mapB, ...r(key));
+      // the earlier's reads held inside the texels it holds (as the
+      // composite's are), the later's inside its own, as texel coordinates
+      const c = prev.cover, f = (x: number) => Math.max(-1e4, Math.min(1e4, x));
+      const iAz = 1.5 * prev.rect.azSpan / W, iEl = 1.5 * prev.rect.elSpan / H;
+      gl.uniform4f(u.u_boxA, f(c.azLo + iAz), f(c.azHi - iAz), f(c.elLo + iEl), f(c.elHi - iEl));
+      gl.uniform4f(u.u_boxB, (key.box.c0 + 0.5) / W, (key.box.c1 - 0.5) / W, (key.box.r0 + 0.5) / H, (key.box.r1 - 0.5) / H);
+      gl.uniform2f(u.u_texels, W, H);
+      gl.uniform2f(u.u_out, w, h);
+      gl.uniform1f(u.u_dw, key.clocks.wind - prev.clocks.wind);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      for (const [unit] of units) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, null); }
+      // (the next draw binds its own program again: see bind)
+      gl.activeTexture(gl.TEXTURE0);
+    }
+    gl.disable(gl.SCISSOR_TEST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  /** MORPH_FRAG's program, made the first time it is wanted; null where it will not compile */
+  private morphProgram(gl: WebGLRenderingContext): { program: WebGLProgram; u: Uniforms } | null {
+    if (this.morph) return this.morph;
+    if (this.morphFailed) return null;
+    const compile = (type: number, src: string): WebGLShader | null => {
+      const sh = gl.createShader(type);
+      if (!sh) return null;
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        console.error('atmosphere morph shader compile error:', gl.getShaderInfoLog(sh));
+        gl.deleteShader(sh);
+        return null;
+      }
+      return sh;
+    };
+    const vs = compile(gl.VERTEX_SHADER, VERT), fs = compile(gl.FRAGMENT_SHADER, MORPH_FRAG);
+    const program = vs && fs ? gl.createProgram() : null;
+    if (vs && fs && program) {
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.bindAttribLocation(program, 0, 'a_pos');
+      gl.linkProgram(program);
+    }
+    if (vs) gl.deleteShader(vs);
+    if (fs) gl.deleteShader(fs);
+    if (!program || !gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      if (program) gl.deleteProgram(program);
+      this.morphFailed = true;
+      return null;
+    }
+    gl.useProgram(program);
+    const u: Uniforms = {};
+    for (const n of ['u_ka', 'u_kb', 'u_fa', 'u_fb', 'u_mapA', 'u_mapB', 'u_boxA', 'u_boxB', 'u_texels', 'u_out', 'u_dw']) u[n] = gl.getUniformLocation(program, n);
+    gl.uniform1i(u.u_ka, 1);
+    gl.uniform1i(u.u_kb, 4);
+    gl.uniform1i(u.u_fa, 5);
+    gl.uniform1i(u.u_fb, 6);
+    this.morph = { program, u };
+    return this.morph;
+  }
+
+  /**
    * The sky cache's three keyframe slots, half-float, (re)made to size.
    * false — and the cache stays off for this context — where half floats
    * cannot be rendered to and filtered
@@ -8096,13 +8539,12 @@ export class AtmosphereRenderer {
     const hfLinear = gl.getExtension('OES_texture_half_float_linear');
     gl.getExtension('EXT_color_buffer_half_float');
     if (!hf || !hfLinear) { this.skySupport = false; return false; }
-    this.freeSky(gl);
-    for (let i = 0; i < 3; i++) {
-      const tex = gl.createTexture(), fbo = gl.createFramebuffer();
-      if (!tex || !fbo) { this.freeSky(gl); this.skySupport = false; return false; }
+    const mk = (w = size[0], h = size[1]): WebGLTexture | null => {
+      const tex = gl.createTexture();
+      if (!tex) return null;
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size[0], size[1], 0, gl.RGBA, hf.HALF_FLOAT_OES, null);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, hf.HALF_FLOAT_OES, null);
       // NPOT: clamped, and no mips — the composite reads it bilinear, and
       // the seam's spare texels stand in for a repeat
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -8111,25 +8553,68 @@ export class AtmosphereRenderer {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.bindTexture(gl.TEXTURE_2D, null);
       gl.activeTexture(gl.TEXTURE0);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-      const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      this.skyTex[i] = tex;
-      this.skyFbo[i] = fbo;
-      if (!ok) { this.freeSky(gl); this.skySupport = false; return false; }
+      return tex;
+    };
+    // The motion is a second target of the same half-float RGBA (a draw into
+    // two must draw into alike: an 8-bit second is FRAMEBUFFER_UNSUPPORTED
+    // on Metal), twice the slots' memory. A context that cannot draw both
+    // keeps the slots alone and mixes the keyframes as they stand
+    const db = this.skyDraw;
+    for (const motion of db ? [true, false] : [false]) {
+      this.freeSky(gl);
+      let ok = true;
+      for (let i = 0; i < 3 && ok; i++) {
+        const tex = mk(), flow = motion ? mk() : null, fbo = gl.createFramebuffer();
+        this.skyTex[i] = tex;
+        this.skyFlow[i] = flow;
+        this.skyFbo[i] = fbo;
+        if (!tex || !fbo || (motion && !flow)) { ok = false; break; }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        if (db && flow) {
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, db.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, flow, 0);
+          db.drawBuffersWEBGL([db.COLOR_ATTACHMENT0_WEBGL, db.COLOR_ATTACHMENT1_WEBGL]);
+        }
+        ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+        if (ok && motion) {
+          // and its morph (MORPH_FRAG), a quarter the size each way, cleared:
+          // until one is found, nothing moves
+          const m = mk(Math.ceil(size[0] / 4), Math.ceil(size[1] / 4)), mf = gl.createFramebuffer();
+          this.skyMorph[i] = m;
+          this.skyMorphFbo[i] = mf;
+          if (!m || !mf) ok = false;
+          else {
+            gl.bindFramebuffer(gl.FRAMEBUFFER, mf);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, m, 0);
+            ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+            if (ok) { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+          }
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      }
+      if (!ok) continue;
+      this.skySupport = true;
+      this.skySize = [size[0], size[1]];
+      this.sky!.layers = motion ? 2 : 1;
+      return true;
     }
-    this.skySupport = true;
-    this.skySize = [size[0], size[1]];
-    return true;
+    this.freeSky(gl);
+    this.skySupport = false;
+    return false;
   }
 
   private freeSky(gl: WebGLRenderingContext): void {
     for (let i = 0; i < 3; i++) {
       if (this.skyFbo[i]) gl.deleteFramebuffer(this.skyFbo[i]);
       if (this.skyTex[i]) gl.deleteTexture(this.skyTex[i]);
+      if (this.skyFlow[i]) gl.deleteTexture(this.skyFlow[i]);
+      if (this.skyMorph[i]) gl.deleteTexture(this.skyMorph[i]);
+      if (this.skyMorphFbo[i]) gl.deleteFramebuffer(this.skyMorphFbo[i]);
       this.skyFbo[i] = null;
       this.skyTex[i] = null;
+      this.skyFlow[i] = null;
+      this.skyMorph[i] = null;
+      this.skyMorphFbo[i] = null;
     }
     this.skySize = [0, 0];
   }
@@ -8548,6 +9033,7 @@ export class AtmosphereRenderer {
       this.freeProbe(gl);
       this.freeClouds(gl);
       this.freeSky(gl);
+      if (this.morph) gl.deleteProgram(this.morph.program);
       for (const p of this.pending) this.timer?.deleteQueryEXT(p.q);
       this.pending = [];
       if (options.loseContext) {
@@ -8561,5 +9047,6 @@ export class AtmosphereRenderer {
     this.noise = null;
     this.noiseQ = null;
     this.turrets = null;
+    this.morph = null;
   }
 }

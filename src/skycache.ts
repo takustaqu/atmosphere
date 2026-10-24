@@ -10,13 +10,18 @@
 // What has to be paid for is that the stack moves. The map is redrawn as a
 // series of keyframes, each one whole at one moment (its clocks frozen for
 // the whole of its build, so no keyframe is ever two moments torn along a
-// seam), and each frame shows the two that bracket it, mixed by how far the
-// frame is between them. Keyframe j is shown from frame (j-1)N to (j+1)N —
-// rising in as the second of the pair, then fading out as the first — and is
-// built over the N frames before that, a slice of its columns a frame, for
-// the clocks it will be shown at: the moment jN, predicted from the clocks'
-// rates now. So the picture is not late, and the cost of a keyframe is
-// spread evenly over N frames.
+// seam), and each frame shows the two that bracket it. The keyframes stand
+// at even steps of the clouds' own clock (wind + evolution), N frames' worth
+// apart: keyframe j is shown while the clock runs from keyframe j-1's to
+// j+1's — rising in as the second of the pair, then going as the first — and
+// is built while it runs the step before that, a slice of its columns a
+// frame, for the very clocks it will be shown at. So the picture is never
+// late, a frame shows the pair either side of its own clock however unevenly
+// the frames come, and the cost of a keyframe is spread over its N frames.
+//
+// How the renderer gets from the two keyframes to the frame is its own
+// (see its cacheFetch): each moved along the clouds' drift and reshaping
+// to the frame's moment, then mixed.
 //
 // This file is the scheduling alone, free of WebGL so it can be tested: what
 // to build this frame and where, and which two keyframes to show, or none
@@ -40,16 +45,42 @@ export interface SkyCacheOptions {
   /** texels per radian, as a multiple of the view's pixels per radian at its middle (height / fov). Defaults to 1 */
   density?: number;
   /**
-   * frames between keyframes (N). Defaults to 15: what a frame shows between
-   * two keyframes is a mix of them, so an edge that moves is drawn as a
-   * dissolve across the N frames — the fewer, the closer to the edge's own
-   * motion, and the more a keyframe's cost weighs on each frame
+   * frames between keyframes (N), at most (see windRun). Defaults to 15. A
+   * frame is drawn from the two keyframes either side of it, moved to its
+   * moment (see motion); what that cannot follow dissolves across the
+   * interval — the fewer frames, the less of it, and the more a keyframe's
+   * cost weighs on each frame
    */
   frames?: number;
   /** the most texels one keyframe's map may hold; a view that needs more is drawn directly. Defaults to 16 million */
   budget?: number;
   /** radians kept round the view in a `'view'` window, past what its turning asks. Defaults to 0.12 */
   margin?: number;
+  /**
+   * Move each keyframe's picture to the frame's moment before mixing the
+   * two (see the renderer's cacheFetch): along the drift every layer is
+   * known to have, and along the reshaping found between the keyframes. A
+   * cloud then moves on continuously, rather than sitting still and
+   * dissolving into its next place a keyframe later. Needs a second target
+   * per slot (WEBGL_draw_buffers): the slots' memory twice over, and a
+   * sixteenth more; without it the keyframes are mixed as they stand.
+   * Defaults to true
+   */
+  motion?: boolean;
+  /**
+   * The most of the clouds' clocks one keyframe interval may span — the
+   * animator's integrated wind and evolution: where they run fast for the
+   * frame rate (a strong wind, or 30 frames a second rather than 60)
+   * keyframes come oftener than every `frames`, down to every 4 frames.
+   * What the keyframes' motion cannot follow — a fast layer over a slower
+   * one, a reshaping too large to find — dissolves over the interval: at
+   * 30 fps and 15 frames a fast scud in a 12 m/s wind crossed some thirty
+   * pixels of a 1080p view, and a tower's flank grew by several. Default
+   * 0.012 of wind and 0.025 of evolution: fifteen 60 fps frames of a 3 m/s
+   * breeze stay fifteen, at 30 fps they are nine
+   */
+  windRun?: number;
+  evoRun?: number;
 }
 
 /** a keyframe's map: the texture's grid laid over directions (radians) */
@@ -85,6 +116,8 @@ export interface Keyframe {
   sig: number[];
   /** how many of its box's columns are built */
   built: number;
+  /** how many columns of its morph from the keyframe before it are found (the renderer's bookkeeping, in its morph target's columns) */
+  morphed: number;
 }
 
 export interface CacheFrameInput {
@@ -98,11 +131,18 @@ export interface CacheFrameInput {
   maxTexture: number;
 }
 
+/** a slice of a keyframe to draw, and how far evolution runs for each unit of wind */
+export interface CacheBuild {
+  key: Keyframe; c0: number; c1: number; step: [number, number]; evoPerWind: number;
+  /** this slice finishes the keyframe; and the keyframe before it, if whole: the one it will be shown after */
+  done: boolean; prev: Keyframe | null;
+}
+
 export interface CacheFramePlan {
   /** the texture size every slot must have this frame (reallocate on change) */
   size: [number, number];
-  /** the slice to draw into a keyframe this frame */
-  build: { key: Keyframe; c0: number; c1: number; step: [number, number] } | null;
+  /** the slices to draw into keyframes this frame: one, but for a frame long enough to need the rest of the next keyframe too */
+  builds: CacheBuild[];
   /** the two keyframes to show and the second's share; null: draw directly */
   show: { a: Keyframe; b: Keyframe; mix: number } | null;
   /** why nothing is shown, for measurement */
@@ -203,14 +243,20 @@ export class SkyCacheScheduler {
   readonly frames: number;
   readonly budget: number;
   readonly margin: number;
+  readonly windRun: number;
+  readonly evoRun: number;
+  readonly motion: boolean;
+  /** the targets a slot holds: 1, or 2 with its motion (set by the renderer) */
+  layers = 1;
   /** texels per radian of the maps in use (0: none yet) */
   texelsPerRad = 0;
   size: [number, number] = [0, 0];
   /** the elevation the panorama's maps reach to (their allocation's top) */
   private top = 0;
   private keys: Keyframe[] = [];
-  /** the frame counter on the keyframes' schedule; starts at -2N, so the first two keyframes are built before anything is shown */
-  private m = 0;
+  /** the schedule's clock (wind + evolution) two intervals before keyframe 0 is shown, and the interval: see frame() */
+  private c0 = 0;
+  private dC = 0;
   private running = false;
   private prevSig: number[] | null = null;
   private prev: Clocks | null = null;
@@ -227,6 +273,9 @@ export class SkyCacheScheduler {
     this.frames = Math.max(2, Math.round(o.frames ?? 15));
     this.budget = o.budget ?? 16e6;
     this.margin = o.margin ?? 0.12;
+    this.windRun = o.windRun ?? 0.012;
+    this.evoRun = o.evoRun ?? 0.025;
+    this.motion = o.motion ?? true;
   }
 
   /** forget every keyframe (a state that jumped, a view the maps cannot hold) */
@@ -235,9 +284,10 @@ export class SkyCacheScheduler {
     this.running = false;
   }
 
-  /** every keyframe slot's memory, in bytes (half-float RGBA, three slots) */
+  /** every keyframe slot's memory, in bytes (half-float RGBA, three slots, each one target or, with its motion, two and a quarter-size morph) */
   get bytes(): number {
-    return this.size[0] * this.size[1] * 8 * 3;
+    const [W, H] = this.size;
+    return 3 * 8 * (W * H * this.layers + (this.layers > 1 ? Math.ceil(W / 4) * Math.ceil(H / 4) : 0));
   }
 
   frame(f: CacheFrameInput): CacheFramePlan {
@@ -245,7 +295,7 @@ export class SkyCacheScheduler {
     const { camera } = f;
     const aspect = f.width / Math.max(1, f.height);
     const viewPx = camera.fov / Math.max(1, f.height);
-    const none = (reason: string): CacheFramePlan => ({ size: this.size, build: null, show: null, reason });
+    const none = (reason: string): CacheFramePlan => ({ size: this.size, builds: [], show: null, reason });
 
     // ── the state and the clocks: following on from the last frame? ──
     const step = this.prevSig ? maxDiff(f.sig, this.prevSig) : Infinity;
@@ -259,7 +309,10 @@ export class SkyCacheScheduler {
       // fresh animator) does not follow on
       if (d.wind < 0 || d.evo < 0 || d.wind > 0.05 || d.evo > 0.05 || Math.abs(d.time) > 1) jumped = true;
       else {
-        const k = this.running ? 0.2 : 1;
+        // (smoothed from the second sample on, running or not: the interval is
+        // set from these when a schedule starts, and one frame of an uneven
+        // run is a third off either way)
+        const k = this.rate.wind > 0 || this.rate.evo > 0 ? 0.2 : 1;
         this.rate.time += (d.time - this.rate.time) * k;
         this.rate.wind += (d.wind - this.rate.wind) * k;
         this.rate.evo += (d.evo - this.rate.evo) * k;
@@ -291,7 +344,7 @@ export class SkyCacheScheduler {
       if (W > f.maxTexture || H > f.maxTexture || W * H > this.budget) {
         this.reset();
         this.texelsPerRad = 0;
-        return { size: this.size, build: null, show: null, reason: 'density' };
+        return { size: this.size, builds: [], show: null, reason: 'density' };
       }
       this.reset();
       this.texelsPerRad = want;
@@ -307,40 +360,80 @@ export class SkyCacheScheduler {
     const whole = W >= Math.ceil(TAU * this.texelsPerRad) + 2;
     const dAz = whole ? TAU / (W - 2) : 1 / this.texelsPerRad, dEl = (this.top - CACHE_EL0) / H;
 
-    if (!this.running) { this.running = true; this.m = -2 * N; this.keys = []; }
-    const m = this.m++;
-    const a = Math.floor(m / N);
-    const into = m - a * N;
-
-    // ── build: keyframe a+2, a slice of it ──
-    const j = a + 2;
-    let key = this.keys.find((k) => k.j === j);
-    if (!key) {
-      // the slot neither of the two shown holds
-      const used = new Set(this.keys.filter((k) => k.j === a || k.j === a + 1).map((k) => k.slot));
-      const slot = [0, 1, 2].find((s) => !used.has(s))!;
-      this.keys = this.keys.filter((k) => k.slot !== slot);
-      const ahead = j * N - m;
-      const clocks: Clocks = {
-        time: f.clocks.time + this.rate.time * ahead,
-        wind: f.clocks.wind + this.rate.wind * ahead,
-        evo: f.clocks.evo + this.rate.evo * ahead,
-      };
-      key = this.layout(j, slot, camera, aspect, ahead, clocks, viewPx, f.sig, W, H, dAz, dEl);
-      this.keys.push(key);
+    // ── where the frame stands on the schedule ──
+    // The schedule runs on the clouds' own clock, wind + evolution (both only
+    // ever run forward, and between them every motion of the stack), not on
+    // a count of frames: keyframe j is whole at clock c0 + (j + 2)·dC, dC
+    // being N frames' worth of it when the schedule starts. Frames come at
+    // uneven times — a 30 fps cap on a 60 Hz display draws 17, 33 and 50 ms
+    // frames as the timestamps fall — and a schedule by frame count built
+    // each keyframe for clocks predicted from the last few frames' rate:
+    // a fifth of an interval off, either way, keyframe to keyframe. Shown
+    // at their frames regardless, the clouds ran slow through one interval
+    // and fast through the next, a lurch at every keyframe. On the clock,
+    // each keyframe is built for the very clock it is shown at, the frame
+    // shows the pair either side of its own clock, and the mix is how far
+    // between them that clock has come
+    const clock = f.clocks.wind + f.clocks.evo;
+    const rClock = this.rate.wind + this.rate.evo;
+    if (!this.running) {
+      // (a still clock has nothing to follow)
+      if (!(rClock > 0)) return none('still');
+      this.running = true;
+      this.keys = [];
+      this.c0 = clock;
+      // (N frames' worth, or fewer where the clocks would run further than
+      // windRun or evoRun between keyframes: see SkyCacheOptions.windRun)
+      const n = Math.min(N, this.windRun / Math.max(this.rate.wind, 1e-12), this.evoRun / Math.max(this.rate.evo, 1e-12));
+      this.dC = rClock * Math.max(Math.min(4, N), n);
     }
-    const cols = key.box.c1 - key.box.c0;
-    const target = Math.min(cols, Math.ceil(((into + 1) / N) * cols));
-    let build: CacheFramePlan['build'] = null;
-    if (target > key.built) {
-      build = { key, c0: key.box.c0 + key.built, c1: key.box.c0 + target, step: [dAz, dEl] };
-      this.texelsBuilt += (target - key.built) * (key.box.r1 - key.box.r0);
-      key.built = target;
+    const dC = this.dC;
+    // in keyframe intervals: the pair a, a+1 is shown while s runs over [a, a+1)
+    const s = (clock - this.c0) / dC - 2;
+    const a = Math.floor(s + 1e-9);
+    // a clock that leapt past the keyframe it needed next (a frame longer
+    // than an interval) cannot be followed from what was built
+    if (a >= 0 && !this.keys.some((k) => k.j === a + 1)) { this.reset(); return none('jump'); }
+
+    // ── build: each keyframe up to a+2 its share by now ──
+    // keyframe j is built while s runs over [j-2, j-1), a frame's share
+    // ahead of the clock, so it is whole by the last frame before it is
+    // shown; one that a long frame left short of that is finished now
+    const builds: CacheBuild[] = [];
+    const evoPerWind = this.rate.wind > 1e-9 ? this.rate.evo / this.rate.wind : 0;
+    for (let j = Math.max(0, a); j <= a + 2; j++) {
+      let key = this.keys.find((k) => k.j === j);
+      if (!key) {
+        // the slot neither of the two shown holds
+        const used = new Set(this.keys.filter((k) => k.j === a || k.j === a + 1).map((k) => k.slot));
+        const slot = [0, 1, 2].find((x) => !used.has(x))!;
+        this.keys = this.keys.filter((k) => k.slot !== slot);
+        // its clocks: each at its share of the clock's run to the keyframe's
+        // (the shares hold while the state does: both run at rates set by the wind)
+        const dc = this.c0 + (j + 2) * dC - clock;
+        const clocks: Clocks = {
+          time: f.clocks.time + (this.rate.time / rClock) * dc,
+          wind: f.clocks.wind + (this.rate.wind / rClock) * dc,
+          evo: f.clocks.evo + (this.rate.evo / rClock) * dc,
+        };
+        key = this.layout(j, slot, camera, aspect, dc / Math.max(rClock, 1e-12), clocks, viewPx, f.sig, W, H, dAz, dEl);
+        this.keys.push(key);
+      }
+      const cols = key.box.c1 - key.box.c0;
+      const share = Math.min(1, s - (j - 2) + 1 / N);
+      const target = Math.max(0, Math.min(cols, Math.ceil(share * cols - 1e-6)));
+      if (target > key.built) {
+        const done = target === cols;
+        const prev = this.keys.find((k) => k.j === j - 1 && k.built === k.box.c1 - k.box.c0) ?? null;
+        builds.push({ key, c0: key.box.c0 + key.built, c1: key.box.c0 + target, step: [dAz, dEl], evoPerWind, done, prev });
+        this.texelsBuilt += (target - key.built) * (key.box.r1 - key.box.r0);
+        key.built = target;
+      }
     }
 
     // ── show: keyframes a and a+1, if whole and holding the view ──
     const ka = this.keys.find((k) => k.j === a), kb = this.keys.find((k) => k.j === a + 1);
-    const plan = (show: CacheFramePlan['show'], reason: string): CacheFramePlan => ({ size: this.size, build, show, reason });
+    const plan = (show: CacheFramePlan['show'], reason: string): CacheFramePlan => ({ size: this.size, builds, show, reason });
     if (!ka || !kb || ka.built < ka.box.c1 - ka.box.c0 || kb.built < kb.box.c1 - kb.box.c0) return plan(null, 'warm');
     for (const k of [ka, kb]) {
       const e = viewExtent(camera, aspect, k.rect.azC);
@@ -348,7 +441,7 @@ export class SkyCacheScheduler {
       if (e.elHi + pad > k.cover.elHi || e.elLo - pad < k.cover.elLo) return plan(null, 'outside');
       if (e.azLo - pad < k.cover.azLo || e.azHi + pad > k.cover.azHi) return plan(null, 'outside');
     }
-    return plan({ a: ka, b: kb, mix: into / N }, 'ok');
+    return plan({ a: ka, b: kb, mix: Math.min(1, Math.max(0, s - a)) }, 'ok');
   }
 
   /** a keyframe's map and the texels of it to build */
@@ -367,7 +460,7 @@ export class SkyCacheScheduler {
       return {
         j, slot, rect, box: { c0: 0, c1: W, r0: 0, r1: H },
         cover: { azLo: -Infinity, azHi: Infinity, elLo: -Infinity, elHi: CACHE_EL0 + (H - 1) * dEl },
-        clocks, viewPx, sig, built: 0,
+        clocks, viewPx, sig, built: 0, morphed: 0,
       };
     }
     // a window round where the view will be at the middle of the keyframe's
@@ -395,7 +488,7 @@ export class SkyCacheScheduler {
         azLo: full ? -Infinity : (box.c0 - W / 2 + 1) * dAz, azHi: full ? Infinity : (box.c1 - W / 2 - 1) * dAz,
         elLo: box.r0 === 0 ? -Infinity : CACHE_EL0 + (box.r0 + 1) * dEl, elHi: CACHE_EL0 + (box.r1 - 1) * dEl,
       },
-      clocks, viewPx, sig, built: 0,
+      clocks, viewPx, sig, built: 0, morphed: 0,
     };
   }
 }
