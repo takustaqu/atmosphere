@@ -76,6 +76,20 @@ with other work, so to within some ±3%:
   a GPU that keeps up nothing changes; on a slow one the resolution gives way
   before frames drop.
 
+### Fixed
+
+- **No more small grey boxes in the sky beside a thunderhead.** The veil cap
+  (velum) was cut off at the azimuths where its spread fell under a
+  threshold, but the spread only lowered its field, and where the field's
+  blobs overlapped a sliver still came through as solid as a full cap: over
+  a tower whose head stops just short of the cap's height, a box a few
+  degrees wide — hard sides from the cut, a flat top and bottom from the
+  cap's falloff — hung in open sky or over the cumulus in front of it, in
+  the tower's tone (the summer sky at 14:00 looking south-east showed two).
+  The cap now thins with its spread, to nothing at the cut: those azimuths
+  leave at most a faint wisp, and a full cap's ends taper rather than stop.
+  The rest of the picture is unchanged; the sky cache draws the same stack.
+
 ## 0.8.0 — 2026-10-22
 
 The thunderhead in depth. The cumulonimbus is now ray-marched through a 3D

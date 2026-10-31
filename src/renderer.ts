@@ -5797,7 +5797,22 @@ void main() {
         float vfield = (vb - 0.58) * 1.4 + (spread - 0.42) * 1.7 - abs(dY) * 21.0;
         // a thin veil, so the edge dissolves broadly into the sky
         // (a cap over a rising head: a dying tower loses it)
-        float v = smoothstep(-0.16, 0.40, vfield) * u_cbFeat.y * (1.0 - decay) * stand;
+        // And it thins away with the spread itself, to nothing at the gate
+        // above. The spread only lowers the field, and the blobs it lowers
+        // overlap — up to twice the height of one where two meet — so a
+        // big one still came through at the smallest spread the gate let
+        // past, as solid as any: over a tower whose head stops short of
+        // the veil's height (reach a few hundredths), a sliver of cap a few
+        // degrees wide, cut off down its sides by the gate's own azimuths
+        // and along its top and bottom by the cap's falloff — a grey-white
+        // box hung in open sky beside the tower, or over the cumulus in
+        // front of it. Faded in over the first third of the spread, the
+        // azimuths where a head barely reaches the layer leave at most a
+        // faint wisp, and a full cap's ends taper rather than stop. (A
+        // straight ramp, last in the product: a smoothstep, or the ramp
+        // anywhere earlier, compiled the storm's frames 2–5% slower)
+        float v = smoothstep(-0.16, 0.40, vfield) * u_cbFeat.y * (1.0 - decay) * stand
+                * clamp((spread - 0.02) * 3.6, 0.0, 1.0);
         if (v > 0.001) {
           // lean the same slightly-blue white as the tower's daytime hi —
           // a neutral-warm white here reads as cream against the other layers
