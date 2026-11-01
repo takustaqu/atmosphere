@@ -369,19 +369,19 @@ float fbm4(vec2 p) {
 float fbm2(vec2 p) {
   return vnoise(p) * 0.667 + vnoise(p * 2.03 + vec2(17.3, 9.1)) * 0.333;
 }
-// fbm with its octaves told apart: b the first two together, then each of the
-// other three as it enters the sum (the sum itself exactly fbm's)
-float fbmOct(vec2 p, out vec4 b) {
-  float v = 0.0, a = 0.5, v2 = 0.0, v3 = 0.0, v4 = 0.0;
+// fbm (the sum itself exactly fbm's), and in b its three coarsest octaves alone,
+// the third at twice its weight, so a fold has a little relief in it
+float fbmCoarse(vec2 p, out float b) {
+  float v = 0.0, a = 0.5;
+  b = 0.0;
   for (int i = 0; i < 5; i++) {
-    v += a * vnoise(p);
-    if (i == 1) v2 = v;
-    if (i == 2) v3 = v;
-    if (i == 3) v4 = v;
+    float n = vnoise(p);
+    v += a * n;
+    if (i == 1) b = v;
+    if (i == 2) b += 2.0 * a * n;
     p = p * 2.03 + vec2(17.3, 9.1);
     a *= 0.5;
   }
-  b = vec4(v2, v3 - v2, v4 - v3, v - v4);
   return v;
 }
 // ── Camera ──────────────────────────────────────────────
@@ -968,17 +968,11 @@ const float CU_ENV = 0.45;
 // result the field's own part of the density (its estimate, the detail at
 // its mean, where the early-out skipped the detail), for the readings the
 // slab takes between its two planes.
-// lob is the small relief of a backlit crown (see the cumulus), only when lit is
-// asked for: the detail's own finer octaves with more weight than fbm gives
-// them, plus each one less its value at the sunward reading. Nothing more is
-// read for it: that reading sits a whole cell or two away at these octaves, so
-// the difference is no slope, only more unevenness, but of a mixed grain, and
-// it breaks up the level curves the octaves alone would show as blotches. It
-// is heaviest where the detail stands high (crisp), so the tops crumble and the
-// hollows stay smooth, and of mixed sizes rather than one even grain.
-// hold is how much of the three finer octaves the pixel can hold
-vec4 cuField(vec2 cuv, float churn, vec2 ldir, float edge, float clear, bool lit, out vec2 q, vec3 hold, out float lob) {
-  lob = 0.0;
+// form is the broad shape of a backlit crown (see the cumulus), only when lit is
+// asked for: the detail's coarse octaves, a few soft folds to a lump, and a little
+// of the lump's own rise away from the sun. About zero on average.
+vec4 cuField(vec2 cuv, float churn, vec2 ldir, float edge, float clear, bool lit, out vec2 q, out float form) {
+  form = 0.0;
   q = cuv + (0.30 + churn * 0.34) * vec2(
     fbm4(cuv * 1.6 + u_evo),
     fbm4(cuv * 1.6 - u_evo * 0.8)
@@ -990,20 +984,19 @@ vec4 cuField(vec2 cuv, float churn, vec2 ldir, float edge, float clear, bool lit
   if (dmax <= clear) return vec4(dmax, 0.0, 0.47, fmid);
   float inner = smoothstep(edge + 0.08, edge + 0.30, mix(fmid, lump, CU_ENV)) * 0.8;
   vec2 drift = vec2(u_evo * 0.33, -u_evo * 0.21);
-  vec4 bd, bds;
-  float det = fbmOct(q * 3.3 + 17.0 + drift, bd);
+  float fold;
+  float det = fbmCoarse(q * 3.3 + 17.0 + drift, fold);
   float field = (base * 0.64 + mix(det, 0.47, inner) * 0.36 - 0.5) * 2.2 + 0.5;
   float dcomb = mix(field, lump, CU_ENV);
   if (!lit || dcomb <= clear) return vec4(dcomb, 0.0, det, field);
   // the lit-ness: the field read again shifted toward the sun, and the
   // lumps' own slope that way (as the field's difference would have it)
   vec2 ql = q + ldir * 0.16;
-  float dl = fbm(ql) * 0.64 + mix(fbmOct(ql * 3.3 + 17.0 + drift, bds), 0.47, inner) * 0.36;
+  float dl = fbm(ql) * 0.64 + mix(fbm(ql * 3.3 + 17.0 + drift), 0.47, inner) * 0.36;
   float dfield = (base * 0.64 + mix(det, 0.47, inner) * 0.36) - dl;
-  float crisp = smoothstep(0.34, 0.60, det);
-  lob = ((bd.y * 4.48 - 0.28) * hold.x + (bd.z * 4.16 - 0.13) * hold.y + (bd.w * 5.12 - 0.08) * hold.z) * (0.4 + 0.6 * crisp)
-      + (bd.y - bds.y) * 5.0 * hold.x * (0.35 + 0.65 * crisp) + (bd.z - bds.z) * 3.0 * hold.y * crisp;
-  return vec4(dcomb, clamp(mix(dfield * 2.2, lump - cuLump(ql), CU_ENV) * 1.2, -1.0, 1.0), det, field);
+  float lumpL = cuLump(ql);
+  form = (fold - 0.5) * 2.3 + (lump - lumpL) * 0.8;
+  return vec4(dcomb, clamp(mix(dfield * 2.2, lump - lumpL, CU_ENV) * 1.2, -1.0, 1.0), det, field);
 }
 // ── The fibres a thin margin comes apart into ──
 // Cloud thinning into dry air under a shear is drawn out into fibres along
@@ -6287,12 +6280,9 @@ void main() {
     // more: past what the early-out spares, the climb below takes the field
     // at its estimate (w) and the lumps as they are
     vec2 q0, q1;
-    // (the finer octaves' share of the crown's relief, from two pixels a cell
-    // to five, reckoned along the ray where the plane is most drawn out)
-    float lobT, lobB;
-    vec3 cuHold = clamp(rdY * rdY / (PX_ANGLE(rd) * CU_ALT * (1.0 + cuK)) * vec3(0.0245, 0.0121, 0.0060) - 0.667, 0.0, 1.0);
-    vec4 dl = cuField(cuv, churn, ldir, edge, edge - CU_M - 0.01, false, q0, cuHold, lobB);
-    vec4 tl = cuField(tuv, churn, ldir, edge, edge - cuSoft - 0.05, true, q1, cuHold, lobT);
+    float formT, formB;
+    vec4 dl = cuField(cuv, churn, ldir, edge, edge - CU_M - 0.01, false, q0, formB);
+    vec4 tl = cuField(tuv, churn, ldir, edge, edge - cuSoft - 0.05, true, q1, formT);
     float dlz = max(dl.x, edge - CU_M);
     // ── One lump, not two pictures ──
     // Cut each plane at the threshold and lay one over the other, and a
@@ -6316,16 +6306,14 @@ void main() {
     // low in the sky split into a crown floating over its base
     float f0 = dl.w, f1 = tl.w;
     float h0 = dlz - edge;
-    float hmax = h0, lm = 0.0; // (lm: the lumps at a third of the climb, for the margin's fibres)
-    // (cuPath: at how many of the four heights the ray is inside the dome)
-    float cuPath = clamp(h0 * 8.33 + 0.167, 0.0, 1.0);
+    float hmax = h0, lm = 0.0, lt = 0.0; // (lm: the lumps at a third of the climb, for the margin's fibres; lt: at its top)
     for (int k = 1; k < 4; k++) {
       float u = float(k) / 3.0;
       float lk = cuLump(mix(q0, q1, u));
       if (k == 1) lm = lk;
+      lt = lk;
       float hk = mix(mix(f0, f1, u), lk, CU_ENV) - edge - CU_W * u * u;
       hmax = max(hmax, hk);
-      cuPath += clamp(hk * 8.33 + 0.167, 0.0, 1.0);
     }
     // How high up the lump the ray gets in, as a share of its way from the
     // foot to where it reaches deepest: 0 at the foot, 1 for a ray that only
@@ -6346,11 +6334,10 @@ void main() {
     // short they came out flat white cut-outs. backlitInView's gate for the
     // cumulus reads the same reach. (Read only near a lump: the fibres, the
     // lump and the fractus are all within CU_FR and a little of its margin)
-    float cuDayW = 0.0, cuBack = 0.0, cuBackD = 0.0;
+    float cuDayW = smoothstep(0.30, 0.50, sunEl), cuBack = 0.0, cuBackD = 0.0;
     vec3 cuShade = vec3(0.0), cuRim = vec3(0.0);
 #ifdef FEAT_BACKLIT
     if (hmax > -CU_FR - 0.05) {
-      cuDayW = smoothstep(0.30, 0.50, sunEl);
       float cuApart = sunApart(rd, sunDir, mix(0.5, 1.0, smoothstep(0.15, 0.60, sunEl)));
       float cuGate = backGate(sunDir);
       cuBack = (1.0 - smoothstep(0.30, mix(CU_BACK, CU_BACK_DAY, cuDayW), cuApart)) * cuGate;
@@ -6444,7 +6431,11 @@ void main() {
       alpha *= 1.0 - cbMask * (1.0 - smoothstep(0.08, 0.30, rd.y)) * 0.9;
       // the underside, eased in over the last few hundredths of density so
       // its flat grey and the flank's light meet without a drawn line
-      float undF = smoothstep(-0.02, 0.04, h0);
+      // (under a sun well up the two meet over the whole width the base's
+      // reading has: a sharp turn there is the line along the near edge of a
+      // flat grey base, in the old look that a lump eases into away from the sun)
+      float undW = cuDayW * backGate(sunDir);
+      float undF = smoothstep(-0.02 - 0.13 * undW, 0.04 + 0.10 * undW, h0);
       // how much of a lump this is: its deepest reach into the dome
       float thick = smoothstep(0.0, 0.40, hmax);
       // ── against the sun ──
@@ -6503,31 +6494,31 @@ void main() {
         // From some twenty degrees up the sun stands above and beyond the
         // lump and the face the eye sees is not one shade: it is the dark
         // core and bright fringe below only at a sunset, whose look is left
-        // as it is (cuDayW is exactly 0 there). Three things model it, each
-        // a tone rather than a drawn edge:
-        //   The light over the whole lump: how much cloud the ray has yet to
-        //   cross (cuPath, thick), so the top is brightest. Near flank and
-        //   underside are one dark mass (foot, by how low on the dome the ray
-        //   enters), meeting the crown across a wide ragged band with no line
-        //   at the base's near rim, and lightening to the thin far rim.
-        //   The big forms: the detail's coarse octaves (dT, the "folds" of
-        //   the crown) and the field's own slope to the sun, the lump's
-        //   lit-ness (tl.y), shift that light about, so grey masses drift
-        //   across several lobes and bright lobes overhang the dark.
-        //   The small relief (lob, see cuField), on top of those as a factor,
-        //   so it stays in the white and sinks in the grey.
-        // These are noise level sets, irregular and of mixed sizes. (Rounded
-        // single octaves shaded lobe by lobe, and cells shaded radially, both
-        // read as a heap of balls; the octaves read off the plane without the
-        // warp made an even sponge, so these are the field's own, on its warp.)
+        // as it is (cuDayW is exactly 0 there). The tone (T) is laid out from
+        // smooth things only, so that grey comes as broad shading:
+        //   The belly: where the lumps stand higher a third of the way up the
+        //   climb than at its top (lm against lt), the ray enters low on the
+        //   dome. Those are one octave of noise each, so near flank and underside
+        //   turn into the crown across a wide soft band, with no line at the
+        //   base's near rim, darkest under the lump's own middle (lm), and lighten
+        //   toward the thin far rim as the depth gives out (hmax, its slope kept
+        //   gentle: taken steeply, its level sets were dark tongues of their own).
+        //   The crown: bright, a little less so the deeper the lump (thick), so
+        //   its top and margins are its brightest, with broad folds across it
+        //   (form, see cuField). Those also move the belly's edge about, so a
+        //   dark mass runs up into the crown; on the crown's own upper part a
+        //   fold darkens half as far, so grey there stays a soft shading.
+        // Nothing finer goes into the tone. It once took the detail's fine
+        // octaves and the field's sunward difference through a steep curve, on a
+        // crown whose depth alone sat near the dark end, so the noise decided
+        // what was white and level sets of it came out as dark stains and
+        // specks, at their worst on the lumps high in a wide view; a relief of the
+        // finest octaves on top of that crumpled the lumps near the sun.
         // The tone works out as a share of each light, two numbers, not as
-        // colors, and the underside takes the climb's lump reading (lm), where
-        // the base's own detail would have kept one more number alive past all
-        // the reads between. That is measured rather than reasoned: with the
-        // base's detail here the frame went from some 3% over to 17% (an M2
-        // Max, a fair sky), a step and not a slope, as if this program sat just
-        // under some limit of what the GPU holds at once. Weigh any addition
-        // here against a timing
+        // colors. Weigh any addition here against a timing: with one more number
+        // kept alive past the climb's reads this program has been measured to go
+        // some 17% over (an M2 Max, a fair sky), a step and not a slope, as if it
+        // sat just under some limit of what the GPU holds at once
         float dA = 0.0, dB = 0.0;
         float dayW = cuDayW;
         if (dayW * cuBackD > 0.0) {
@@ -6535,16 +6526,15 @@ void main() {
           float tW = smoothstep(edge - cuSoft - 0.05, edge - cuSoft + 0.02, tl.x);
           // (the air flattens a far lump's darks)
           float cuNear = smoothstep(0.10, 0.40, rdY);
-          float dT = (tl.z - 0.47) * 2.667;
-          float big = mix((dT * 0.55 + tl.y * 0.9) * tW, (lm - 0.75) * 0.8, undF);
-          float foot = (1.0 - smoothstep(-0.2, 1.0, uHit + dT * 0.10 * tW)) * smoothstep(0.0, 0.34, hmax);
-          float G = mix(1.0 - mix(cuPath * 0.25, thick, 0.3) * 0.9, mix(0.34, 0.06, thick), foot * mix(0.55, 1.0, cuNear));
-          float T = smoothstep(-1.0, 0.70, big + (G - 0.44) * 2.2);
-          float Lr = smoothstep(-0.7, 0.7, lobT * tW * (1.0 - undF));
-          float M = mix(0.62, 1.08, Lr) * deep;
-          // (the thin margin stays the rim's, as below, and where the crown's
-          // reading gives out, at the fibres, Lr is its middle and the rim as it was)
-          dA = 0.62 * (1.0 - deep) * mix(0.86, 1.14, Lr) + 0.60 * T * M;
+          float form = formT * tW;
+          float low = smoothstep(-0.6, 0.1, lm - lt + form * 0.25);
+          float foot = low * smoothstep(-0.02, 0.50, hmax + form * 0.06);
+          float Tc = 0.83 + 0.45 * max(form, form * mix(0.5, 1.0, low)) - 0.14 * thick;
+          float Tb = mix(0.42, 0.08, smoothstep(0.45, 1.1, lm));
+          float T = clamp(mix(Tc, Tb, foot * mix(0.55, 1.0, cuNear)), 0.0, 1.0);
+          float M = mix(0.86, 1.0, T) * deep;
+          // (the thin margin stays the rim's, as below)
+          dA = 0.62 * (1.0 - deep) + 0.60 * T * M;
           dB = mix(mix(1.0, 0.70, cuNear), 0.52, T) * M;
         }
         vec3 bc = mix(cuRim * 0.62, cuShade * mix(1.05, 0.88, thick), deep);
