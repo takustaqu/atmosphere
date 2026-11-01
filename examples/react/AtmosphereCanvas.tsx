@@ -34,6 +34,11 @@ function useStableValue<T>(value: T): T {
   return ref.current;
 }
 
+// Every condition the props take has to reach the sky. A new one left out of
+// the component's list below fails the typecheck here, rather than being
+// accepted as a prop and silently doing nothing
+type EveryCondition = { [K in keyof Required<Conditions>]: Conditions[K] };
+
 export interface AtmosphereCanvasProps extends Conditions {
   /**
    * pass false to fade to black (drawing also stops once the fade completes,
@@ -88,7 +93,8 @@ export interface AtmosphereCanvasProps extends Conditions {
 
 export function AtmosphereCanvas({
   time: timeProp, location: locationProp, weather: weatherProp,
-  filter: filterProp, lens: lensProp, particles: particlesProp, ground: groundProp, sunset: sunsetProp, camera: cameraProp,
+  filter: filterProp, tone: toneProp, polarizer: polarizerProp, celestial: celestialProp,
+  lens: lensProp, particles: particlesProp, ground: groundProp, sunset: sunsetProp, camera: cameraProp,
   enabled = true,
   fps = 30,
   resolutionScale,
@@ -107,11 +113,17 @@ export function AtmosphereCanvas({
   const location = useStableValue(locationProp);
   const weather = useStableValue(weatherProp);
   const filter = useStableValue(filterProp);
+  const tone = useStableValue(toneProp);
+  const polarizer = useStableValue(polarizerProp);
+  const celestial = useStableValue(celestialProp);
   const lens = useStableValue(lensProp);
   const particles = useStableValue(particlesProp);
   const ground = useStableValue(groundProp);
   const sunset = useStableValue(sunsetProp);
   const camera = useStableValue(cameraProp);
+  const conditions: EveryCondition = {
+    time, location, weather, filter, tone, polarizer, celestial, lens, particles, ground, sunset, camera,
+  };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const skyRef = useRef<Atmosphere | null>(null);
@@ -123,7 +135,7 @@ export function AtmosphereCanvas({
   const [ready, setReady] = useState(false);
   // read the initial values via a ref so they aren't re-read on remount
   const initRef = useRef({
-    time, location, weather, filter, lens, particles, ground, sunset, camera,
+    ...conditions,
     fps, resolutionScale, animator, lightProbe, cloudScale, rays, adaptiveResolution,
   });
   // read through a ref, so a new callback each render never rebuilds the sky
@@ -146,8 +158,8 @@ export function AtmosphereCanvas({
   }, []);
 
   useEffect(() => {
-    skyRef.current?.set({ time, location, weather, filter, lens, particles, ground, sunset, camera });
-  }, [time, location, weather, filter, lens, particles, ground, sunset, camera]);
+    skyRef.current?.set(conditions);
+  }, [time, location, weather, filter, tone, polarizer, celestial, lens, particles, ground, sunset, camera]);
 
   // leave the fade to CSS, and stop drawing once it's no longer visible
   useEffect(() => {
