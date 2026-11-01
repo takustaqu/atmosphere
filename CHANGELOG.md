@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed
+
+- **Cumulus margins come apart into combed fibres.** A lump's margin was a
+  soft even blur round the whole of it. Now it thins along fine fibres drawn
+  out along the wind, curving and drawing together and apart as they run, and
+  past the old margin a thin veil of them trails out and fades to nothing,
+  further on the downwind side, with a ripple of crests running across them
+  in its thinnest parts. Some stretches of an outline fray and others keep the
+  old soft haze; the haze stays under the fibres, nothing is cut at a level, so
+  no shard or outline is drawn, and the bodies, flat bases, lit tops and
+  backlit cores are as they were. The veil is lit as the thin margin is: white
+  and bright toward the sun, its brightness following the fibres, a pale
+  translucent one away from it. A fibre is drawn only where the pixel can hold
+  it, so a wide view keeps the coarser ones, the far rows toward the horizon
+  are unchanged, and the drifting films change fewer pixels a frame than
+  before, or about as many. About a tenth more GPU time on a cumulus sky (M2
+  Max, 1080p: a fair sky 3.0 to 3.2 ms; a sky without cumulus or the thin
+  layers, some hundredths of a millisecond).
+- **Thin layers comb out at their edges too.** The edges of altocumulus and
+  cirrocumulus, grains and flocks alike, waver along the same fibres on some
+  stretches, so a sheet's margin dissolves in combed streaks rather than
+  standing as a torn paper edge. A trace of a layer is left as it was, and so
+  is any layer under a tower: storm skies change only at the cumulus's own
+  margins. A sky with cumulus and both layers thick is the most it costs, some
+  0.4 ms, about a sixth, at 1080p. Stratocumulus is unchanged.
+
 ## 0.9.0 — 2026-11-01
 
 Cumulus from photographs, and lighter frames. Fair-weather cumulus are large

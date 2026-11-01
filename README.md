@@ -46,7 +46,9 @@ be an easy way to get a sky that keeps changing procedurally.
   shaded blue-grey underside under a sunlit top, the line between them
   following the lump's form; the flat bottoms stack into rows toward the
   horizon, and ragged fractus drift at the lumps' margins. Toward the sun a
-  lump's core goes dark and its margin glows
+  lump's core goes dark and its margin glows. Margins thin out into fine fibres
+  combed along the wind, further on the downwind side, fading to nothing, and
+  the edges of altocumulus and cirrocumulus comb out the same way
 - **Cumulonimbus anvils** — a tower that reaches the tropopause spreads out horizontally
 - **Cloud lighting** — pseudo shading toward the sun, silver lining,
   blue-grey shadow from continuous thickness, flattening to diffuse light under overcast.
