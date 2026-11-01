@@ -891,6 +891,71 @@ vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp, float 
   return vec3(den, lit, dcomb);
 }
 
+// The cumulus's own reading of the field: cloudField's, less one thing and
+// with two more. x the raw density (dcomb), y the lit-ness, z the detail
+// octaves as they stand, for the shading of the crown's florets.
+// The detail is damped toward its mean inside a lump: added at full
+// strength everywhere it frays the margins as it should, but where a lump
+// is deep it also dug small pits through the middle of a sunlit crown,
+// blue holes in the brightest part of the cloud. And no density is cut to
+// an alpha here — the caller cuts the slab's two readings as one.
+// Where even the most the detail could add leaves the density at or under
+// clear, that most is returned instead (a bound: read it only as "at or
+// under clear"), and the detail and lit-ness are not read
+// The cumulus's lumps: one octave of the noise, coarse, cut soft — the
+// one feature size a single octave has, placed as irregularly as noise is
+// (see granular()). One texel read: a set of round blobs on a grid did the
+// same at nine hashes a reading, the whole cost of the cumulus again
+float cuLump(vec2 q) {
+  return 0.28 + smoothstep(0.35, 0.80, vnoise(q * 0.9 + 31.7)) * 0.85;
+}
+// how much of the density the lumps carry, against the field's own
+const float CU_ENV = 0.45;
+// The cumulus's reading of the field. A noise field cut at one threshold
+// meanders: it is sheets, streaks and fingers of cloud with blue lanes
+// through them, and toward the horizon the perspective drew every one out
+// into a streak pointing at the vanishing point. Real cumulus are separate
+// lumps, each one rising bubble, with blue between them. So the density is
+// part the field and part a set of lumps (cuLump), read on the field's own
+// warped plane so their outlines are the field's and never smooth: where
+// a lump stands the field is lifted into one compact cloud, between them
+// it falls away to blue.
+// x the raw density (cloudField's dcomb), y the lit-ness (only when lit is
+// asked for: the base's reading needs none), z the detail octaves, for the
+// florets the crown is shaded with. The detail is damped toward its mean
+// inside a lump: at full strength everywhere it frays the margins as it
+// should, but in a deep lump it also dug small pits through a sunlit
+// crown, blue holes in the brightest part of the cloud.
+// Where even the most the detail could add leaves the density at or under
+// clear, that most is returned (a bound: read it only as "at or under
+// clear"), and nothing more is read
+// q is where on the warped plane this reading was taken, and w of the
+// result the field's own part of the density (its estimate, the detail at
+// its mean, where the early-out skipped the detail), for the readings the
+// slab takes between its two planes
+vec4 cuField(vec2 cuv, float churn, vec2 ldir, float edge, float clear, bool lit, out vec2 q) {
+  q = cuv + (0.30 + churn * 0.34) * vec2(
+    fbm4(cuv * 1.6 + u_evo),
+    fbm4(cuv * 1.6 - u_evo * 0.8)
+  );
+  float lump = cuLump(q);
+  float base = fbm(q);
+  float fmid = (base * 0.64 + 0.47 * 0.36 - 0.5) * 2.2 + 0.5;
+  float dmax = mix((base * 0.64 + FBM_MAX * 0.36 - 0.5) * 2.2 + 0.5, lump, CU_ENV);
+  if (dmax <= clear) return vec4(dmax, 0.0, 0.47, fmid);
+  float inner = smoothstep(edge + 0.08, edge + 0.30, mix(fmid, lump, CU_ENV)) * 0.8;
+  vec2 drift = vec2(u_evo * 0.33, -u_evo * 0.21);
+  float det = fbm(q * 3.3 + 17.0 + drift);
+  float field = (base * 0.64 + mix(det, 0.47, inner) * 0.36 - 0.5) * 2.2 + 0.5;
+  float dcomb = mix(field, lump, CU_ENV);
+  if (!lit || dcomb <= clear) return vec4(dcomb, 0.0, det, field);
+  // the lit-ness: the field read again shifted toward the sun, and the
+  // lumps' own slope that way (as the field's difference would have it)
+  vec2 ql = q + ldir * 0.16;
+  float dl = fbm(ql) * 0.64 + mix(fbm(ql * 3.3 + 17.0 + drift), 0.47, inner) * 0.36;
+  float dfield = (base * 0.64 + mix(det, 0.47, inner) * 0.36) - dl;
+  return vec4(dcomb, clamp(mix(dfield * 2.2, lump - cuLump(ql), CU_ENV) * 1.2, -1.0, 1.0), det, field);
+}
 // How far a ray looks into the sun, as a cloud's lighting sees it: 1 for a
 // cloud standing in front of the disc, fading out by thirty-five degrees off
 // it — past that the face turned to the eye is the sun's side or its flank.
@@ -3517,23 +3582,28 @@ void main() {
   // drawn out along the wind (x on the plane), a lump a little longer than
   // it is broad, as the shear drags its turrets out
   const float CU_STR = 1.15;
-  // the crown's plane over the base's, as a fraction of the base's height:
-  // half again, a mediocris a few hundred metres to a kilometre deep. But
-  // two planes are two pictures of the field, shifted apart by the slab's
-  // depth over the distance — and once that shift outgrows a lump, the
-  // crown's picture of it no longer lies on its base's but floats clear
-  // above it, a white top over nothing over a grey base. So the depth is
-  // held to at most CU_KF field units of shift (a lump's half-depth), which
-  // takes over from a few tens of degrees up: the far lumps are drawn
-  // shallower than they stand, their crowns still sitting on their bases
-  const float CU_K = 0.5;
-  const float CU_KF = 0.9;
+  // the top of the slab over the base, as a fraction of the base's height:
+  // as deep again, a mediocris about as tall as it is wide. The climb
+  // between the planes is read at four heights (see the cumulus), and once
+  // the shift between two of them outgrows a lump the climb steps over it —
+  // a crown floating clear above its base. So the depth is held to at most
+  // CU_KF field units of shift in all, a lump and a half, which takes over
+  // from some forty degrees down: the far lumps are drawn shallower than
+  // they stand, still one cloud each
+  const float CU_K = 1.0;
+  const float CU_KF = 2.0;
   // how far the crown is carried downwind over its base, per unit of the
   // slab's depth: the wind aloft is the stronger, so a lump leans with it
   const float CU_LEAN = 0.35;
   // how far under the threshold the base's density is read (its early-out
-  // set below that), for the crown's shading and the fractus's gate
+  // set below that), for the climb and the fractus's gate
   const float CU_M = 0.15;
+  // how the lump narrows as it climbs: at height u (of the slab) it
+  // reaches as far as the density stands CU_W u² over the threshold
+  const float CU_W = 0.06;
+  // how far from the sun a lump is lit from behind (keep backlitInView's
+  // cumulus gate at the same reach)
+  const float CU_BACK = 1.0;
   // a cloud genus with amount 0 is skipped entirely — a clear sky costs almost nothing.
   // So is every plane layer below the horizon: each one's alpha carries
   // horizonFade, which is exactly zero there (half of every skybox bake)
@@ -5918,33 +5988,30 @@ void main() {
   }
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
   if (u_low.z > 0.02 && above && stack) {
-    // ── Cumulus as a slab: a top and a base ──
+    // ── Cumulus as a slab: a base and the climb above it ──
     // A cumulus is a column standing on a flat base, all its lumps on the
     // one level (where the rising air reaches its dew point), and seen from
     // below it is two things: a flat underside in its own shade, and a
-    // sunlit crown that shows past it. One plane cannot be both. So the same
-    // field is read on two planes — the base's, and the crown's set the slab's
-    // depth over it — and the two are composited top first, base last (the
-    // base is the nearer). Overhead the two project to the same place and the
-    // base sits inside the crown's margin; toward the horizon the crown
-    // projects above the base and stands clear of it, a white top over a
-    // grey bottom. The base's lower edge is the far rim of its footprint,
-    // and a footprint on a level plane, seen ever more edge-on with
-    // distance, draws a ruler-flat line — the flat bottoms a photograph's
-    // cumulus stack up toward the horizon in.
+    // sunlit body that shows past it. So the field is read on two planes —
+    // the base's, and one the slab's depth over it — and a ray is followed
+    // up through the slab between them (see the climb, below). Where it is
+    // already inside a lump at the base it sees the underside; where it
+    // passed in front of the lump at the base and gets in further up, the
+    // flank and the crown. The base's lower edge is the far rim of its
+    // footprint, and a footprint on a level plane, seen ever more edge-on
+    // with distance, draws a ruler-flat line — the flat bottoms a
+    // photograph's cumulus stack up toward the horizon in.
     //
     // The two do not take one light. The base is the underside: a smooth
-    // blue-grey with nothing of its own to model. The crown is the flank
-    // and the top, and how high up the flank a ray meets the lump is what
-    // turns it from that grey to white: just over the base's near edge the
-    // ray meets the lump at its foot, in the shade of the body above it;
-    // a little higher it has passed in front of the lump at the base's
-    // level and meets it further up, where the sun is on it. Read off the
-    // two planes' densities (see tH), so the line between grey and white
-    // follows each lump's own form, a fairly sudden turn rather than a
+    // blue-grey with nothing of its own to model. The flank turns from that
+    // grey to white by how high up it the ray gets in: just over the base's
+    // near edge, at the lump's foot, in the shade of the body above it; a
+    // little higher, where the sun is on it. So the line between grey and
+    // white follows each lump's own form, a fairly sudden turn rather than a
     // shading laid over the whole layer. (Shaded instead by the field's own
     // light, the slab came out a uniform grey-white with grey blotches
-    // scattered through it at random, a camouflage print.)
+    // scattered through it at random, a camouflage print.) Against the sun
+    // a lump is lit from behind instead: its core dark, its margin glowing.
     //
     // during high wind the whole sky wobbles slightly.
     // driven by u_windOff (which only advances in wind) so the phase is
@@ -5956,6 +6023,11 @@ void main() {
     );
     // the smaller the amount, the higher the threshold — sparse clouds only sprout here and there
     float edge = 0.88 - u_low.z * 0.52;
+    // and fewer of them round a thunderstorm: the air a towering cloud lifts
+    // comes down again around it, warmed as it sinks, and the small cumulus
+    // in that ring are suppressed — the clear sky a tower stands in, rather
+    // than a field of lumps laid over its foot
+    edge += 0.12 * smoothstep(0.10, 0.60, u_low.w);
     // The amount sets how much of the sky the lumps cover (the threshold
     // above), not how solid each one is: scaled by it as well, a fair sky's
     // grey bases came out at 60% and the blue showed through them in muddy
@@ -5984,9 +6056,16 @@ void main() {
     // core shows the eye its shadowed face and goes a blue-grey (violet at
     // dusk), while a thin lump and every lump's margin glow with the light
     // coming through them. The thin ones carry the day here — a fair sky's
-    // small cotton round the sun stays bright, only real cores darken
+    // small cotton round the sun stays bright, only real cores darken.
+    // Reaching out to CU_BACK from the sun, not the tower's thirty-five
+    // degrees: a lump fifty degrees off a high sun still shows the eye its
+    // far, shaded side (the sunward cumulus of a photograph, dark-cored with
+    // a bright fringe, stand well out from the sun), and with the reach that
+    // short they came out flat white cut-outs. backlitInView's gate for the
+    // cumulus reads the same reach
 #ifdef FEAT_BACKLIT
-    float cuBack = backlit(rd, sunDir, mix(0.5, 1.0, smoothstep(0.15, 0.60, sunEl)));
+    float cuBack = (1.0 - smoothstep(0.30, CU_BACK, sunApart(rd, sunDir, mix(0.5, 1.0, smoothstep(0.15, 0.60, sunEl)))))
+                 * backGate(sunDir);
 #else
     const float cuBack = 0.0;
 #endif
@@ -6018,21 +6097,60 @@ void main() {
     float cuFlank = 1.6 * (1.0 - cuAz * cuAz) * cuSide;
     float cuBias = -cuAz * 0.30 * cuSide;
 
-    // ── The crown and the base ──
+    // ── The base and the top of the slab ──
     vec2 cuStr = vec2(1.0 / CU_STR, 1.0);
-    // the slab's depth as the crown's plane is set over the base's, held to
-    // a lump's half-depth of shift where the base is crossed further off
-    // than that allows (see CU_K): xb is how far off, in field units
+    // the slab's depth as the top plane is set over the base's, held to
+    // CU_KF of shift where the base is crossed further off than that allows
+    // (see CU_K): xb is how far off, in field units
     float xb = length(rd.xz) / rdY * CU_ALT;
     float cuK = min(CU_K, CU_KF / max(xb, 1e-3));
     vec2 cuv = (planeUV(rd, rdY, CU_ALT, u_windOff / CU_L) + wob) * cuStr;
     vec2 tuv = (planeUV(rd, rdY, CU_ALT * (1.0 + cuK), u_windOff / CU_L) + wob
               + vec2(CU_LEAN * cuK * CU_ALT, 0.0)) * cuStr;
-    // the base first: the crown's shading reads it. Only its depth below the
-    // threshold to CU_M is read, so its early-out stays exact
-    vec3 dl = cloudField(cuv, churn, ldir, edge - cuSoft, cuRamp, edge - CU_M - 0.01);
-    vec3 tl = cloudField(tuv, churn, ldir, edge - cuSoft, cuRamp, edge - cuSoft - 0.01);
-    float dlz = max(dl.z, edge - CU_M);
+    // The base is read down to CU_M under the threshold (the fractus's gate
+    // reads it there), the crown only to the lumps' soft margin and a little
+    // more: past what the early-out spares, the climb below takes the field
+    // at its estimate (w) and the lumps as they are
+    vec2 q0, q1;
+    vec4 dl = cuField(cuv, churn, ldir, edge, edge - CU_M - 0.01, false, q0);
+    vec4 tl = cuField(tuv, churn, ldir, edge, edge - cuSoft - 0.05, true, q1);
+    float dlz = max(dl.x, edge - CU_M);
+    // ── One lump, not two pictures ──
+    // Cut each plane at the threshold and lay one over the other, and a
+    // lump was two soft copies of itself shifted along the line of sight:
+    // seen from thirty degrees up and more, a streak pointing at the
+    // horizon's vanishing point rather than a cumulus. So the slab is read
+    // as the density along the ray as it climbs through it, u 0 at the base
+    // and 1 at the crown's plane, and the lump as a dome on its base: at
+    // height u it reaches only as far as the density stands CU_W u² over
+    // the threshold, wide and flat at the foot, narrowing to its crown. One
+    // question then decides the pixel: does the ray, anywhere on its climb,
+    // get inside the dome? Its deepest reach, hmax, sets the alpha —
+    // one outline, one soft margin — and where it first gets in, uHit, sets
+    // the light. The flat base is the dome's foot: below its far rim the ray
+    // passes under the lump.
+    // The climb is read at four heights. Its two ends are the planes' full
+    // readings; between them the field is taken straight across (the warp's
+    // place on the plane too) and only the lumps — one texel each — read
+    // afresh: with the ends alone, a ray that passed in front of a lump at
+    // the base and over it at the crown never met its side, and a lump seen
+    // low in the sky split into a crown floating over its base
+    float f0 = dl.w, f1 = tl.w;
+    float h0 = dlz - edge;
+    float hmax = h0;
+    for (int k = 1; k < 4; k++) {
+      float u = float(k) / 3.0;
+      float hk = mix(mix(f0, f1, u), cuLump(mix(q0, q1, u)), CU_ENV) - edge - CU_W * u * u;
+      hmax = max(hmax, hk);
+    }
+    // How high up the lump the ray gets in, as a share of its way from the
+    // foot to where it reaches deepest: 0 at the foot, 1 for a ray that only
+    // grazes the dome. Taken off the climb's straight line rather than found
+    // as where it first crosses — among four heights the first crossing
+    // jumps from one to the next as an earlier bump comes up, and the light
+    // jumped with it, a flicker along lines through the lumps
+    float uHit = clamp(-h0 / max(hmax - h0, 0.02), 0.0, 1.0);
+    float den = smoothstep(-cuSoft - 0.01, cuRamp - cuSoft, hmax);
     // the air between: a distant lump takes on the horizon's color and its
     // shading goes flat with it, and only the last degrees fade it out —
     // where horizonFade had every lump turning translucent from fourteen
@@ -6043,60 +6161,80 @@ void main() {
     float cuAir = 1.0 - exp(-(0.35 + 0.40 * u_haze) * 0.05 / rdY);
     vec3 airCu = skyWeather(airSky, dayF, gloom);
     float cuFadeH = smoothstep(0.03, 0.12, rd.y);
-    // the crown
-    if (tl.x > 0.0) {
-      float talpha = tl.x * solid * cuFadeH;
-      talpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, tl.x)) * 0.92;
-      // how high up the flank this ray meets the cloud: where between the
-      // base's plane and the crown's the density, read off the two and
-      // taken as straight between them, crosses the threshold. Just over the
-      // base's near edge that is at its foot; higher, the ray has passed in
-      // front of the lump at the base and met it further up
-      float tH = clamp((edge - dlz) / max(tl.z - dlz, 0.02), 0.0, 1.0);
-      float thickC = smoothstep(edge, edge + 0.30, tl.z);
-      // (and only where the cloud is solid: a thin margin is lit through,
-      // a white with the blue behind it, never a translucent grey)
-      float shadeF = (1.0 - smoothstep(0.06, 0.42, tH)) * mix(0.20, 0.90, thickC)
-                   * smoothstep(0.25, 0.85, tl.x);
-      float tgrad = clamp(((tl.z - 0.5) / 2.2 + 0.5 - tl.z + tl.y / 2.5) * 16.0, -1.0, 1.0);
-      float tlit = tl.y * 0.6 + tgrad * cuFlank * 0.5 + cuBias + 0.30;
-      tlit = mix(tlit, -0.35, shadeF);
-      vec3 tc = cloudColor(tl.x, tlit, shadeF * 0.95 + thickC * 0.12, dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun, 0.0);
-      if (cuBack > 0.0) {
-        float thin = 1.0 - smoothstep(edge, edge + 0.30, tl.z);
-        float deep = smoothstep(edge + 0.05, edge + 0.65, tl.z);
-        vec3 bc = mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin);
-        tc = mix(tc, bc, cuBack);
-      }
-#ifdef FEAT_CB
-      if (cbMask > 0.001) tc = overTower(tc, 1.0 - smoothstep(edge, edge + 0.30, tl.z), cbMask, cbCol, cbBack, cbGlow);
-#endif
-      tc = mix(tc, airCu, cuAir);
-      OVERM(tc, talpha * 0.97, MV_PLANE(CU_ALT * (1.0 + cuK), 1.0 / CU_L) + MV_WOB(CU_ALT * (1.0 + cuK)));
-    }
-    // the base: the flat underside, in the lump's own shadow and lit by the
-    // sky and the ground — a smooth blue-grey, darker the more cloud there
-    // is over it, and with no bumps of its own to shade; a sun low enough
-    // gets under it
-    if (dl.x > 0.0) {
-      float alpha = dl.x * solid * cuFadeH;
-      alpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, dl.x)) * 0.92;
-      float thickB = smoothstep(edge + 0.10, edge + 0.55, dl.z) * mix(0.50, 0.90, smoothstep(0.35, 0.75, u_low.z));
+    if (den > 0.0) {
+      float alpha = den * solid * cuFadeH;
+      alpha *= 1.0 - cbMask * (1.0 - smoothstep(0.60, 0.97, den)) * 0.92;
+      // and over a tower, the lumps low in the sky go: there they are far
+      // off, flattened into plates by the distance, and laid across the
+      // tower's foot each was a grey disc with a lit rim, a clutter over the
+      // mass. (They faded out there before, with every lump near the
+      // horizon; a tower's own skirt of cumulus is its own)
+      alpha *= 1.0 - cbMask * (1.0 - smoothstep(0.08, 0.30, rd.y)) * 0.9;
+      // the underside, eased in over the last few hundredths of density so
+      // its flat grey and the flank's light meet without a drawn line
+      float undF = smoothstep(-0.02, 0.04, h0);
+      // how much of a lump this is: its deepest reach into the dome
+      float thick = smoothstep(0.0, 0.40, hmax);
+      // ── its light, side- and front-lit ──
+      // The flank turns from the base's grey to white by how high up it the
+      // ray gets in: low on it, in the shade of the body above; higher, in
+      // the sun. A fairly sudden turn, following each lump's own form — the
+      // line between the lit crown and the shaded foot. A thin margin is lit
+      // through, a white over the blue, never a translucent grey. The crown
+      // carries its florets: the field's lit-ness toward the sun, and soft
+      // soft grey folds where the detail octaves run low
+      float opq = smoothstep(0.25, 0.85, den);
+      float rel = uHit;
+      // (with the sun behind the eye the flank in view faces it, lit to its
+      // foot, and only the underside is left in shade)
+      float shadeF = (1.0 - smoothstep(0.12, 0.55, rel)) * mix(0.20, 0.90, thick) * opq
+                   * (1.0 - 0.6 * max(-cuAz, 0.0) * smoothstep(0.05, 0.25, sunEl));
+      // (the florets soft grey where the detail sits low: a fold between them)
+      float crease = (1.0 - smoothstep(0.30, 0.50, tl.z)) * smoothstep(0.4, 0.8, rel) * thick;
+      float tgrad = clamp(tl.y * 3.0, -1.0, 1.0);
+      float wlit = tl.y * 1.0 + tgrad * cuFlank * 0.5 + cuBias + 0.30 - crease * 0.45;
+      wlit = mix(wlit, -0.35, shadeF);
+      // the underside: a smooth blue-grey, darker only under a big lump,
+      // with nothing of its own to shade; a sun low enough gets under it
+      float thickB = smoothstep(0.10, 0.55, h0) * mix(0.50, 0.90, smoothstep(0.35, 0.75, u_low.z));
       float under = smoothstep(0.30, 0.02, sunEl);
-      float opq = smoothstep(0.25, 0.85, dl.x);
-      float baseLit = mix(0.30, mix(-0.35, 0.45, under), opq);
-      vec3 c = cloudColor(dl.x, baseLit, mix(0.15, 1.0, thickB) * (1.0 - 0.8 * under) * opq, dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun, 0.0);
+      float blit = mix(0.30, mix(-0.35, 0.45, under), opq);
+      float bsh = mix(0.15, 1.0, thickB) * (1.0 - 0.8 * under) * opq;
+      vec3 c = cloudColor(den, mix(wlit, blit, undF),
+                          mix(shadeF * 0.95 + thick * 0.12 + crease * 0.25, bsh, undF),
+                          dayF, nightM, sunsetF, flash, gloom, 1.0, cloudSun, 0.0);
+      // ── against the sun ──
+      // Seen toward the sun a lump shows its shaded side, and what light
+      // reaches the eye has come through it: a thick core lets almost none
+      // through and goes a dark blue-grey, while a thin margin, a tuft, a
+      // fragment — an optical depth about one — sends the sun's light on
+      // forward and glows, a silver lining hugging the outline, the
+      // brighter the nearer the sun. The depth is the dome's: how far the
+      // ray gets into it. The glow is the light scattered once forward,
+      // tau·e^-tau of it, by a Henyey–Greenstein phase (g 0.6) toward the
+      // sun — strong only within some tens of degrees of it — so as the
+      // view turns from side-lit to backlit the glow grows out of the lit
+      // flank continuously, and the darkening of the core rides cuBack
+      // (zero away from the sun) the same way
+      // (its florets show in it, as the thicker and thinner parts of a core
+      // a backlit lump is all but black and grey through)
+      float tau = (14.0 * max(hmax + cuSoft, 0.0) + 0.2) * (1.0 + (tl.z - 0.47) * 1.6 * thick);
+      float cosS = cos(sunAng);
+      float hg = 0.64 / pow(1.36 - 1.2 * cosS, 1.5);
+      float fwd = tau * exp(-tau) * hg * backGate(sunDir) * (1.0 - gloom);
       if (cuBack > 0.0) {
-        float thin = 1.0 - smoothstep(edge, edge + 0.30, dl.z);
-        float deep = smoothstep(edge + 0.05, edge + 0.65, dl.z);
-        vec3 bc = mix(mix(cuRim * 0.75, cuShade, deep), cuRim, thin * thin);
-        c = mix(c, bc, cuBack);
+        float deep = 1.0 - exp(-tau / 2.6);
+        vec3 bc = mix(cuRim * 0.62, cuShade * mix(1.05, 0.88, thick), deep);
+        // (strongest against the sun itself, easing in from the reach)
+        c = mix(c, bc, cuBack * cuBack * mix(0.7, 1.0, deep));
       }
+      c += mix(cloudSun, cuRim, cuBack * 0.5) * fwd * 0.22 * max(dayF, sunsetF) * (1.0 - cbMask);
 #ifdef FEAT_CB
-      if (cbMask > 0.001) c = overTower(c, 1.0 - smoothstep(edge, edge + 0.30, dl.z), cbMask, cbCol, cbBack, cbGlow);
+      if (cbMask > 0.001) c = overTower(c, 1.0 - thick, cbMask, cbCol, cbBack, cbGlow);
 #endif
       c = mix(c, airCu, cuAir);
-      OVERM(c, alpha * 0.97, MV_PLANE(CU_ALT, 1.0 / CU_L) + MV_WOB(CU_ALT));
+      float hAlt = CU_ALT * (1.0 + uHit * 0.5 * cuK);
+      OVERM(c, alpha * 0.97, MV_PLANE(hAlt, 1.0 / CU_L) + MV_WOB(hAlt));
     }
     // ── Fractus: the ragged fragments round the lumps ──
     // A growing cumulus sheds small ragged pieces about its margin and a
@@ -6467,7 +6605,7 @@ void main() {
         // field read on its base's plane at the lumps' own scale and stretch
         // (x is in the old plane's units, ALT_LOW × 2.5; see CU_L)
         vec2 x = (wp + toSun * 601.0) * toPlane;
-        float edgeS = 0.88 - u_low.z * 0.52;
+        float edgeS = 0.88 - u_low.z * 0.52 + 0.12 * smoothstep(0.10, 0.60, u_low.w);
         edgeS += (fbm2((x + vec2(u_windOff * 0.7, u_windOff * 0.105)) * 0.045 + 61.0) - 0.5)
                * 0.34 * (1.0 - smoothstep(0.55, 0.9, u_low.z));
         vec3 cs = cloudField((x + vec2(u_windOff, u_windOff * 0.15)) / CU_L * vec2(1.0 / CU_STR, 1.0), churn, ldir,
@@ -7360,7 +7498,7 @@ export function featureKeys(s: AtmosphereState, rays = 0, cumulonimbus: Cumuloni
  * gate is a direction: a cloud takes it only within a few tenths of a radian
  * of the sun as sunApart measures it (the tower's backT out to 0.60–1.65,
  * by how low the sun is, its aura and its plate's to no further; a cumulus's
- * to 0.60, its angle squashed differently), and the frame is a window a
+ * to 1.0, CU_BACK, its angle squashed differently), and the frame is a window a
  * radian or so across. Turned away from the sun every one of those terms is
  * exactly nothing for every pixel, and the program carrying them was some
  * tenth slower for it (an M2 Max, 1080p: a sky of towers seen with the sun
@@ -7384,7 +7522,7 @@ export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number
   const lowS = 1 - smooth(0.20, 0.55, sunY);
   const lift = smooth(0.15, 0.60, sunY);
   // [the tower's squash, its reach] and the cumulus's
-  const gates: [number, number][] = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 0.60]];
+  const gates: [number, number][] = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 1.0]];
   const drops = s.rain > 0.05 && s.lens.droplets > 0.001;
   const span = drops ? 1.6 : 1;
   const NX = 24, NY = 16;

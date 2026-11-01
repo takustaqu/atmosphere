@@ -191,7 +191,7 @@ describe('backlitInView', () => {
     const ce = Math.cos(s.sunElevation);
     const sun = [ce * Math.sin(s.sunAzimuth), Math.sin(s.sunElevation), ce * Math.cos(s.sunAzimuth)];
     const lowS = 1 - sm(0.20, 0.55, sun[1]), lift = sm(0.15, 0.60, sun[1]);
-    const gates = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 0.60]];
+    const gates = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 1.0]];
     const t = Math.tan(cam.fov / 2);
     let least = Infinity;
     for (let j = 0; j <= 90; j++) for (let i = 0; i <= 160; i++) {
