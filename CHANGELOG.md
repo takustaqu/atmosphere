@@ -4,6 +4,30 @@
 
 ### Changed
 
+- **Sun dogs form in any thin ice cloud, and show a spectrum.** They were a
+  red-to-white smear drawn only under a cirrostratus veil. Now a dog forms
+  wherever cirrus, a veil or cirrocumulus passes level with the sun, patchy with
+  that cloud, so it comes and goes as the cloud drifts through it: no ice at its
+  place, no dog, and water cloud in front hides it. It is a compact soft spot,
+  red on the side toward the sun, through orange and yellow to a hint of green
+  and blue, with a pale tail away from it, on both sides of the sun, redder
+  beside a red one. Brightest with the sun below some 20°, fading out by 44°.
+  The place was wrong too: 22° / cos e of azimuth kept a dog on the 22° ring
+  however high the sun. It now stands at the minimum deviation of a 60° prism
+  for rays inclined by the sun's elevation (`parhelionAzimuth`, checked in the
+  tests against a ray traced through the prism): 21.8° of azimuth with the sun
+  on the horizon, 28.7° at 30, 36.3° at 40, so it draws out from the ring as the
+  sun climbs. The veil's ring, pillar and circumzenithal arc are as they were.
+  The dogs have a `FEATURE.DOGS` of their own, off the veil's halos, and are
+  drawn in a second draw of the frame, scissored to the small rectangles they
+  can fall in: carried by the program that draws the whole frame they cost
+  it a tenth to a sixth of its time, with a dog in view or not. Skies with no ice, or a sun above
+  45°, are the same picture; on others only the dogs' rectangles change, by
+  at most one level where no dog shows (in a tiny fraction of those pixels).
+  GPU time on an M2 Max at 1080p is unchanged within the noise looking away or
+  under a clear sky; with a dog in view some 2% (a fair sky 2.96 to 3.02 ms). Under
+  `cloudScale` and the sky cache likewise. The controller's Sky phenomena drawer
+  has a Sun dogs chip.
 - **Daytime cumulus are modelled against the sun.** With the sun some twenty
   degrees up and more, a lump looked toward the sun was a flat white crown over
   a flat grey base with a line between them. Now the top of a lump is brightest,

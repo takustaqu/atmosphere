@@ -62,8 +62,9 @@ be an easy way to get a sky that keeps changing procedurally.
 - **Severe weather** — lightning that shows its bolt now and then, cloud turbulence from high wind,
   and rain shafts hanging under a distant thunderhead or rain deck — virga that evaporates on
   the way down, or a curtain that reaches the ground
-- **Optics** — the 22° halo with sun dogs, a sun pillar and the circumzenithal arc through
-  cirrostratus, a moon halo and corona, iridescence on thin cloud edges near the sun,
+- **Optics** — the 22° halo, a sun pillar and the circumzenithal arc through cirrostratus,
+  sun dogs wherever thin ice cloud passes level with a low sun, a moon halo and corona,
+  iridescence on thin cloud edges near the sun,
   and a rainbow with its secondary and Alexander's band when the sun is out in the rain
 - **The sea** — optionally, open water below the horizon that mirrors the sky, with a swell,
   the sun's path across it, whitecaps in a high wind, cloud shadows on the water and the
@@ -827,7 +828,10 @@ when their state is on, because a block that is never run still costs every
 frame by being there. The light from behind — the backlit and side-lit
 shading of the towers and the cumulus — is left out of a view turned away
 from the sun as well, where none of it can show: a frame of towers seen with
-the sun behind or beside you is about a tenth lighter for it. A feature coming on later gets its variant compiled
+the sun behind or beside you is about a tenth lighter for it. The sun dogs
+have a program of their own that redraws only the small rectangles they can
+fall in, over the frame drawn without them, so a sky with them costs a few
+percent with a dog in view and nothing otherwise. A feature coming on later gets its variant compiled
 then, in the background; the frames in between are drawn with the previous
 variant, so the feature appears a fraction of a second after it is asked for
 rather than the picture blanking. `set()` starts that compile ahead of the
@@ -877,7 +881,7 @@ Because drawing is ray-basis, this isn't a flat background — it's the same as
 looking around the inside of a skybox draped over the scene. Press "Bake 6 faces"
 and that same sky gets baked into a cubemap on the spot.
 
-The "Sky phenomena" drawer has buttons for a rainbow, the 22° halo and the
+The "Sky phenomena" drawer has buttons for a rainbow, the 22° halo, sun dogs and the
 aurora. Each only shows under the right conditions and in the right direction
 (a rainbow needs rain falling while the sun is out and lower than 42°, and
 stands opposite the sun), so each sets the weather it needs and turns the
