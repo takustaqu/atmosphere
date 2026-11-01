@@ -45,7 +45,8 @@ be an easy way to get a sky that keeps changing procedurally.
 - **Cumulus on a level base** — every lump stands on the same flat base, a
   shaded blue-grey underside under a sunlit top, the line between them
   following the lump's form; the flat bottoms stack into rows toward the
-  horizon, and ragged fractus drift at the lumps' margins
+  horizon, and ragged fractus drift at the lumps' margins. Toward the sun a
+  lump's core goes dark and its margin glows
 - **Cumulonimbus anvils** — a tower that reaches the tropopause spreads out horizontally
 - **Cloud lighting** — pseudo shading toward the sun, silver lining,
   blue-grey shadow from continuous thickness, flattening to diffuse light under overcast.
