@@ -43,7 +43,7 @@ export interface Weather {
   visibility?: number;
   /**
    * 0..1 a floor under how settled the ice's plate crystals are, which is what
-   * makes sun dogs. Left at 0 the sky decides for itself over tens of minutes,
+   * makes parhelia. Left at 0 the sky decides for itself over tens of minutes,
    * and most skies with ice show none; 1 is a clear pair whatever the clock says,
    * wherever there is ice for them and a sun below some 45°
    */

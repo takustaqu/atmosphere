@@ -311,7 +311,7 @@ note('Some of the sky only shows under the right conditions and in the right '
     [
       { id: 'rainbow', label: 'Rainbow' },
       { id: 'halo', label: '22° halo' },
-      { id: 'dogs', label: 'Sun dogs' },
+      { id: 'parhelia', label: 'Parhelia' },
       { id: 'moonhalo', label: 'Moon halo' },
       { id: 'mooncloud', label: 'Moon behind clouds' },
       { id: 'iridescence', label: 'Iridescence' },
@@ -324,7 +324,7 @@ note('Some of the sky only shows under the right conditions and in the right '
     ],
     () => false,
     (id) => {
-      // (only the Sun dogs chip holds the plates settled, and it stays held
+      // (only the Parhelia chip holds the plates settled, and it stays held
       // until the weather is next changed by a chip or a preset)
       if (id !== 'away' && id !== 'toward') ui.weather = { ...ui.weather, icePlates: 0 };
       if (id === 'rainbow') {
@@ -344,9 +344,9 @@ note('Some of the sky only shows under the right conditions and in the right '
           cirrostratus: 0.75, cumulus: 0.08 };
         const s = sunNow();
         look(s.sunAzimuth, s.sunElevation, 1.3);
-      } else if (id === 'dogs') {
+      } else if (id === 'parhelia') {
         // thin ice drifting across a low sun's level, with the sun and both
-        // dogs in the frame. A thin veil under the cirrus, so there is ice at
+        // parhelia in the frame. A thin veil under the cirrus, so there is ice at
         // them whichever strands happen to be passing, and the plates held
         // settled: left to itself most of the sky goes without
         sunBetween(8, 25, 16.5);
@@ -428,7 +428,7 @@ note('Some of the sky only shows under the right conditions and in the right '
   note('Rainbow: rain falling while the sun is out and lower than 42°; the bow stands '
     + '42° from the point straight away from the sun, so face away from it. '
     + 'Halo: a cirrostratus veil, the ring 22° around the sun — or the moon, at night, '
-    + 'where the moonlit veil glows round it. Sun dogs: wherever thin ice cloud, cirrus '
+    + 'where the moonlit veil glows round it. Parhelia (sun dogs): wherever thin ice cloud, cirrus '
     + 'or a veil, passes level with a sun below 45°, a small spot of spectrum either '
     + 'side of it, red toward the sun, 22° out and further as it climbs; water cloud '
     + 'hides them. They take plate crystals settled flat, so left to itself most icy sky '

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys, parhelionAzimuth, sunDogAmounts, sunDogPlates, sunDogRects, sunDogShape } from '../src/renderer.js';
+import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys, parhelionAzimuth, parheliaAmounts, parheliaPlates, parheliaRects, parheliaShape } from '../src/renderer.js';
 import { stackSignature } from '../src/skycache.js';
 import { resolveWeather } from '../src/weather.js';
 import { resolveConditions } from '../src/state.js';
@@ -184,9 +184,9 @@ describe('featureKey', () => {
   });
 });
 
-describe('sun dogs', () => {
+describe('parhelia', () => {
   const DEG = Math.PI / 180;
-  const bit = (c: Parameters<typeof resolveConditions>[0]) => featureKey(resolveConditions(c)) & FEATURE.DOGS;
+  const bit = (c: Parameters<typeof resolveConditions>[0]) => featureKey(resolveConditions(c)) & FEATURE.PARHELIA;
 
   // A ray traced through a 60° prism standing upright, its faces' normals
   // level: Snell at each face in 3D, the deviation read as the azimuth between
@@ -225,19 +225,19 @@ describe('sun dogs', () => {
     expect(parhelionAzimuth(30 * DEG) / DEG).toBeCloseTo(28.7, 0);
     expect(parhelionAzimuth(45 * DEG) / DEG).toBeCloseTo(42.5, 0);
     // and across the sky too, not just in azimuth: the old 22° / cos e kept
-    // the dog on the ring. At 30 up one stands near 25° from the sun
+    // the parhelion on the ring. At 30 up one stands near 25° from the sun
     const apart = (e: number) => Math.acos(Math.sin(e) ** 2 + Math.cos(e) ** 2 * Math.cos(parhelionAzimuth(e)));
     expect(apart(30 * DEG) / DEG).toBeGreaterThan(24.5);
     expect(apart(30 * DEG)).toBeGreaterThan(apart(0) + 2 * DEG);
   });
 
   it('are brightest with the sun low and gone above some 45°', () => {
-    expect(sunDogShape(5 * DEG)[2]).toBe(1);
-    expect(sunDogShape(15 * DEG)[2]).toBe(1);
-    expect(sunDogShape(30 * DEG)[2]).toBeLessThan(sunDogShape(20 * DEG)[2]);
-    expect(sunDogShape(40 * DEG)[2]).toBeGreaterThan(0.1);
-    expect(sunDogShape(45 * DEG)[2]).toBe(0);
-    expect(sunDogShape(60 * DEG)[2]).toBe(0);
+    expect(parheliaShape(5 * DEG)[2]).toBe(1);
+    expect(parheliaShape(15 * DEG)[2]).toBe(1);
+    expect(parheliaShape(30 * DEG)[2]).toBeLessThan(parheliaShape(20 * DEG)[2]);
+    expect(parheliaShape(40 * DEG)[2]).toBeGreaterThan(0.1);
+    expect(parheliaShape(45 * DEG)[2]).toBe(0);
+    expect(parheliaShape(60 * DEG)[2]).toBe(0);
     // red nearest the sun, and the spectrum wider the higher it stands
     const spread = (e: number) => parhelionAzimuth(e, 1.317) - parhelionAzimuth(e, 1.307);
     expect(spread(5 * DEG)).toBeGreaterThan(0);
@@ -246,9 +246,9 @@ describe('sun dogs', () => {
 
   it('compile in for ice under a low sun, and nothing else', () => {
     const ice = { clouds: { cirrus: 0.3 } };
-    expect(bit({ time: 16.5, weather: ice })).toBe(FEATURE.DOGS);
-    expect(bit({ time: 16.5, weather: { clouds: { cirrostratus: 0.3 } } })).toBe(FEATURE.DOGS);
-    expect(bit({ time: 16.5, weather: { clouds: { cirrocumulus: 0.3 } } })).toBe(FEATURE.DOGS);
+    expect(bit({ time: 16.5, weather: ice })).toBe(FEATURE.PARHELIA);
+    expect(bit({ time: 16.5, weather: { clouds: { cirrostratus: 0.3 } } })).toBe(FEATURE.PARHELIA);
+    expect(bit({ time: 16.5, weather: { clouds: { cirrocumulus: 0.3 } } })).toBe(FEATURE.PARHELIA);
     // a wisp of cirrus does not bring the veil's halo with it, nor a veil lose it
     expect(featureKey(resolveConditions({ time: 16.5, weather: ice })) & FEATURE.HALOS).toBe(0);
     expect(featureKey(resolveConditions({ time: 16.5, weather: { clouds: { cirrostratus: 0.3 } } })) & FEATURE.HALOS).toBe(FEATURE.HALOS);
@@ -261,25 +261,25 @@ describe('sun dogs', () => {
     // the same threshold as the shader's 0.001
     const s = resolveConditions({ time: 16.5, weather: 'clear' });
     s.clouds.cirrus = 0.001;
-    expect(featureKey(s) & FEATURE.DOGS).toBe(0);
+    expect(featureKey(s) & FEATURE.PARHELIA).toBe(0);
     s.clouds.cirrus = 0.0011;
-    expect(featureKey(s) & FEATURE.DOGS).toBe(FEATURE.DOGS);
+    expect(featureKey(s) & FEATURE.PARHELIA).toBe(FEATURE.PARHELIA);
   });
 
   describe('settled plates', () => {
     const icy = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 } } });
     const sweep = (s: typeof icy): [number, number][] => {
       const out: [number, number][] = [];
-      for (let evo = 0; evo < 40000; evo += 2) out.push(sunDogPlates(s, evo));
+      for (let evo = 0; evo < 40000; evo += 2) out.push(parheliaPlates(s, evo));
       return out;
     };
     // the clock where they are fully off, and where both clear
     const find = (s: typeof icy, f: (a: number, b: number) => boolean): number => {
-      for (let evo = 0; evo < 40000; evo += 1) { const [a, b] = sunDogPlates(s, evo); if (f(a, b)) return evo; }
+      for (let evo = 0; evo < 40000; evo += 1) { const [a, b] = parheliaPlates(s, evo); if (f(a, b)) return evo; }
       throw new Error('never');
     };
 
-    it('leave most icy skies without a dog, some with a faint one and a few with a clear pair', () => {
+    it('leave most icy skies without a parhelion, some with a faint one and a few with a clear pair', () => {
       for (const w of [{ clouds: { cirrus: 0.3 } }, { clouds: { cirrostratus: 0.7 } }, 'fair', { clouds: { cirrus: 0.2, cirrocumulus: 0.3 } }] as const) {
         const all = sweep(resolveConditions({ time: 16.5, weather: w }));
         const share = (f: (a: number, b: number) => boolean) => all.filter(([a, b]) => f(a, b)).length / all.length;
@@ -295,19 +295,19 @@ describe('sun dogs', () => {
     });
 
     it('are the same at the same moment, and drift over tens of minutes, not frames', () => {
-      expect(sunDogPlates(icy, 123.4)).toEqual(sunDogPlates(icy, 123.4));
+      expect(parheliaPlates(icy, 123.4)).toEqual(parheliaPlates(icy, 123.4));
       // a calm sky's clock runs 0.07 a second: a tenth of a second a step
       let most = 0;
       for (let evo = 0; evo < 5000; evo += 0.007) {
-        const [a, b] = sunDogPlates(icy, evo), [c, d] = sunDogPlates(icy, evo + 0.007);
+        const [a, b] = parheliaPlates(icy, evo), [c, d] = parheliaPlates(icy, evo + 0.007);
         most = Math.max(most, Math.abs(a - c), Math.abs(b - d));
       }
       expect(most).toBeLessThan(0.002);
       // a spell on or off lasts a good while: a median over ten minutes (42 of the clock)
       const spells: number[] = [];
-      let run = 0, was = Math.max(...sunDogPlates(icy, 0)) > 0;
+      let run = 0, was = Math.max(...parheliaPlates(icy, 0)) > 0;
       for (let evo = 0; evo < 40000; evo += 1) {
-        const on = Math.max(...sunDogPlates(icy, evo)) > 0;
+        const on = Math.max(...parheliaPlates(icy, evo)) > 0;
         if (on === was) run++;
         else { spells.push(run); run = 1; was = on; }
       }
@@ -329,23 +329,23 @@ describe('sun dogs', () => {
       expect(differ).toBeGreaterThan(0.2);
     });
 
-    it('take the dogs off the key and the canvas when off, on the clock given', () => {
+    it('take the parhelia off the key and the canvas when off, on the clock given', () => {
       const off = find(icy, (a, b) => a <= 0 && b <= 0), on = find(icy, (a, b) => a > 0.5 && b > 0.5);
-      expect(featureKey(icy, 0, 'auto', off) & FEATURE.DOGS).toBe(0);
-      expect(featureKey(icy, 0, 'auto', on) & FEATURE.DOGS).toBe(FEATURE.DOGS);
+      expect(featureKey(icy, 0, 'auto', off) & FEATURE.PARHELIA).toBe(0);
+      expect(featureKey(icy, 0, 'auto', on) & FEATURE.PARHELIA).toBe(FEATURE.PARHELIA);
       // without the clock: whether this sky can ever have them
-      expect(featureKey(icy) & FEATURE.DOGS).toBe(FEATURE.DOGS);
-      expect(featureKeys(icy, 0, 'auto', off)[0].key & FEATURE.DOGS).toBe(0);
+      expect(featureKey(icy) & FEATURE.PARHELIA).toBe(FEATURE.PARHELIA);
+      expect(featureKeys(icy, 0, 'auto', off)[0].key & FEATURE.PARHELIA).toBe(0);
       const cam = { yaw: icy.sunAzimuth, pitch: icy.sunElevation, fov: 1.05 };
-      expect(sunDogRects(icy, cam, 1920, 1080, off)).toEqual([]);
-      expect(sunDogRects(icy, cam, 1920, 1080, on).length).toBe(2);
-      expect(sunDogAmounts(icy, off)).toEqual([0, 0]);
+      expect(parheliaRects(icy, cam, 1920, 1080, off)).toEqual([]);
+      expect(parheliaRects(icy, cam, 1920, 1080, on).length).toBe(2);
+      expect(parheliaAmounts(icy, off)).toEqual([0, 0]);
     });
 
     it('draw only the side that has them', () => {
       const lesser = find(icy, (a, b) => a > 0.05 && b <= 0), greater = find(icy, (a, b) => a <= 0 && b > 0.05);
       const cam = { yaw: icy.sunAzimuth, pitch: icy.sunElevation, fov: 1.05 };
-      const left = sunDogRects(icy, cam, 1920, 1080, lesser), right = sunDogRects(icy, cam, 1920, 1080, greater);
+      const left = parheliaRects(icy, cam, 1920, 1080, lesser), right = parheliaRects(icy, cam, 1920, 1080, greater);
       expect(left.length).toBe(1);
       expect(right.length).toBe(1);
       // greater azimuth is to the right of the view
@@ -353,11 +353,11 @@ describe('sun dogs', () => {
       expect(right[0][0]).toBeGreaterThan(960);
     });
 
-    it('leave a veil its halo when the dogs are off', () => {
+    it('leave a veil its halo when the parhelia are off', () => {
       const veil = resolveConditions({ time: 16.5, weather: { clouds: { cirrostratus: 0.6 } } });
       const off = find(veil, (a, b) => a <= 0 && b <= 0);
       const k = featureKey(veil, 0, 'auto', off);
-      expect(k & FEATURE.DOGS).toBe(0);
+      expect(k & FEATURE.PARHELIA).toBe(0);
       expect(k & FEATURE.HALOS).toBe(FEATURE.HALOS);
     });
 
@@ -367,18 +367,18 @@ describe('sun dogs', () => {
       expect(resolveWeather({ icePlates: -1 }).icePlates).toBe(0);
       const held = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 }, icePlates: 1 } });
       for (let evo = 0; evo < 3000; evo += 7) {
-        expect(sunDogPlates(held, evo)).toEqual([1, 1]);
-        expect(featureKey(held, 0, 'auto', evo) & FEATURE.DOGS).toBe(FEATURE.DOGS);
+        expect(parheliaPlates(held, evo)).toEqual([1, 1]);
+        expect(featureKey(held, 0, 'auto', evo) & FEATURE.PARHELIA).toBe(FEATURE.PARHELIA);
       }
       // a floor, not a value: where the sky has them clearer they stay so
       const floor = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 }, icePlates: 0.3 } });
       const on = find(icy, (a, b) => a > 0.9 && b > 0.9);
-      expect(Math.min(...sunDogPlates(floor, on))).toBeGreaterThan(0.3);
-      // still no dogs without ice, or with the sun too high
+      expect(Math.min(...parheliaPlates(floor, on))).toBeGreaterThan(0.3);
+      // still no parhelia without ice, or with the sun too high
       const dry = resolveConditions({ time: 16.5, weather: { cloudCover: 0, icePlates: 1 } });
-      expect(featureKey(dry, 0, 'auto', 100) & FEATURE.DOGS).toBe(0);
+      expect(featureKey(dry, 0, 'auto', 100) & FEATURE.PARHELIA).toBe(0);
       const noon = resolveConditions({ time: 12, weather: { clouds: { cirrus: 0.3 }, icePlates: 1 } });
-      expect(sunDogAmounts(noon, 100)).toEqual([0, 0]);
+      expect(parheliaAmounts(noon, 100)).toEqual([0, 0]);
     });
 
     it('ease with the weather, and don\'t disturb a sky cache', () => {
@@ -391,12 +391,12 @@ describe('sun dogs', () => {
     });
   });
 
-  describe('sunDogRects', () => {
+  describe('parheliaRects', () => {
     const W = 1920, H = 1080;
     const s = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 } } });
-    // a dog's place on the canvas, as the shader's viewRay would have it
+    // a parhelion's place on the canvas, as the shader's viewRay would have it
     const place = (side: number, cam: { yaw: number; pitch: number; fov: number }, x = 0.02): [number, number] | null => {
-      const az = s.sunAzimuth + side * (sunDogShape(s.sunElevation)[0] + x / Math.cos(s.sunElevation));
+      const az = s.sunAzimuth + side * (parheliaShape(s.sunElevation)[0] + x / Math.cos(s.sunElevation));
       const e = s.sunElevation, wx = Math.cos(e) * Math.sin(az), wy = Math.sin(e), wz = Math.cos(e) * Math.cos(az);
       const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
       const dx = wx * cy - wz * sy, dh = wx * sy + wz * cy;
@@ -407,9 +407,9 @@ describe('sun dogs', () => {
     };
     const inRect = (p: [number, number], r: number[]) => p[0] >= r[0] && p[0] <= r[0] + r[2] && p[1] >= r[1] && p[1] <= r[1] + r[3];
 
-    it('has one round each dog in view, and each a few hundredths of the frame', () => {
+    it('has one round each parhelion in view, and each a few hundredths of the frame', () => {
       const cam = { yaw: s.sunAzimuth, pitch: s.sunElevation, fov: 1.05 };
-      const rs = sunDogRects(s, cam, W, H);
+      const rs = parheliaRects(s, cam, W, H);
       expect(rs.length).toBe(2);
       for (const side of [-1, 1]) {
         const p = place(side, cam)!;
@@ -419,16 +419,16 @@ describe('sun dogs', () => {
     });
 
     it('has none looking away, or with the sun too high', () => {
-      expect(sunDogRects(s, { yaw: s.sunAzimuth + Math.PI, pitch: 0.2, fov: 1.05 }, W, H)).toEqual([]);
-      expect(sunDogRects(s, { yaw: s.sunAzimuth, pitch: 1.3, fov: 0.4 }, W, H)).toEqual([]);
+      expect(parheliaRects(s, { yaw: s.sunAzimuth + Math.PI, pitch: 0.2, fov: 1.05 }, W, H)).toEqual([]);
+      expect(parheliaRects(s, { yaw: s.sunAzimuth, pitch: 1.3, fov: 0.4 }, W, H)).toEqual([]);
       const high = { ...s, sunElevation: 50 * DEG };
-      expect(sunDogRects(high, { yaw: s.sunAzimuth, pitch: 0.8, fov: 1.2 }, W, H)).toEqual([]);
+      expect(parheliaRects(high, { yaw: s.sunAzimuth, pitch: 0.8, fov: 1.2 }, W, H)).toEqual([]);
     });
 
-    it('stays on the canvas and holds a dog at every turn of the view', () => {
+    it('stays on the canvas and holds a parhelion at every turn of the view', () => {
       for (let k = 0; k < 96; k++) {
         const cam = { yaw: s.sunAzimuth + k * Math.PI / 48, pitch: 0.2 + 0.1 * (k % 5), fov: 0.5 + 0.2 * (k % 4) };
-        const rs = sunDogRects(s, cam, W, H);
+        const rs = parheliaRects(s, cam, W, H);
         for (const r of rs) {
           expect(r[0]).toBeGreaterThanOrEqual(0);
           expect(r[1]).toBeGreaterThanOrEqual(0);

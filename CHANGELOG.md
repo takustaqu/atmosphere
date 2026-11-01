@@ -4,39 +4,39 @@
 
 ### Changed
 
-- **Sun dogs form in any thin ice cloud, and show a spectrum.** They were a
-  red-to-white smear drawn only under a cirrostratus veil. Now a dog forms
+- **Parhelia (sun dogs) form in any thin ice cloud, and show a spectrum.** They were a
+  red-to-white smear drawn only under a cirrostratus veil. Now a parhelion forms
   wherever cirrus, a veil or cirrocumulus passes level with the sun, patchy with
   that cloud, so it comes and goes as the cloud drifts through it: no ice at its
-  place, no dog, and water cloud in front hides it. It is a compact soft spot,
+  place, no parhelion, and water cloud in front hides it. It is a compact soft spot,
   red on the side toward the sun, through orange and yellow to a hint of green
   and blue, with a pale tail away from it, on both sides of the sun, redder
   beside a red one. Brightest with the sun below some 20°, fading out by 44°.
   It takes plate crystals settled flat, and most ice cloud has few: a coarse
   field drifting on the evolution clock over tens of minutes, placed by the hour
-  and the amounts of ice and a little apart on each side (`sunDogPlates`), leaves
-  some three skies in five of those with ice and a low sun without a dog, one in
+  and the amounts of ice and a little apart on each side (`parheliaPlates`), leaves
+  some three skies in five of those with ice and a low sun without a parhelion, one in
   five with a faint one, and one in six with a clear one, a clear pair one in
   eight. `weather.icePlates` (0..1, default 0) is a floor under it: at 1, a clear
   pair wherever there is ice at them, as the controller's chip asks for.
-  The place was wrong too: 22° / cos e of azimuth kept a dog on the 22° ring
+  The place was wrong too: 22° / cos e of azimuth kept a parhelion on the 22° ring
   however high the sun. It now stands at the minimum deviation of a 60° prism
   for rays inclined by the sun's elevation (`parhelionAzimuth`, checked in the
   tests against a ray traced through the prism): 21.8° of azimuth with the sun
   on the horizon, 28.7° at 30, 36.3° at 40, so it draws out from the ring as the
   sun climbs. The veil's ring, pillar and circumzenithal arc are as they were.
-  The dogs have a `FEATURE.DOGS` of their own, off the veil's halos, and are
+  The parhelia have a `FEATURE.PARHELIA` of their own, off the veil's halos, and are
   drawn in a second draw of the frame, scissored to the small rectangles they
   can fall in: carried by the program that draws the whole frame they cost
-  it a tenth to a sixth of its time, with a dog in view or not. Skies with no
+  it a tenth to a sixth of its time, with a parhelion in view or not. Skies with no
   ice, a sun above 45° or the plates unsettled are the same picture at the same
-  cost, the program with the dogs not even compiled; on others only the dogs'
-  rectangles change, by at most one level where no dog shows (in a tiny fraction
+  cost, the program with the parhelia not even compiled; on others only the parhelia's
+  rectangles change, by at most one level where no parhelion shows (in a tiny fraction
   of those pixels).
   GPU time on an M2 Max at 1080p is unchanged within the noise looking away or
-  under a clear sky; with a dog in view some 2% (a fair sky 2.96 to 3.02 ms). Under
+  under a clear sky; with a parhelion in view some 2% (a fair sky 2.96 to 3.02 ms). Under
   `cloudScale` and the sky cache likewise. The controller's Sky phenomena drawer
-  has a Sun dogs chip.
+  has a Parhelia chip.
 - **Daytime cumulus are modelled against the sun.** With the sun some twenty
   degrees up and more, a lump looked toward the sun was a flat white crown over
   a flat grey base with a line between them. Now the top of a lump is brightest,
