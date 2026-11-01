@@ -2475,8 +2475,10 @@ vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir) {
   vec2 ql = q + ldir * 0.35;
   float nl = vnoise(ql) * 0.72 + vnoise(ql * 2.1 + 5.0) * 0.28;
   float lit = (n - nl) * 4.0;
-  // fine surface grain, taken from the same field that frays the edge
-  lit += (fineN - fbm4((q + ldir * 0.12) * 5.0)) * 2.4;
+  // and the thicker the brighter, by the same field that frays the edge. (A
+  // difference of that field against itself shifted toward the sun read as an
+  // embossed crust; this keeps the mottling, unrelieved)
+  lit += (fineN - 0.47) * 1.8;
   return vec2(cell, clamp(lit, -1.0, 1.0));
 }
 
