@@ -309,6 +309,7 @@ note('Some of the sky only shows under the right conditions and in the right '
     [
       { id: 'rainbow', label: 'Rainbow' },
       { id: 'halo', label: '22° halo' },
+      { id: 'dogs', label: 'Sun dogs' },
       { id: 'moonhalo', label: 'Moon halo' },
       { id: 'mooncloud', label: 'Moon behind clouds' },
       { id: 'iridescence', label: 'Iridescence' },
@@ -338,6 +339,17 @@ note('Some of the sky only shows under the right conditions and in the right '
           cirrostratus: 0.75, cumulus: 0.08 };
         const s = sunNow();
         look(s.sunAzimuth, s.sunElevation, 1.3);
+      } else if (id === 'dogs') {
+        // thin ice drifting across a low sun's level, with the sun and both
+        // dogs in the frame. A thin veil under the cirrus, so there is ice at
+        // them whichever strands happen to be passing
+        sunBetween(8, 25, 16.5);
+        ui.weather = { ...ui.weather, precipitation: 0, thunder: 0, visibility: 30 };
+        ui.cloudMode = 'manual';
+        ui.clouds = { ...ui.clouds, ...Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])),
+          cirrus: 0.55, cirrostratus: 0.2 };
+        const s = sunNow();
+        look(s.sunAzimuth + 0.2, s.sunElevation + 0.08, 1.2);
       } else if (id === 'moonhalo') {
         // a moonlit veil: night, the (nominal, full) moon high, cirrostratus
         if (CITIES[ui.city] || sunNow().moonElevation < 30 * DEG) { ui.city = 'None'; ui.timeOfDay = 0.5; }
@@ -410,7 +422,10 @@ note('Some of the sky only shows under the right conditions and in the right '
   note('Rainbow: rain falling while the sun is out and lower than 42°; the bow stands '
     + '42° from the point straight away from the sun, so face away from it. '
     + 'Halo: a cirrostratus veil, the ring 22° around the sun — or the moon, at night, '
-    + 'where the moonlit veil glows round it. Moon behind clouds: a thin water cloud in '
+    + 'where the moonlit veil glows round it. Sun dogs: wherever thin ice cloud, cirrus '
+    + 'or a veil, passes level with a sun below 45°, a small spot of spectrum either '
+    + 'side of it, red toward the sun, 22° out and further as it climbs; water cloud '
+    + 'hides them. Moon behind clouds: a thin water cloud in '
     + 'front of the moon glows, ringed by the corona. Iridescence: the thin edges of a '
     + 'water cloud passing near the sun pick up pastel pinks and greens. Circumzenithal '
     + 'arc: with the sun below 32° in a cirrostratus veil, an upside-down rainbow high '
