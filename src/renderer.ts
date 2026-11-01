@@ -19,7 +19,7 @@ import {
   type LightMeasurement, type ProbeLayout,
 } from './light.js';
 import { NOISE_SIZE, noiseLattice, noiseQuads } from './noise.js';
-import { SkyCacheScheduler, stackSignature, type CacheBuild, type Keyframe as CacheKeyframe, type SkyCacheOptions } from './skycache.js';
+import { SOFT_SLOT, SkyCacheScheduler, stackSignature, stateAhead, type CacheBuild, type Keyframe as CacheKeyframe, type SkyCacheOptions } from './skycache.js';
 import { SKIRT_TURRETS, TOWER_TURRETS, TURRET_ROWS, TURRET_SLOTS, stormAmount, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 
@@ -144,7 +144,7 @@ uniform sampler2D u_flow2;   // the second's
 uniform vec4 u_box0;         // the texels each keyframe holds, as directions: azimuth off its middle, low and high, then elevation
 uniform vec4 u_box1;
 uniform vec2 u_mapWind;      // how far the wind has run since the first keyframe, and how far it has yet to run to the second
-uniform vec2 u_mapTexels;    // the keyframes' size in texels (every slot's the same)
+uniform vec4 u_mapTexels;    // the two keyframes' sizes in texels (they differ when the first is the soft map)
 uniform sampler2D u_morph;   // the second keyframe's morph from the first (see MORPH_FRAG): xy radians of azimuth and elevation
 uniform float u_evoPerWind;  // build: how far evolution runs for each unit of wind (the stratiform sheets crawl with it)
 #endif
@@ -3096,8 +3096,8 @@ vec3 cacheShift(vec3 d, vec2 v, float dw) {
 // depends on where between texels the read falls (and it is sharper all
 // through). Its lobes can overshoot, so the result is held to what a
 // stack can be
-vec4 cacheCubic(sampler2D s, vec2 uv) {
-  vec2 pos = uv * u_mapTexels - 0.5;
+vec4 cacheCubic(sampler2D s, vec2 uv, vec2 texels) {
+  vec2 pos = uv * texels - 0.5;
   vec2 c = floor(pos);
   vec2 f = pos - c;
   vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
@@ -3105,8 +3105,8 @@ vec4 cacheCubic(sampler2D s, vec2 uv) {
   vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
   vec2 w3 = f * f * (-0.5 + 0.5 * f);
   vec2 w12 = w1 + w2;
-  vec2 t0 = (c - 0.5) / u_mapTexels, t3 = (c + 2.5) / u_mapTexels;
-  vec2 t12 = (c + 0.5 + w2 / w12) / u_mapTexels;
+  vec2 t0 = (c - 0.5) / texels, t3 = (c + 2.5) / texels;
+  vec2 t12 = (c + 0.5 + w2 / w12) / texels;
   vec4 r = MAP_FETCH(s, vec2(t12.x, t0.y)) * (w12.x * w0.y)
          + MAP_FETCH(s, vec2(t0.x, t12.y)) * (w0.x * w12.y)
          + MAP_FETCH(s, t12) * (w12.x * w12.y)
@@ -3151,8 +3151,8 @@ vec4 cacheFetch(vec3 d) {
   ae1 = mapAngles(u_map1, cacheShift(d, v, -u_mapWind.y)) - r * (1.0 - u_mapMix);
   ae0 = clamp(ae0, u_box0.xz, u_box0.yw);
   ae1 = clamp(ae1, u_box1.xz, u_box1.yw);
-  vec4 k0 = cacheCubic(u_clouds, mapUV(u_map0, ae0));
-  vec4 k1 = cacheCubic(u_clouds2, mapUV(u_map1, ae1));
+  vec4 k0 = cacheCubic(u_clouds, mapUV(u_map0, ae0), u_mapTexels.xy);
+  vec4 k1 = cacheCubic(u_clouds2, mapUV(u_map1, ae1), u_mapTexels.zw);
   return mix(k0, k1, u_mapMix);
 #else
   return cacheFetchStill(d);
@@ -8356,13 +8356,17 @@ export interface RendererOptions {
    * a frame turning the camera costs it nothing; what moves it is the wind
    * and the clouds' evolution, which the cache follows as a series of
    * keyframes, each built whole for one moment over the frames before it is
-   * shown, and each frame shown as a mix of the two either side of it. A
-   * frame the cache cannot draw as it would be drawn directly — the state
-   * animating faster than keyframes can follow (a set() transition), a view
-   * that wants more texels than the budget allows (a narrow fov), the 'auto'
-   * tower's crossfade band, a view outside a 'view' window — is drawn
-   * directly. Needs half-float render targets, as cloudScale does, and is
-   * ignored without them; while it is on, cloudScale is not used.
+   * shown, and each frame shown as a mix of the two either side of it. A set()
+   * is followed the same way, the keyframes built for the state easing to
+   * its target. With no keyframes to show — the first frames, a jump(), a view
+   * outside a 'view' window — a small map, drawn whole in one frame, stands in
+   * and hands over to the keyframes as they come whole. The first frame of
+   * all, a still sky, a view that wants more texels than the budget allows (a
+   * narrow fov) and the 'auto' tower's crossfade band are drawn directly.
+   * Needs half-float render targets, as cloudScale does, and a second target
+   * for the keyframes' motion, and every frame is drawn directly without them
+   * (see {@link AtmosphereRenderer.skyCache}); while it is on, cloudScale is
+   * not used.
    */
   skyCache?: boolean | SkyCacheOptions;
   /**
@@ -8459,14 +8463,18 @@ export class AtmosphereRenderer {
   private cloudTex: WebGLTexture | null = null;
   private cloudSize: [number, number] = [0, 0];
   // the sky cache (RendererOptions.skyCache): its schedule, its three
-  // keyframe slots, and the programs it drew the last frame with
+  // keyframe slots and its soft map, the state each slot is built for, and
+  // the programs it drew the last frame with
   private sky: SkyCacheScheduler | null = null;
-  private skyTex: (WebGLTexture | null)[] = [null, null, null];
-  private skyFbo: (WebGLFramebuffer | null)[] = [null, null, null];
+  private skyTex: (WebGLTexture | null)[] = [null, null, null, null];
+  private skyFbo: (WebGLFramebuffer | null)[] = [null, null, null, null];
+  private skyState: (AtmosphereState | null)[] = [null, null, null, null];
+  private skyPrev: AtmosphereState | null = null;
+  private skyPrevClock = 0;
   // each slot's motion, its second target (null: no motion compensation),
   // and the extension that draws both at once, asked for when the context
   // is made (the build's source depends on it)
-  private skyFlow: (WebGLTexture | null)[] = [null, null, null];
+  private skyFlow: (WebGLTexture | null)[] = [null, null, null, null];
   private skyDraw: WEBGL_draw_buffers | null = null;
   // each slot's morph from the keyframe before it (MORPH_FRAG), a quarter
   // the size each way, and the program that finds it
@@ -9158,9 +9166,18 @@ export class AtmosphereRenderer {
     const apart = this.parheliaApart(s);
     const kb = (key & ~FEATURE.PARHELIA) | CACHE_BUILD, kc = (apart ? key & ~FEATURE.PARHELIA : key) | CACHE_COMP;
     const kd = key | CACHE_COMP;
-    this.skyKeys = [kb, kc, kd];
-    const vb = this.ensure(kb), vc = this.ensure(kc);
-    if (!vb?.linked || !vc?.linked) return no(vb?.failed || vc?.failed ? 'failed' : 'compiling');
+    // (while this sky's own link, as a frame drawn directly goes on with what
+    // it has, whatever can stand in or else the program of the last frame)
+    const [lb, lc] = this.skyKeys;
+    const ready = (k: number, last: number): Variant | null => {
+      const v = this.ensure(k);
+      if (v?.linked) return v;
+      const o = this.standIn(k) ?? this.variants.get(last);
+      return o?.linked && !v?.failed ? o : null;
+    };
+    const vb = ready(kb, lb), vc = ready(kc, lc);
+    if (!vb || !vc) return no(this.variants.get(kb)?.failed || this.variants.get(kc)?.failed ? 'failed' : 'compiling');
+    this.skyKeys = [vb.key, vc.key, kd, kb, kc];
     const w = this.canvas.width, h = this.canvas.height;
     const plan = sky.frame({
       sig: stackSignature(s), clocks: { time: timeSec, wind: windOff, evo }, camera,
@@ -9168,12 +9185,23 @@ export class AtmosphereRenderer {
     });
     this.skyReason = plan.reason;
     this.skyMix = plan.show ? plan.show.mix : -1;
-    if ((plan.builds.length || plan.show) && !this.skyTargets(gl, plan.size)) return no('unsupported');
+    if ((plan.builds.length || plan.show) && !this.skyTargets(gl, plan.size, plan.softSize)) return no('unsupported');
     for (const b of plan.builds) {
-      this.drawKeyframeSlice(gl, vb, b, s);
+      // (the state it will be shown in, as far as the state's way now tells,
+      // kept for all of its build: a state on the move would tear a keyframe
+      // along its slices)
+      if (b.c0 === b.key.box.c0) {
+        // (as many of the last frame's moves as the clouds' clock has of them
+        // to run to it: one long frame moved everything further, clock and all)
+        const run = windOff + evo - this.skyPrevClock;
+        this.skyState[b.key.slot] = stateAhead(s, this.skyPrev ?? s, run > 0 ? Math.max(0, (b.key.clock - windOff - evo) / run) : 0);
+      }
+      this.drawKeyframeSlice(gl, vb, b, this.skyState[b.key.slot] ?? s);
       // and as much of how it reshapes from the one before it as its built columns tell
       if (this.skyMorph[b.key.slot]) this.drawMorph(gl, b.key, b.prev, b.done);
     }
+    this.skyPrev = stateAhead(s, s, 0);
+    this.skyPrevClock = windOff + evo;
     if (!plan.show) return false;
     const { a, b, mix } = plan.show;
     this.drawComposite(gl, vc, a, b, mix, timeSec, s, camera, windOff, evo);
@@ -9208,7 +9236,8 @@ export class AtmosphereRenderer {
     gl.activeTexture(gl.TEXTURE6);
     gl.bindTexture(gl.TEXTURE_2D, this.skyFlow[b.slot]);
     gl.activeTexture(gl.TEXTURE7);
-    gl.bindTexture(gl.TEXTURE_2D, this.skyMorph[b.slot]);
+    // (nothing to go along from the soft map, whose reads then all come back zero)
+    gl.bindTexture(gl.TEXTURE_2D, a.slot === SOFT_SLOT ? null : this.skyMorph[b.slot]);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform4f(u.u_map0, a.rect.azC, a.rect.el0, a.rect.azSpan, a.rect.elSpan);
     gl.uniform4f(u.u_map1, b.rect.azC, b.rect.el0, b.rect.azSpan, b.rect.elSpan);
@@ -9218,11 +9247,10 @@ export class AtmosphereRenderer {
     gl.uniform2f(u.u_mapWind, windOff - a.clocks.wind, b.clocks.wind - windOff);
     // the texels each holds, as directions, a texel and a half in from its
     // edge: the moved reads are held inside, with room for the cubic's reach
-    const [W, H] = this.skySize;
-    gl.uniform2f(u.u_mapTexels, W, H);
+    gl.uniform4f(u.u_mapTexels, a.size[0], a.size[1], b.size[0], b.size[1]);
     const box = (k: typeof a): [number, number, number, number] => {
       const c = k.cover, f = (x: number) => Math.max(-1e4, Math.min(1e4, x));
-      const iAz = 1.5 * k.rect.azSpan / W, iEl = 1.5 * k.rect.elSpan / H;
+      const iAz = 1.5 * k.rect.azSpan / k.size[0], iEl = 1.5 * k.rect.elSpan / k.size[1];
       return [f(c.azLo + iAz), f(c.azHi - iAz), f(c.elLo + iEl), f(c.elHi - iEl)];
     };
     gl.uniform4f(u.u_box0, ...box(a));
@@ -9245,7 +9273,7 @@ export class AtmosphereRenderer {
    */
   private drawKeyframeSlice(gl: WebGLRenderingContext, v: Variant, build: CacheBuild, s: AtmosphereState): void {
     const { key, c0, c1, step } = build;
-    const [W, H] = this.skySize;
+    const [W, H] = key.size;
     this.bind(v, key.clocks.time, s, key.clocks.wind, key.clocks.evo);
     const u = this.u;
     // no slot (nor its motion) may sit on a unit while one of them is drawn into
@@ -9335,7 +9363,7 @@ export class AtmosphereRenderer {
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  /** MORPH_FRAG's program, made the first time it is wanted; null where it will not compile */
+  /** MORPH_FRAG's program; null where it will not compile, and while it does, not waited for (a keyframe's morph is then left clear) */
   private morphProgram(gl: WebGLRenderingContext): { program: WebGLProgram; u: Uniforms } | null {
     if (this.morph) return this.morph;
     if (this.morphFailed) return null;
@@ -9378,11 +9406,11 @@ export class AtmosphereRenderer {
   }
 
   /**
-   * The sky cache's three keyframe slots, half-float, (re)made to size.
+   * The sky cache's three keyframe slots and its soft map, half-float, (re)made to size.
    * false — and the cache stays off for this context — where half floats
    * cannot be rendered to and filtered
    */
-  private skyTargets(gl: WebGLRenderingContext, size: [number, number]): boolean {
+  private skyTargets(gl: WebGLRenderingContext, size: [number, number], softSize: [number, number]): boolean {
     if (this.skySupport === false) return false;
     if (this.skyFbo[0] && this.skySize[0] === size[0] && this.skySize[1] === size[1]) return true;
     const hf = gl.getExtension('OES_texture_half_float');
@@ -9407,54 +9435,56 @@ export class AtmosphereRenderer {
     };
     // The motion is a second target of the same half-float RGBA (a draw into
     // two must draw into alike: an 8-bit second is FRAMEBUFFER_UNSUPPORTED
-    // on Metal), twice the slots' memory. A context that cannot draw both
-    // keeps the slots alone and mixes the keyframes as they stand
+    // on Metal), twice the slots' memory
     const db = this.skyDraw;
-    for (const motion of db ? [true, false] : [false]) {
-      this.freeSky(gl);
-      let ok = true;
-      for (let i = 0; i < 3 && ok; i++) {
-        const tex = mk(), flow = motion ? mk() : null, fbo = gl.createFramebuffer();
-        this.skyTex[i] = tex;
-        this.skyFlow[i] = flow;
-        this.skyFbo[i] = fbo;
-        if (!tex || !fbo || (motion && !flow)) { ok = false; break; }
-        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-        if (db && flow) {
-          gl.framebufferTexture2D(gl.FRAMEBUFFER, db.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, flow, 0);
-          db.drawBuffersWEBGL([db.COLOR_ATTACHMENT0_WEBGL, db.COLOR_ATTACHMENT1_WEBGL]);
-        }
-        ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-        if (ok && motion) {
-          // and its morph (MORPH_FRAG), a quarter the size each way, cleared:
-          // until one is found, nothing moves
-          const m = mk(Math.ceil(size[0] / 4), Math.ceil(size[1] / 4)), mf = gl.createFramebuffer();
-          this.skyMorph[i] = m;
-          this.skyMorphFbo[i] = mf;
-          if (!m || !mf) ok = false;
-          else {
-            gl.bindFramebuffer(gl.FRAMEBUFFER, mf);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, m, 0);
-            ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-            if (ok) { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
-          }
-        }
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      }
-      if (!ok) continue;
-      this.skySupport = true;
-      this.skySize = [size[0], size[1]];
-      this.sky!.layers = motion ? 2 : 1;
-      return true;
-    }
     this.freeSky(gl);
-    this.skySupport = false;
-    return false;
+    let ok = true;
+    for (let i = 0; i < 4 && ok; i++) {
+      const [w, h] = i === SOFT_SLOT ? softSize : size;
+      const tex = mk(w, h), flow = db ? mk(w, h) : null, fbo = gl.createFramebuffer();
+      this.skyTex[i] = tex;
+      this.skyFlow[i] = flow;
+      this.skyFbo[i] = fbo;
+      if (!tex || !fbo || (db && !flow)) { ok = false; break; }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      if (db && flow) {
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, db.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, flow, 0);
+        db.drawBuffersWEBGL([db.COLOR_ATTACHMENT0_WEBGL, db.COLOR_ATTACHMENT1_WEBGL]);
+      }
+      ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      if (ok && db && i !== SOFT_SLOT) {
+        // and its morph (MORPH_FRAG), a quarter the size each way, cleared:
+        // until one is found, nothing moves
+        const m = mk(Math.ceil(size[0] / 4), Math.ceil(size[1] / 4)), mf = gl.createFramebuffer();
+        this.skyMorph[i] = m;
+        this.skyMorphFbo[i] = mf;
+        if (!m || !mf) ok = false;
+        else {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, mf);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, m, 0);
+          ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+          if (ok) { gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+        }
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+    // (a context out of memory for all this says so here, and goes on drawing directly)
+    if (!ok || gl.getError() === gl.OUT_OF_MEMORY) {
+      this.freeSky(gl);
+      this.skySupport = false;
+      return false;
+    }
+    this.skySupport = true;
+    this.skySize = [size[0], size[1]];
+    this.sky!.layers = db ? 2 : 1;
+    // (its program's compile started now, not on the frame that first wants it)
+    if (db) this.morphProgram(gl);
+    return true;
   }
 
   private freeSky(gl: WebGLRenderingContext): void {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       if (this.skyFbo[i]) gl.deleteFramebuffer(this.skyFbo[i]);
       if (this.skyTex[i]) gl.deleteTexture(this.skyTex[i]);
       if (this.skyFlow[i]) gl.deleteTexture(this.skyFlow[i]);

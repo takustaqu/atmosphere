@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CACHE_EL0, SkyCacheScheduler, stackSignature, viewExtent, type CacheFrameInput } from '../src/skycache.js';
+import { CACHE_EL0, SOFT_SLOT, SkyCacheScheduler, stackSignature, stateAhead, viewExtent, type CacheFrameInput } from '../src/skycache.js';
 import { resolveConditions } from '../src/state.js';
 
 const frame = (o: Partial<CacheFrameInput> = {}, i = 0, rate = { wind: 0.001, evo: 0.002 }): CacheFrameInput => ({
@@ -44,21 +44,81 @@ describe('stackSignature', () => {
   });
 });
 
+describe('stateAhead', () => {
+  it('goes on at the rate since the frame before, every number, deep', () => {
+    const prev = { a: 1, b: { c: [0.5, 2] }, d: 'x', e: null, f: true };
+    const s = { a: 1.25, b: { c: [0.4, 2] }, d: 'x', e: null, f: true };
+    const o = stateAhead(s, prev, 2);
+    expect(o).toEqual({ a: 1.75, b: { c: [expect.closeTo(0.2, 9), 2] }, d: 'x', e: null, f: true });
+  });
+  it('makes a copy that does not follow its source', () => {
+    const s = { b: { c: [1] } };
+    const o = stateAhead(s, s, 5);
+    expect(o).toEqual(s);
+    s.b.c[0] = 2;
+    expect(o.b.c[0]).toBe(1);
+  });
+  it('leaves a number that wrapped round where it is', () => {
+    expect(stateAhead({ az: 0.01 }, { az: 6.27 }, 10).az).toBe(0.01);
+  });
+  it('keeps the shape of a real state', () => {
+    const s = resolveConditions({ time: 13, weather: 'fair' });
+    expect(stateAhead(s, s, 3)).toEqual(s);
+  });
+});
+
 describe('SkyCacheScheduler', () => {
-  it('builds two keyframes before showing, then shows each pair across N frames', () => {
+  it('starts from the soft map, hands over to keyframe 0, then shows each pair across N frames', () => {
     const N = 10;
     const c = new SkyCacheScheduler({ frames: N });
     const reasons: string[] = [];
     const mixes: number[] = [];
+    const handed: number[] = [];
     for (let i = 0; i < 6 * N; i++) {
       const p = c.frame(frame({}, i));
       reasons.push(p.reason);
-      if (p.show) mixes.push(p.show.mix);
+      if (p.reason === 'ok') mixes.push(p.show!.mix);
+      if (p.reason === 'handover') {
+        expect(p.show!.a.slot).toBe(SOFT_SLOT);
+        expect(p.show!.b.j).toBe(0);
+        handed.push(p.show!.mix);
+      }
+      if (p.reason === 'soft') {
+        expect(p.show!.a.slot).toBe(SOFT_SLOT);
+        expect(p.show!.b).toBe(p.show!.a);
+      }
     }
+    // (the first frame knows nothing of the clocks, so a still sky stays sharp)
     expect(reasons[0]).toBe('jump');
-    expect(reasons.slice(1, 2 * N + 1).every((r) => r === 'warm')).toBe(true);
+    expect(reasons.slice(1, N + 1).every((r) => r === 'soft')).toBe(true);
+    expect(reasons.slice(N + 1, 2 * N + 1).every((r) => r === 'handover')).toBe(true);
     expect(reasons.slice(2 * N + 1).every((r) => r === 'ok')).toBe(true);
+    handed.forEach((m, k) => expect(m).toBeCloseTo(k / N, 9));
     mixes.slice(0, N).forEach((m, k) => expect(m).toBeCloseTo(k / N, 9));
+  });
+
+  it('draws the soft map whole in one frame, and a fraction of a keyframe', () => {
+    const c = new SkyCacheScheduler({ frames: 10 });
+    c.frame(frame({}, 0));
+    const p = c.frame(frame({}, 1));
+    const soft = p.builds.find((b) => b.key.slot === SOFT_SLOT)!;
+    expect([soft.c0, soft.c1]).toEqual([soft.key.box.c0, soft.key.box.c1]);
+    expect(soft.done).toBe(true);
+    expect(soft.key.size).toEqual(p.softSize);
+    expect((p.softSize[0] * p.softSize[1]) / (p.size[0] * p.size[1])).toBeLessThan(0.2);
+    // covering what a keyframe would
+    expect(soft.key.rect.azSpan).toBeCloseTo(p.size[0] / c.texelsPerRad, 1);
+    // and drawn once
+    expect(c.frame(frame({}, 2)).builds.some((b) => b.key.slot === SOFT_SLOT)).toBe(false);
+  });
+
+  it('never draws a still sky soft', () => {
+    const c = new SkyCacheScheduler({ frames: 10 });
+    for (let i = 0; i < 5; i++) {
+      const p = c.frame(frame({ clocks: { time: 100, wind: 40, evo: 7 } }, i));
+      expect(p.show).toBeNull();
+      expect(p.builds.length).toBe(0);
+    }
   });
 
   it('draws every column of a keyframe once, in order, across its N frames', () => {
@@ -71,7 +131,7 @@ describe('SkyCacheScheduler', () => {
     }
     const W = c.size[0];
     for (const [j, sl] of built) {
-      if (j > 6) continue;   // the last ones are still building
+      if (j > 6 || j < 0) continue;   // the last ones are still building (and the soft map is whole at once)
       expect(sl.length).toBe(N);
       expect(sl[0][0]).toBe(0);
       for (let k = 1; k < sl.length; k++) expect(sl[k][0]).toBe(sl[k - 1][1]);
@@ -87,7 +147,7 @@ describe('SkyCacheScheduler', () => {
     for (let i = 0; i < 6 * N; i++) {
       const p = c.frame(frame({}, i));
       for (const b of p.builds) wind.set(b.key.j, b.key.clocks.wind);
-      if (p.show && p.show.mix < 1e-9) at.set(p.show.a.j, i);
+      if (p.reason === 'ok' && p.show!.mix < 1e-9) at.set(p.show!.a.j, i);
     }
     for (const [j, i] of at) expect(wind.get(j)).toBeCloseTo(frame({}, i).clocks.wind, 9);
   });
@@ -150,18 +210,80 @@ describe('SkyCacheScheduler', () => {
     expect(whole.length).toBeGreaterThan(0);
     // one longer than two intervals: drawn directly, and the schedule starts over
     t += 3 * N;
-    expect(c.frame(frame({}, t)).reason).toBe('jump');
-    expect(c.frame(frame({}, ++t)).reason).toBe('warm');
+    expect(c.frame(frame({}, t)).reason).toBe('passed');
+    expect(c.frame(frame({}, ++t)).reason).toBe('soft');
   });
 
-  it('draws directly while the state animates, and starts over after', () => {
+  it('goes on showing keyframes while the state eases to another', () => {
     const c = new SkyCacheScheduler({ frames: 5 });
     for (let i = 0; i < 20; i++) c.frame(frame({}, i));
     expect(c.frame(frame({}, 20)).reason).toBe('ok');
-    const p = c.frame(frame({ sig: [1, 2.01, 3] }, 21));
-    expect(p.reason).toBe('animating');
-    expect(p.show).toBeNull();
-    expect(c.frame(frame({ sig: [1, 2.01, 3] }, 22)).reason).toBe('warm');
+    // a set(): a number moving by a hundredth of a unit a frame, and for long
+    for (let i = 21; i < 200; i++) {
+      const p = c.frame(frame({ sig: [1, 2 + 0.01 * (i - 20), 3] }, i));
+      expect(p.reason).toBe('ok');
+      expect(p.show).not.toBeNull();
+    }
+  });
+
+  it('starts over from the soft map when the state leaps', () => {
+    const c = new SkyCacheScheduler({ frames: 5 });
+    for (let i = 0; i < 20; i++) c.frame(frame({}, i));
+    expect(c.frame(frame({ sig: [1, 2.5, 3] }, 20)).reason).toBe('leap');
+    expect(c.frame(frame({ sig: [1, 2.5, 3] }, 21)).reason).toBe('soft');
+  });
+
+  it('brings the keyframes closer as the clock speeds up, and never into a frame or two', () => {
+    const N = 15;
+    const c = new SkyCacheScheduler({ frames: N });
+    let wind = 40, evo = 7, i = 0;
+    const run = (frames: number, rw: number, re: number) => {
+      const shownAt: number[] = [];
+      let last: number | null = null, worst = 0;
+      for (let k = 0; k < frames; k++, i++) {
+        wind += rw; evo += re;
+        const p = c.frame(frame({ clocks: { time: 100 + i / 60, wind, evo } }, i));
+        if (i > 0) expect(p.show).not.toBeNull();
+        if (p.reason === 'ok' && p.show!.a.j !== last) { last = p.show!.a.j; shownAt.push(k); }
+        worst = Math.max(worst, p.builds.reduce((u, b) => u + (b.key.slot === SOFT_SLOT ? 0 : (b.c1 - b.c0) / (b.key.box.c1 - b.key.box.c0)), 0));
+      }
+      return { shownAt, worst };
+    };
+    run(100, 0.0008, 0.0015);
+    // the time of day wound on: the wind eight times as fast, and it does not fall behind
+    const fast = run(100, 0.0065, 0.002);
+    const gaps = fast.shownAt.slice(4).map((f, k) => f - fast.shownAt[k + 3]);
+    gaps.forEach((g) => expect(g).toBeGreaterThanOrEqual(3));
+    gaps.slice(-4).forEach((g) => expect(g).toBeLessThanOrEqual(5));
+    // never more than a keyframe's worth to draw in one frame, only as it changes step
+    expect(fast.worst).toBeLessThanOrEqual(1);
+    // and back
+    const calm = run(200, 0.0008, 0.0015);
+    const g2 = calm.shownAt.slice(-4).map((f, k) => f - calm.shownAt[calm.shownAt.length - 5 + k]);
+    g2.forEach((g) => expect(g).toBeGreaterThanOrEqual(11));
+  });
+
+  it('draws a view that left its keyframes from the soft map, and hands back at the start of an interval', () => {
+    const N = 10;
+    const c = new SkyCacheScheduler({ frames: N });
+    let yaw = 0;
+    const cam = () => ({ yaw, pitch: 0.3, fov: 1.0 });
+    let i = 0;
+    for (; i < 5 * N; i++) c.frame(frame({ camera: cam() }, i));
+    expect(c.frame(frame({ camera: cam() }, i++)).reason).toBe('ok');
+    // a whip of the camera, a long way in one go
+    yaw = 2;
+    const p = c.frame(frame({ camera: cam() }, i++));
+    expect(p.reason).toBe('soft');
+    expect(p.builds.some((b) => b.key.slot === SOFT_SLOT)).toBe(true);
+    const seen: string[] = [];
+    for (let k = 0; k < 5 * N; k++) {
+      const q = c.frame(frame({ camera: cam() }, i++));
+      if (seen[seen.length - 1] !== q.reason) seen.push(q.reason);
+      // handing over from a mix of nothing
+      if (q.reason === 'handover' && seen[seen.length - 1] === 'handover' && seen.length === 2 && k < N * 3) expect(q.show!.mix).toBeLessThan(1);
+    }
+    expect(seen).toEqual(['soft', 'handover', 'ok']);
   });
 
   it('leaves a view that wants more texels than the budget to the direct draw', () => {
