@@ -8748,7 +8748,9 @@ export class AtmosphereRenderer {
       if (!sh) return null;
       gl.shaderSource(sh, src);
       gl.compileShader(sh);
-      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      // (asking now would wait out the compile on this thread. In parallel
+      // the asking waits for the link to finish, whose log tells of it too)
+      if (!this.parallel && !gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
         console.error('atmosphere shader compile error:', gl.getShaderInfoLog(sh));
         gl.deleteShader(sh);
         return null;
