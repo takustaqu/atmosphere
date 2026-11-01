@@ -53,7 +53,9 @@ be an easy way to get a sky that keeps changing procedurally.
 - **Cloud lighting** — pseudo shading toward the sun, silver lining,
   blue-grey shadow from continuous thickness, flattening to diffuse light under overcast.
   A cumulonimbus or cumulus standing against the sun is backlit: a dark mass with
-  only its rim blazing in the sun's color
+  only its rim blazing in the sun's color. Under a sun well up a cumulus is modelled
+  instead: a bright top with soft grey masses and irregular lobes, its near flank
+  and underside one dark mass lightening to a thin bright far rim
 - **Cloud shape evolution** — the domain-warp field itself moves, so clouds billow and collapse in place
 - **Precipitation** — rain (leaning with the wind), snow (tumbling on the wind), droplets on the lens
   (both switchable — see [Falling rain and snow](#falling-rain-and-snow) and [Lens](#lens))

@@ -4,6 +4,24 @@
 
 ### Changed
 
+- **Daytime cumulus are modelled against the sun.** With the sun some twenty
+  degrees up and more, a lump looked toward the sun was a flat white crown over
+  a flat grey base with a line between them. Now the top of a lump is brightest,
+  and the near flank and the underside are one dark mass that meets the crown
+  across a wide ragged band, with no line along the base's near edge, and
+  lightens to a bright thin far rim. Grey masses drift across the crown, and
+  over them a small relief of irregular lobes, crumbling on the tops and smooth
+  in the hollows, so a lump's light varies softly at several scales. All of it
+  is tone laid on noise of mixed sizes: no lobe is drawn or shaded on its own,
+  no edge is added, and the outlines and the fibres of the margins are as they
+  were, still glowing toward the sun. The reach grows with the sun's height, to
+  some 75° from it, with the full effect out to some 40°; a far lump's darks
+  ease off into the air. Under a sun below some 17° it is all left alone, so
+  sunrises and sunsets are the same picture (a few isolated pixels of a sea
+  sunset or overcast differ by one or two levels). Storm towers are unchanged;
+  only the cumulus in front of them and around them change. The drifting films
+  change no more pixels a frame than before. Some 2 to 5% more GPU time looking
+  toward the sun on a cumulus sky (M2 Max, 1080p: a fair sky 3.2 to 3.3 ms).
 - **Cumulus margins come apart into combed fibres.** A lump's margin was a
   soft even blur round the whole of it. Now it thins along fine fibres drawn
   out along the wind, curving and drawing together and apart as they run, and
