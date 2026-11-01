@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.9.0 — 2026-11-01
+
+Cumulus from photographs, and lighter frames. Fair-weather cumulus are large
+single lumps on a shared flat base, white on top and blue-grey beneath, dark
+at the core and glowing at the rim against the sun. Frames turned away from
+the sun skip the backlight, quality presets (`quality`) pick the clouds'
+resolution and the tower together, an experimental sky cache (`skyCache`)
+draws the cloud stack once every few frames for a fraction of the cost, and
+the stray grey boxes beside a thunderhead are gone.
+
 ### Added
 
 - **Quality presets.** `quality: 'high' | 'balanced' | 'low'` (and
@@ -75,6 +85,33 @@ with other work, so to within some ±3%:
 - The site's hero holds its frames under a budget (`adaptiveResolution`): on
   a GPU that keeps up nothing changes; on a slow one the resolution gives way
   before frames drop.
+
+### Changed
+
+- **Cumulus stand on a flat base, lit on top, shaded beneath and dark
+  against the sun.** The lumps were read at a fifth of their base's height
+  across, so a fair sky came out a scatter of small white flecks, and the
+  slab's two planes, each cut at the threshold and laid one over the other,
+  drew every lump as two soft copies of itself — a uniform grey-white with
+  grey blotches, and from thirty degrees up a streak pointing at the
+  vanishing point. Now the field is lifted into separate lumps by a coarse
+  octave of its own (about as wide as their base is high, a little long
+  along the wind, leaning downwind), and a ray is followed up through the
+  slab at four heights: where it is inside a lump at the base it sees the
+  underside — a smooth blue-grey, whose far rim, a level footprint seen
+  edge-on, draws the ruler-flat bottom every lump shares, stacking into rows
+  toward the horizon — and where it gets in higher, the flank, grey at the
+  foot and white where the sun is on it, so the line between them follows
+  each lump's form. Thin margins are lit through, never a translucent grey;
+  the detail no longer digs holes through a bright crown. Against the sun
+  (out to some 57° from it) a lump's core darkens with how far the eye
+  sees into it and its margin glows with the light scattered forward
+  through it, brighter the nearer the sun. Fewer lumps stand round a
+  thunderstorm (the air it lifts sinks around it), and over a tower the
+  lumps low in the sky go, so they no longer clutter its foot; far lumps
+  take on the horizon's color instead of fading out from 14° down. The
+  fractus is ragged fragments at the lumps' own base, only round the lumps.
+  Cumulus skies draw within ±5% of before. Sea shadows follow.
 
 ### Fixed
 
@@ -161,31 +198,6 @@ tower itself is lit as a cauliflower rather than putty.
   opens on one.
 
 ### Changed
-
-- **Cumulus stand on a flat base, lit on top, shaded beneath and dark
-  against the sun.** The lumps were read at a fifth of their base's height
-  across, so a fair sky came out a scatter of small white flecks, and the
-  slab's two planes, each cut at the threshold and laid one over the other,
-  drew every lump as two soft copies of itself — a uniform grey-white with
-  grey blotches, and from thirty degrees up a streak pointing at the
-  vanishing point. Now the field is lifted into separate lumps by a coarse
-  octave of its own (about as wide as their base is high, a little long
-  along the wind, leaning downwind), and a ray is followed up through the
-  slab at four heights: where it is inside a lump at the base it sees the
-  underside — a smooth blue-grey, whose far rim, a level footprint seen
-  edge-on, draws the ruler-flat bottom every lump shares, stacking into rows
-  toward the horizon — and where it gets in higher, the flank, grey at the
-  foot and white where the sun is on it, so the line between them follows
-  each lump's form. Thin margins are lit through, never a translucent grey;
-  the detail no longer digs holes through a bright crown. Against the sun
-  (out to some 57° from it) a lump's core darkens with how far the eye
-  sees into it and its margin glows with the light scattered forward
-  through it, brighter the nearer the sun. Fewer lumps stand round a
-  thunderstorm (the air it lifts sinks around it), and over a tower the
-  lumps low in the sky go, so they no longer clutter its foot; far lumps
-  take on the horizon's color instead of fading out from 14° down. The
-  fractus is ragged fragments at the lumps' own base, only round the lumps.
-  Cumulus skies draw within ±5% of before. Sea shadows follow.
 
 - **A trace of stratocumulus no longer streaks a thunderhead.** The layer
   crossed a tower at its own translucency — a few percent of cloud in every
