@@ -73,13 +73,42 @@
   before, or about as many. About a tenth more GPU time on a cumulus sky (M2
   Max, 1080p: a fair sky 3.0 to 3.2 ms; a sky without cumulus or the thin
   layers, some hundredths of a millisecond).
-- **Thin layers comb out at their edges too.** The edges of altocumulus and
-  cirrocumulus, grains and flocks alike, waver along the same fibres on some
-  stretches, so a sheet's margin dissolves in combed streaks rather than
-  standing as a torn paper edge. A trace of a layer is left as it was, and so
-  is any layer under a tower: storm skies change only at the cumulus's own
-  margins. A sky with cumulus and both layers thick is the most it costs, some
-  0.4 ms, about a sixth, at 1080p. Stratocumulus is unchanged.
+- **Cirrocumulus and altocumulus are flocks of soft cloudlets.** They were flat
+  pale flakes with torn-paper outlines and an embossed, crusty surface, one even
+  translucency to a flake, and the same flakes at any amount. What read as a grain
+  was a blob of one noise octave some 3 degrees across on the cirrocumulus's plane
+  and 14 on the altocumulus's, cut near the noise's median so that they merged, with
+  a fine shifted-difference emboss on top. Now the grains are the size the genus
+  has in the sky (about 1 degree overhead for cirrocumulus and about 1.5 for
+  altocumulus, the former without shading and the latter softly shaded), and
+  a patch has no outline. A slow field sets how thick the layer is, and it lowers the
+  threshold the grains are read at, so in the thick of a patch they run together
+  and toward its margin they shrink and part, with sky between, and the last of
+  them fade. Each grain is a wide soft rise, and how far it clears the threshold is
+  how thick it is, so thin grains are nearly sky-coloured and thick ones whiter.
+  A long soft read drawn out along the wind and bent lines the grains up into combed
+  streaks. Each read goes to its mean as a pixel's
+  footprint reaches it, so toward the horizon the grains sink into soft bands. A
+  layer's amount now gathers more of the sky into patches as well as thickening
+  them, so a little of a layer is a few faint flocks. Under an overcast's deck the
+  grains go to a plain thickness, rather than pocking the deck. At sunset the
+  peach stays: a preset's sunset, with a little of these layers behind its cumulus,
+  moves by under a level on average, and a sky of mostly these layers keeps its
+  colours with softer grains and somewhat less of the sky covered. Near the sun
+  and moon the iridescence and the lit-through glow follow the patch rather
+  than each grain, broad pastel in place of speckle. Parhelia read the new layer.
+  The films' own layers change no pixel by 20 levels at the usual drift; a sky with
+  cumulus in front shows it some 10% more where the sky behind its edges is
+  now bluer (an evening view 14.3 to 15.6 pixels a frame at 1280x800; the same
+  sky with no thin layers at all 16.8). Sparkle reversals are about as before. Cheaper
+  everywhere it shows (M2 Max, 1080p): a Fair sky 3.70 to 3.38 ms, Summer 13.7 to 13.1,
+  an evening view 3.04 to 2.73, cirrocumulus alone 1.04 to 0.81, altocumulus 1.13
+  to 1.03. Skies with neither layer are the same picture to the pixel.
+- **Stratocumulus loses its emboss.** Its mottling now follows the thickness of the
+  field that frays its edge, not that field's difference against itself shifted
+  toward the sun: the same large masses and rolls, softer, without a raised crust,
+  and four reads cheaper a pixel (an overcast sky, with the grains above, 4.66 to 4.30 ms). Storm skies, where
+  it barely shows, change by at most a few levels.
 
 ### Fixed
 

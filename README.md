@@ -47,8 +47,10 @@ be an easy way to get a sky that keeps changing procedurally.
   following the lump's form; the flat bottoms stack into rows toward the
   horizon, and ragged fractus drift at the lumps' margins. Toward the sun a
   lump's core goes dark and its margin glows. Margins thin out into fine fibres
-  combed along the wind, further on the downwind side, fading to nothing, and
-  the edges of altocumulus and cirrocumulus comb out the same way
+  combed along the wind, further on the downwind side, fading to nothing
+- **Flocks of cloudlets** — cirrocumulus and altocumulus are many small soft grains
+  lined up in combed streaks. A patch has no outline: toward its margin the grains
+  shrink and part with sky between them, thin ones nearly sky-coloured, thick ones whiter
 - **Cumulonimbus anvils** — a tower that reaches the tropopause spreads out horizontally
 - **Cloud lighting** — pseudo shading toward the sun, silver lining,
   blue-grey shadow from continuous thickness, flattening to diffuse light under overcast.
