@@ -1001,7 +1001,7 @@ vec4 cuField(vec2 cuv, float churn, vec2 ldir, float edge, float clear, bool lit
 // ── The fibres a thin margin comes apart into ──
 // Cloud thinning into dry air under a shear is drawn out into fibres along
 // the wind, and in the thinnest of it a ripple of cloudlets runs across them.
-// This is their texture, for a cumulus's margin and a thin layer's alike, in
+// This is their texture, for a cumulus's margin, in
 // two steps, so that the stretches of a margin that do not fray cost one read.
 // cuFrayBend at p, on the layer's plane (x along the wind): a slow noise, the
 // bend the fibres take. cuFray from it: which stretches fray, 0 none (the
@@ -2434,9 +2434,10 @@ vec2 stratiform(vec2 uv, float breakup, float turb) {
               smoothstep(0.34, 0.68, d));
 }
 
-// Granular (cirrocumulus / altocumulus / stratocumulus) — mackerel sky, sheep clouds, roll clouds.
+// Granular (stratocumulus) — roll clouds: large mottled masses. (The other two of
+// the form, cirrocumulus and altocumulus, thin out grain by grain: see flocks().)
 //
-// What defines these three's look is "grains of a consistent size, placed
+// What defines the look is "grains of a consistent size, placed
 // irregularly". Arranging grains on a grid is too regular and reads as
 // wallpaper; using fbm mixes large and small grains into cumulus instead.
 // **Thresholding a single noise octave** is the sweet spot: one consistent
@@ -2444,7 +2445,7 @@ vec2 stratiform(vec2 uv, float breakup, float turb) {
 //
 // Raising pack makes grains bigger and denser, merging into a mottled
 // pattern. roll < 1 stretches them into rolls. Return value: x=coverage, y=lit-ness (-1..1)
-vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir, vec4 fib) {
+vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir) {
   // slowly reshuffle the arrangement of grains
   vec2 q = uv * vec2(1.0, roll)
          + 0.7 * vec2(vnoise(uv * 0.22 + u_evo * 0.20),
@@ -2459,28 +2460,7 @@ vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir, vec4 fib)
   // keep the threshold band narrow. Too wide and the edge bleeds endlessly
   // into a formless smudge
   float e0 = 0.62 - pack * 0.24;
-  // A thin sheet's margin comes apart as a cumulus's does, into fibres along
-  // the wind (cuFibre): on the stretches where they fray, the threshold the
-  // grains and the flocks' edge below are cut at wavers along them and its
-  // band widens a little, so an edge combs out rather than standing as a torn
-  // paper edge. Only near the threshold: past the band's ends the fibres can't
-  // move the cut, and they have gone to their mean by the top of it. fib: a
-  // pixel's footprint on the plane, the fibres' scale there, and how strongly
-  // (0 none: a trace of a layer is too thin for them to show and is spared them,
-  // and so is the sky a tower stands in: the storm's own frames are its costliest)
-  float fx = 0.5;
-  float kf = 0.0;
-  if (fib.w > 0.0 && n > e0 - 0.15 && n < e0 + 0.20) {
-    vec2 fp = uv * fib.z;
-    float bend = cuFrayBend(fp);
-    kf = cuFray(bend - 0.02) * fib.w;
-    if (kf > 0.0) {
-      vec3 fb = cuFibre(fp, fib.xy * fib.z, bend, false);
-      kf *= fb.y;
-      fx = 0.5 + (fb.x - 0.5) * kf * (1.0 - smoothstep(e0 + 0.09, e0 + 0.20, n));
-    }
-  }
-  float cell = smoothstep(e0 - 0.05 * kf, e0 + 0.11 + 0.05 * kf, n + (fx - 0.5) * 0.20);
+  float cell = smoothstep(e0, e0 + 0.11, n);
   // between the grains there is nothing to shade: every caller draws with
   // g.x as its alpha, so the lit-ness there is never seen
   if (cell <= 0.0) return vec2(0.0);
@@ -2488,7 +2468,7 @@ vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir, vec4 fib)
   // sky the same face everywhere. Raising patch merges the flocks into one
   // mottled sheet covering the sky (stratocumulus)
   float f = fbm4(uv * 0.16 + 21.0);
-  cell *= smoothstep(mix(0.34, 0.02, patch), mix(0.68, 0.38, patch), f + (fx - 0.5) * 0.20);
+  cell *= smoothstep(mix(0.34, 0.02, patch), mix(0.68, 0.38, patch), f);
   if (cell <= 0.0) return vec2(0.0);
 
   // lit-ness: the difference against density resampled shifted toward the sun (per-grain shading)
@@ -2498,6 +2478,100 @@ vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir, vec4 fib)
   // fine surface grain, taken from the same field that frays the edge
   lit += (fineN - fbm4((q + ldir * 0.12) * 5.0)) * 2.4;
   return vec2(cell, clamp(lit, -1.0, 1.0));
+}
+
+// Flocks (cirrocumulus, altocumulus) — cloudlets gathered in patches.
+//
+// A patch of these is not a shape with a texture on it. It is many small soft
+// elements, packed where the layer is thick, and toward its margin they shrink
+// and part until sky shows between them and the last ones fade: nothing cuts
+// the outline. So one number does most of it. T, a slow field, is how thick the
+// layer is here; the grain noise g is compared with a threshold T lowers, so in
+// the thick of a patch most of g clears it and the grains run together, and
+// thinly only g's peaks do, as small separate grains. The band g is ramped over
+// is wide, which keeps each grain a soft rise with no contour (narrow, these
+// read as drops of liquid), and how far a grain clears it is how thick that
+// grain is, so opacity follows thickness from one grain to the next, and T's
+// own fade makes the thin parts nearly sky-coloured.
+// The grains are the size the genus has in the sky: a cell of 1/grain on the
+// plane is about 0.9 degrees overhead on the cirrocumulus's plane, about 1.5 on
+// the altocumulus's. (Cells a whole unit of the plane wide, some 3 degrees and
+// 14, cut around the noise's median merged into one solid flake, and the crust of
+// a fine emboss was all that was left to read as grain.)
+// A thresholded lattice shows its square at this size, as a zigzag weave: so
+// the grain is two reads at much the same size on lattices turned 60 degrees
+// apart, and one finer, for an irregular outline. Under them one long soft read,
+// drawn out some four times along the wind and bent by the patch's own second
+// octave, lines the grains up into combed streaks with sky between, as thin
+// cloud under a shear is; it is also what is left of the grains far off.
+// (The fibres of a cumulus's margin, cuFibre, did nothing here: on a margin this
+// thin they were hardly to be seen, and strong enough to see they were scratches.)
+// None of that is held below a pixel: each read goes to its mean as a pixel's
+// footprint reaches it (the texture has no mips to do it), and the ramp widens
+// by as much, so toward the horizon, drawn out along the ray, the grains
+// sink into the bands of the coarser reads and then of T alone, with no sparkle.
+//   grain  the grain noise's frequency on the plane
+//   roll   < 1 stretches grains across the flow
+//   flock  the frequency of the patches
+//   amt    the layer's amount: it gathers more of the sky into patches (c) and
+//          thickens them, a trace of a layer being few and faint
+//   depth  how fast the amount turns into opacity
+//   ldir   the sun's way on the plane, when shaded
+//   fw     a pixel's footprint on the plane (planeFoot)
+// x the opacity, y the lit-ness (0 unless shaded), z the thickness a grain has,
+// w the patch's own thickness, smooth across the grains
+vec4 flocks(vec2 uv, float grain, float roll, float flock, float amt, float depth, vec2 ldir, bool shaded, vec2 fw) {
+  // (the same reading from any azimuth, where max(fw.x, fw.y) would be a ring
+  // of grains ending nearer the zenith along the diagonals)
+  float foot = length(fw) * 0.8;
+  float c = smoothstep(0.0, 0.75, amt);
+  vec2 fq = uv * flock + 21.0;
+  float n0 = vnoise(fq);
+  fq = fq * 2.03 + vec2(17.3, 9.1);
+  float n1 = vnoise(fq);
+  fq = fq * 2.03 + vec2(17.3, 9.1);
+  float n2 = 0.5;
+  float hf = 1.0 - smoothstep(0.25, 0.80, foot * flock * 4.12);
+  if (hf > 0.0) n2 = mix(0.5, vnoise(fq), hf);
+  float T = smoothstep(mix(0.40, 0.25, c), mix(0.70, 0.55, c), n0 * 0.5 + n1 * 0.25 + n2 * 0.1875);
+  // (out in the open there are no grains to read)
+  if (T <= 0.0) return vec4(0.0);
+  float k = T * smoothstep(0.0, 0.25, T);
+
+  // slowly reshuffle the arrangement of grains
+  vec2 q = (uv * vec2(1.0, roll)
+         + 0.7 * vec2(vnoise(uv * 0.22 + u_evo * 0.20),
+                      vnoise(uv * 0.22 + 17.0 - u_evo * 0.16))) * grain;
+  float px = foot * grain;
+  float hc = 1.0 - smoothstep(0.25, 0.80, px * 0.55);
+  float h0 = 1.0 - smoothstep(0.25, 0.80, px);
+  float h1 = 1.0 - smoothstep(0.12, 0.32, px * 2.3);
+  float g = 0.5, g0 = 0.5;
+  vec2 q0 = mat2(0.966, 0.259, -0.259, 0.966) * q;
+  if (hc > 0.0) g += (vnoise(CU_FLAT(vec2(q.x * 0.13, (q.y + (n1 - 0.5) * 0.5 * grain / flock) * 0.55)) + 3.0) - 0.5) * 0.44 * hc;
+  if (h0 > 0.0) {
+    g0 = vnoise(q0);
+    g += (g0 - 0.5 + vnoise(mat2(0.407, 0.914, -0.914, 0.407) * q * 1.13 + 5.0) - 0.5) * 0.36 * h0;
+  }
+  if (h1 > 0.0) g += (vnoise(mat2(0.70, -0.71, 0.71, 0.70) * q * 2.3 + 9.0) - 0.5) * 0.24 * h1;
+  // (more of a layer packs its grains closer, and they run together; so does the
+  // patch's own third octave, here and there, into clumps with sky between)
+  float th = mix(0.64, 0.30, T) - c * 0.08 + (n2 - 0.5) * 0.20;
+  float s = (1.0 - h0) * 0.20;
+  float puff = smoothstep(th - s, th + 0.40 + min(px * 1.6, 0.3) + s, g);
+  // (a sky with a deck over it sees this layer only through the deck, where a
+  // grain's small bright rise is a pockmark on the deck: it shows as a thickness)
+  float deck = smoothstep(0.55, 0.85, u_cover);
+  puff = mix(puff, 0.6 * smoothstep(0.0, 0.5, T), deck);
+  // a thin film between the grains, more of it the more there is of the layer,
+  // and none out at the margin, where it would draw the patch's outline after all
+  float veil = (0.12 + 0.14 * c) * T;
+  float a = k * (veil + (1.0 - veil) * puff) * (1.0 - exp(-amt * depth));
+  // per-grain shading: the difference against the coarse grain resampled shifted
+  // toward the sun. Soft, as it is one octave, and none on what the pixel can't hold
+  float lit = 0.0;
+  if (shaded && h0 > 0.0 && deck < 1.0) lit = clamp((g0 - vnoise(q0 + ldir * 0.5)) * 1.6 * h0 * (1.0 - deck), -1.0, 1.0);
+  return vec4(a, lit, puff * k, k);
 }
 
 // Filament (cirrus) — a stroke swept by a brush.
@@ -2582,14 +2656,14 @@ vec4 parhelia(vec3 rd, float el, float rdY, float horizonFade, vec3 sunDir, floa
   }
   if (u_high.z > 0.001) {
     vec2 uv = planeUV(rd, rdY, 3.2 * 5.5, u_windOff * 0.3);
-    cc = granular(uv, 0.55, 1.0, 0.25, hs, vec4(0.0)).x;
+    vec4 g = flocks(uv, 3.6, 1.0, 0.16, u_high.z, 3.0, vec2(0.0), false, planeFoot(rd, rdY, 3.2 * 5.5));
+    cc = g.x;
     // (and the flock the grains are gathered in, likewise)
-    ccP = (cc * 0.3 + 0.7 * smoothstep(0.26, 0.605, fbm4(uv * 0.16 + 21.0))) * u_high.z;
-    cc *= u_high.z;
+    ccP = (g.z * 0.3 + g.w * 0.7) * u_high.z;
   }
   iceT = (1.0 - ci * 0.72 * horizonFade * (1.0 - gloom * 0.8))
        * (1.0 - sx * 0.45 * horizonFade)
-       * (1.0 - cc * 0.85 * horizonFade);
+       * (1.0 - cc * horizonFade);
   float ice = 1.0 - exp(-(ciP * 8.0 + veil * 3.0 + ccP * 6.0));
   // (seen long through the layer, near the horizon, it holds up better than
   // the cloud's own fade to haze)
@@ -3905,9 +3979,9 @@ void main() {
   }
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
   if (u_high.z > 0.001 && above && stack) {
-    vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir, vec4(planeFoot(rd, rdY, ALT_HIGH * 5.5), 0.14, smoothstep(0.04, 0.16, u_high.z) * (1.0 - smoothstep(0.02, 0.12, u_low.w))));
-    vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 1.0);
-    OVERM(col, g.x * u_high.z * 0.85 * horizonFade, MV_PLANE(ALT_HIGH * 5.5, 0.3));
+    vec4 g = flocks(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 3.6, 1.0, 0.16, u_high.z, 3.0, ldir, false, planeFoot(rd, rdY, ALT_HIGH * 5.5));
+    vec3 col = cloudColor(g.w, g.y, 0.12, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 1.0);
+    OVERM(col, g.x * horizonFade, MV_PLANE(ALT_HIGH * 5.5, 0.3));
   }
 #ifdef FEAT_PARHELIA
   // The parhelia, once all the ice is down and with every water cloud still to
@@ -3958,9 +4032,9 @@ void main() {
   }
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
   if (u_mid.y > 0.001 && above && stack) {
-    vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir, vec4(planeFoot(rd, rdY, ALT_MID * 2.2), 0.32, smoothstep(0.04, 0.16, u_mid.y) * (1.0 - smoothstep(0.02, 0.12, u_low.w))));
-    vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun, 0.5);
-    OVERM(col, g.x * u_mid.y * 0.95 * horizonFade, MV_PLANE(ALT_MID * 2.2, 0.6));
+    vec4 g = flocks(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 10.0, 0.85, 0.40, u_mid.y, 2.4, ldir, true, planeFoot(rd, rdY, ALT_MID * 2.2));
+    vec3 col = cloudColor(g.w, g.y, 0.15 + 0.3 * g.z, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun, 0.5);
+    OVERM(col, g.x * horizonFade, MV_PLANE(ALT_MID * 2.2, 0.6));
   }
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
   if (u_mid.z > 0.001 && above && stack) {
@@ -6176,7 +6250,7 @@ void main() {
   // ── Low layer, under 2000m ──────────────────────────
   // Stratocumulus Sc (roll cloud) — large mottled masses, arranged as rolls
   if (u_low.y > 0.001 && above && stack) {
-    vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir, vec4(0.0));
+    vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightM, sunsetF, flash, gloom, 1.05, cloudSun, 0.0);
     float scA = g.x * u_low.y * 0.95 * horizonFade;
     // Over a tower, as the cumulus's fringes (below): only what is nearly
@@ -6942,7 +7016,7 @@ void main() {
       if (u_low.y > 0.02) {
         // the stratocumulus, on its own lower plane
         vec2 x = (wp + toSun * (600.0 * 1.9 / 2.5 + 1.0)) * toPlane;
-        sunLit *= 1.0 - granular(x + vec2(u_windOff * 1.2, u_windOff * 0.18), 1.22, 0.5, 0.78, ldir, vec4(0.0)).x
+        sunLit *= 1.0 - granular(x + vec2(u_windOff * 1.2, u_windOff * 0.18), 1.22, 0.5, 0.78, ldir).x
                      * u_low.y * 0.95;
       }
       // the more of the sun the sky has already taken, the less a cloud's
