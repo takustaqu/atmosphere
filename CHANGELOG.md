@@ -81,6 +81,23 @@
   margins. A sky with cumulus and both layers thick is the most it costs, some
   0.4 ms, about a sixth, at 1080p. Stratocumulus is unchanged.
 
+### Fixed
+
+- **A still frame stays up.** `resize()` cleared the canvas and only a running
+  loop drew it back, so under `prefers-reduced-motion` the sky went blank at the
+  first change of size. A still frame is now drawn again, the same moment, when
+  the size has changed; a resize to the size it already has no longer clears
+  the canvas at all.
+- **`jump()` before the shader has compiled is drawn when it has.** With
+  `autoStart: false` nothing ever drew it. An Atmosphere now remembers a still
+  frame apart from wanting its loop running (`stop()` forgets both), and draws
+  it again when the shader comes ready, and when a variant it went without
+  has linked (`RendererOptions.onLinked`), so a still frame doesn't stay
+  without the feature it was waiting for.
+- **`AtmosphereCanvas` passes on `tone`, `polarizer` and `celestial`.** They
+  were accepted as props and did nothing. A condition left out of its list now
+  fails the typecheck.
+
 ## 0.9.0 — 2026-11-01
 
 Cumulus from photographs, and lighter frames. Fair-weather cumulus are large

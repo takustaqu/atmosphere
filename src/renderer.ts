@@ -8204,6 +8204,12 @@ export interface RendererOptions {
    */
   onReady?: (available: boolean) => void;
   /**
+   * A variant has finished linking in the background, after {@link RendererOptions.onReady}.
+   * A frame drawn meanwhile went without it, from a stand-in: a caller that
+   * isn't drawing again anyway (a still frame) should draw this one again.
+   */
+  onLinked?: () => void;
+  /**
    * Draw the clouds at this fraction of the frame's resolution, each way, and
    * lay them over a full-resolution sky. Defaults to 1: one pass, as always.
    *
@@ -8760,13 +8766,18 @@ export class AtmosphereRenderer {
       this.poll = 0;
       const gl = this.gl, parallel = this.parallel;
       if (!gl || !parallel) return;
-      let pending = false;
+      let pending = false, finished = false;
+      const reported = this.reported;
       for (const v of this.variants.values()) {
         if (v.linked || v.failed) continue;
-        if (gl.getProgramParameter(v.program, parallel.COMPLETION_STATUS_KHR)) this.finishLink(v);
-        else pending = true;
+        if (gl.getProgramParameter(v.program, parallel.COMPLETION_STATUS_KHR)) {
+          this.finishLink(v);
+          finished = true;
+        } else pending = true;
       }
       if (pending) this.poll = setTimeout(step, POLL_MS);
+      // (the first one to be drawn is onReady's to tell)
+      if (finished && reported && this.gl) this.opts.onLinked?.();
     };
     // a turn of the event loop before the first ask, so the caller gets to
     // finish constructing and paint its fallback first
@@ -8938,8 +8949,9 @@ export class AtmosphereRenderer {
   }
 
   resize(width: number, height: number): void {
-    this.canvas.width = width;
-    this.canvas.height = height;
+    // assigning a canvas's size clears it, even to the size it already has
+    if (this.canvas.width !== width) this.canvas.width = width;
+    if (this.canvas.height !== height) this.canvas.height = height;
     this.gl?.viewport(0, 0, width, height);
   }
 

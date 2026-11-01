@@ -168,6 +168,10 @@ export class Atmosphere {
   // "the caller wants rendering" — kept separate from the raf loop, so
   // reduced-motion can pause the loop without forgetting the caller's intent
   private wantRunning = false;
+  // "the caller wants a picture to stay up with no loop to redraw it" — a still
+  // frame, from jump() or reduced motion. Apart from wantRunning, which a jump()
+  // before start() has not set
+  private wantStill = false;
   private motionQuery: MediaQueryList | null = null;
   private measured: LightMeasurement | null = null;
   private readonly governor: ResolutionGovernor | null = null;
@@ -180,9 +184,12 @@ export class Atmosphere {
   // next tick; a still frame — reduced motion, or a jump() before start() —
   // has no next tick and has to be drawn here or never.
   private readonly onRendererReady = (available: boolean) => {
-    if (available && this.wantRunning && !this.raf) this.draw(performance.now());
+    if (available) this.redrawStill();
     this.opts.onReady?.(available);
   };
+  // and a still frame drawn while the variant it needed was still linking went
+  // without that variant's feature
+  private readonly onVariantLinked = () => this.redrawStill();
   private readonly onMotionChange = () => {
     if (!this.wantRunning) return;
     if (this.reducedMotion) {
@@ -225,6 +232,7 @@ export class Atmosphere {
     this.renderer = new AtmosphereRenderer(canvas, {
       colorSpace: options.colorSpace,
       onReady: this.onRendererReady,
+      onLinked: this.onVariantLinked,
       cloudScale: q.cloudScale,
       rays: options.rays === true ? 1 : options.rays === false ? 0 : options.rays,
       variants: options.variants,
@@ -414,7 +422,17 @@ export class Atmosphere {
   jump(c: Conditions = {}): void {
     this.applyConditions(c);
     this.animator.jump(this.target);
+    this.wantStill = true;
     this.draw(performance.now());
+  }
+
+  /**
+   * Draw the still frame on show over again, if one is: the same moment, so a
+   * redraw moves nothing. With the loop running its next tick will do.
+   */
+  private redrawStill(): void {
+    if (this.raf || !this.wantStill) return;
+    this.draw(this.startedAt ? this.last : performance.now());
   }
 
   private applyConditions(c: Conditions): void {
@@ -428,6 +446,13 @@ export class Atmosphere {
 
   /** recompute internal resolution from the canvas's displayed size */
   resize(): void {
+    const { width, height } = this.canvas;
+    this.applySize();
+    // a new size has cleared the canvas, and a still frame has no next tick
+    if (this.canvas.width !== width || this.canvas.height !== height) this.redrawStill();
+  }
+
+  private applySize(): void {
     const [w, h] = this.fullSize();
     const g = this.resolution;
     this.renderer.resize(Math.max(1, Math.round(w * g)), Math.max(1, Math.round(h * g)));
@@ -455,6 +480,7 @@ export class Atmosphere {
   /** stop the render loop (let the GPU rest). State is preserved */
   stop(): void {
     this.wantRunning = false;
+    this.wantStill = false;
     this.stopLoop();
   }
 
@@ -508,7 +534,7 @@ export class Atmosphere {
       if (times.length) {
         const [w, h] = this.fullSize();
         const before = this.governor.scale;
-        if (this.governor.update(times, w * h, t) !== before) this.resize();
+        if (this.governor.update(times, w * h, t) !== before) this.applySize();
       }
     }
   }
