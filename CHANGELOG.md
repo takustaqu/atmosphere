@@ -162,6 +162,25 @@ tower itself is lit as a cauliflower rather than putty.
 
 ### Changed
 
+- **Cumulus stand on a flat base, lit on top and shaded beneath.** The
+  lumps were read at a fifth of their base's height across, so a fair sky
+  came out a scatter of small white flecks, and both of the slab's planes
+  took the field's own light — a uniform grey-white with grey blotches
+  through it. Now the lumps are twice the size (about as wide as their base
+  is high), drawn a little long along the wind with their crowns carried
+  downwind over their bases. The base plane is the underside: the whole
+  footprint, a smooth blue-grey, darker only under a big lump, and its
+  far rim — a level footprint seen edge-on — draws the ruler-flat bottom
+  every lump shares, stacking into rows of flat bottoms toward the horizon.
+  The crown turns from that grey to white by how high up the flank a ray
+  meets the lump, so the line between lit top and shaded base follows each
+  lump's form; its thin margins are lit through, white over the blue, never
+  a translucent grey. The slab is held shallower with distance so far crowns
+  stay on their bases; far lumps take on the horizon's color instead of
+  fading out from 14° down. The fractus is now ragged fragments at the
+  lumps' own base, only round the lumps, and skipped elsewhere, which pays
+  for the rest: cumulus skies draw 2–15% faster. Sea shadows follow.
+
 - **A trace of stratocumulus no longer streaks a thunderhead.** The layer
   crossed a tower at its own translucency — a few percent of cloud in every
   grain at the amounts a summer sky carries — and toward the horizon, where

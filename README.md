@@ -42,6 +42,10 @@ be an easy way to get a sky that keeps changing procedurally.
   altocumulus, nimbostratus, stratus, stratocumulus, cumulus, cumulonimbus.
   A perspective projection from the intersection of the view ray and each
   cloud plane gives depth by altitude
+- **Cumulus on a level base** — every lump stands on the same flat base, a
+  shaded blue-grey underside under a sunlit top, the line between them
+  following the lump's form; the flat bottoms stack into rows toward the
+  horizon, and ragged fractus drift at the lumps' margins
 - **Cumulonimbus anvils** — a tower that reaches the tropopause spreads out horizontally
 - **Cloud lighting** — pseudo shading toward the sun, silver lining,
   blue-grey shadow from continuous thickness, flattening to diffuse light under overcast.
