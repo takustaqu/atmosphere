@@ -681,14 +681,43 @@ continuously rather than sitting still and dissolving into its next place, and
 uneven frame times move it no differently from even ones. On an M2 Max at
 1080p and 60 fps a cloudy frame takes 0.16–0.24 of the time (summer 14.0 →
 2.7 ms), still or panning; a light sky, or a strong wind's oftener keyframes,
-0.3–0.4. What it cannot follow still dissolves, less than it did: a faint fast
-layer over a slower one (the scud over a high sheet), and what appears from
-nothing. A set() transition, a clear sky, the `'auto'` tower's crossfade band,
-or a view that wants more texels than `budget` is drawn directly; so is the
-second it takes to build the first two keyframes after one. It holds three
-half-float maps, each with a map of its motion beside it: 115–300 MB at 1080p
-(the default `'view'` window round the camera), 270–650 MB for `region:
-'panorama'`; `motion: false` mixes the keyframes as they stand, at half that.
+0.3–0.5; a sky of nothing but a little thin ice cloud, cheap to draw anyway,
+0.8. What it cannot
+follow still dissolves, less than it did: a faint fast layer over a slower one
+(the scud over a high sheet), and what appears from nothing.
+
+A `set()` goes through the cache like any other frame: keyframes go on being
+built, each for the state it will be shown in, and the mix between two of them
+is the change as it goes (fair to summer at 1080p: 2.5 ms a frame all through
+it, against 11.5 drawn directly). The clouds start to change a third of a second
+after the sky does, the keyframes already made being for the sky as it was, and
+catch up over the next quarter second; from there the picture is as close to
+the direct one as it is at rest. With no keyframes to show — the frames after the first,
+a `jump()`, a view that turned out of its window — the clouds come from a soft
+map, a sixth of a keyframe's texels, drawn whole in one frame for less than a
+direct frame costs, and it hands over to the keyframes by the same mix as they
+come whole: half a second after a start the sky has sharpened, with no step in
+it. The very first frame, a still sky, a clear sky, the `'auto'` tower's
+crossfade band and a view that wants more texels than `budget` are drawn
+directly.
+
+The picture is not quite the direct one. At the default density the finest
+grain is softer, most in a wide view's lower corners and along a tower's hard
+edges (a cumulus sky's fine detail, by its Laplacian energy, at 0.65–0.72 of the
+direct picture's; a close view 0.84; overcast and thin high cloud 0.87–0.99).
+Parhelia and dusk gradients come through untouched. `density: 0.5` is a quarter
+of the memory but plainly another picture: a tower's small lobes melt and the
+streaks low in the sky turn to blobs (0.26–0.37). 1.25 reaches 0.77–0.80 at 1.6
+times the memory. As under `cloudScale`, the 22° halo lies under all the
+clouds.
+
+It holds three half-float maps, each with a map of its motion beside it, and
+the soft map: 115–285 MB at 1080p (the default `'view'` window round the
+camera), 270–650 MB for `region: 'panorama'`; `motion: false` mixes
+the keyframes as they stand, a crossfade plain to see, at half that. Without
+half-float targets, without `WEBGL_draw_buffers` (unless `motion: false` asked
+to do without it) or without the memory, every frame is drawn directly, and
+`sky.skyCache` reads false.
 
 ```ts
 new Atmosphere(canvas, { skyCache: true });

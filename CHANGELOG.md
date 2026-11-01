@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Performance
+
+- **A `set()` no longer holds up the page while new shader variants compile.**
+  Under `compile: 'auto'` the renderer asked each shader's compile status as it
+  started it, which waits out the compile on the calling thread: a `set()` into
+  a sky needing a new variant lost some 115 ms in one frame (M2 Max), and the
+  first frame came later too. It now asks only once the link is done, whose log
+  tells of a failed compile as well, and the frames go on at 16.7 ms through it.
+  The pictures are the same to the pixel.
+- **The sky cache no longer falls back on direct frames for a start or a change
+  of weather** (`skyCache`, still experimental and off by default). A `set()`
+  used to draw every frame directly until it had nearly settled, some seven and
+  a half seconds of them, and then direct frames with a keyframe's slice on top
+  for half a second more; a start did the same half second, at 1.1–1.4 times a
+  direct frame. Now the keyframes go on being built through a `set()`, each for
+  the state it will be shown in, and the mix between two of them is the change as
+  it goes: fair to summer takes 2.5 ms a frame all through it against 11.5 drawn
+  directly (M2 Max, 1080p), with no step in it. The clouds start to change a
+  third of a second after the sky does and catch up over the next quarter second;
+  from there the picture is as close to direct's as at rest (a mean of 0.6–1.4
+  levels on the skies measured). With no keyframes to show (after
+  the first frame, a `jump()`, a view turned out of its window) the clouds come
+  from a new soft map, a sixth of a keyframe's texels, drawn whole in one frame,
+  which hands over to the keyframes by the same mix: half a second of a soft sky
+  that sharpens, at under a direct frame's cost throughout, but for three frames
+  once per page while the maps are first touched (at density 1 some 50 ms, then
+  10–20 ms, on a 3.5–13 ms sky; the frames still came on time in a live start
+  but for one, of 67 ms, on a first visit).
+  The keyframes' interval now follows the clock as it speeds up and slows down,
+  so a `set()` of the time of day no longer piles a whole keyframe into a frame or
+  two. The soft map adds 5% to the memory. With `skyCache` off nothing changes,
+  to the pixel.
+
+### Fixed
+
+- **`skyCache` never draws a broken picture.** Where `WEBGL_draw_buffers` is
+  missing the keyframes used to be mixed as they stand, a crossfade plain to see;
+  unless `motion: false` asks for that, every frame is now drawn directly, as
+  where half-float targets, eight texture units or the memory for the maps are
+  missing (a texture allocation that fails now counts). `sky.skyCache` (and the
+  renderer's) says whether the cache is in effect. The morph's shader no longer
+  compiles in the frame that first wants it.
+
 ### Changed
 
 - **Parhelia (sun dogs) form in any thin ice cloud, and show a spectrum.** They were a
