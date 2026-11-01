@@ -191,7 +191,7 @@ describe('backlitInView', () => {
     const ce = Math.cos(s.sunElevation);
     const sun = [ce * Math.sin(s.sunAzimuth), Math.sin(s.sunElevation), ce * Math.cos(s.sunAzimuth)];
     const lowS = 1 - sm(0.20, 0.55, sun[1]), lift = sm(0.15, 0.60, sun[1]);
-    const gates = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 1.0]];
+    const gates = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 1.0 + 0.3 * sm(0.30, 0.50, sun[1])]];
     const t = Math.tan(cam.fov / 2);
     let least = Infinity;
     for (let j = 0; j <= 90; j++) for (let i = 0; i <= 160; i++) {
@@ -242,7 +242,7 @@ describe('backlitInView', () => {
     // rays, not of the rays the drops bend in from beyond its edge
     let differ = 0;
     for (let k = 0; k < 64; k++) {
-      const cam = { yaw: wet.sunAzimuth + 0.6 + k * 0.03, pitch: Math.max(wet.sunElevation, 0.1), fov: 0.86 };
+      const cam = { yaw: wet.sunAzimuth + 0.6 + k * 0.05, pitch: Math.max(wet.sunElevation, 0.1), fov: 0.86 };
       const a = backlitInView(wet, cam, 16 / 9), b = backlitInView(dry, cam, 16 / 9);
       if (a !== b) differ++;
       if (!a) expect(b).toBe(false);
