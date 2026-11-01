@@ -2489,7 +2489,7 @@ vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir) {
 // and part until sky shows between them and the last ones fade: nothing cuts
 // the outline. So one number does most of it. T, a slow field, is how thick the
 // layer is here; the grain noise g is compared with a threshold T lowers, so in
-// the thick of a patch most of g clears it and the grains run together, and
+// the thick of a patch most of g clears it and the grains crowd together, and
 // thinly only g's peaks do, as small separate grains. The band g is ramped over
 // is wide, which keeps each grain a soft rise with no contour (narrow, these
 // read as drops of liquid), and how far a grain clears it is how thick that
@@ -2556,9 +2556,10 @@ vec4 flocks(vec2 uv, float grain, float roll, float flock, float amt, float dept
     g += (g0 - 0.5 + vnoise(mat2(0.407, 0.914, -0.914, 0.407) * q * 1.13 + 5.0) - 0.5) * 0.36 * h0;
   }
   if (h1 > 0.0) g += (vnoise(mat2(0.70, -0.71, 0.71, 0.70) * q * 2.3 + 9.0) - 0.5) * 0.24 * h1;
-  // (more of a layer packs its grains closer, and they run together; so does the
-  // patch's own third octave, here and there, into clumps with sky between)
-  float th = mix(0.64, 0.30, T) - c * 0.08 + (n2 - 0.5) * 0.20;
+  // (more of a layer packs its grains closer; so does the patch's own third octave,
+  // here and there, into clumps with sky between. Never so low that they merge into
+  // a sheet with round holes through it: the thick of a patch is grains on a film)
+  float th = mix(0.64, 0.38, T) - c * 0.06 + (n2 - 0.5) * 0.20;
   float s = (1.0 - h0) * 0.20;
   float puff = smoothstep(th - s, th + 0.40 + min(px * 1.6, 0.3) + s, g);
   // (a sky with a deck over it sees this layer only through the deck, where a
@@ -2567,7 +2568,7 @@ vec4 flocks(vec2 uv, float grain, float roll, float flock, float amt, float dept
   puff = mix(puff, 0.6 * smoothstep(0.0, 0.5, T), deck);
   // a thin film between the grains, more of it the more there is of the layer,
   // and none out at the margin, where it would draw the patch's outline after all
-  float veil = (0.12 + 0.14 * c) * T;
+  float veil = (0.16 + 0.18 * c) * T;
   float a = k * (veil + (1.0 - veil) * puff) * (1.0 - exp(-amt * depth));
   // per-grain shading: the difference against the coarse grain resampled shifted
   // toward the sun. Soft, as it is one octave, and none on what the pixel can't hold

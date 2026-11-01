@@ -82,7 +82,7 @@
   has in the sky (about 1 degree overhead for cirrocumulus and about 1.5 for
   altocumulus, the former without shading and the latter softly shaded), and
   a patch has no outline. A slow field sets how thick the layer is, and it lowers the
-  threshold the grains are read at, so in the thick of a patch they run together
+  threshold the grains are read at, so in the thick of a patch they crowd together on a thin film,
   and toward its margin they shrink and part, with sky between, and the last of
   them fade. Each grain is a wide soft rise, and how far it clears the threshold is
   how thick it is, so thin grains are nearly sky-coloured and thick ones whiter.
@@ -99,15 +99,15 @@
   than each grain, broad pastel in place of speckle. Parhelia read the new layer.
   The films' own layers change no pixel by 20 levels at the usual drift; a sky with
   cumulus in front shows it some 10% more where the sky behind its edges is
-  now bluer (an evening view 14.3 to 15.6 pixels a frame at 1280x800; the same
+  now bluer (an evening view 14.3 to 15.7 pixels a frame at 1280x800; the same
   sky with no thin layers at all 16.8). Sparkle reversals are about as before. Cheaper
-  everywhere it shows (M2 Max, 1080p): a Fair sky 3.70 to 3.38 ms, Summer 13.7 to 13.1,
-  an evening view 3.04 to 2.73, cirrocumulus alone 1.04 to 0.81, altocumulus 1.13
-  to 1.03. Skies with neither layer are the same picture to the pixel.
+  everywhere it shows (M2 Max, 1080p): a Fair sky 3.61 to 3.26 ms, Summer 12.65 to 12.46,
+  an evening view 3.06 to 2.68, cirrocumulus alone 1.02 to 0.79, altocumulus 1.12
+  to 0.99. Skies with neither layer are the same picture to the pixel.
 - **Stratocumulus loses its emboss.** Its mottling now follows the thickness of the
   field that frays its edge, not that field's difference against itself shifted
   toward the sun: the same large masses and rolls, softer, without a raised crust,
-  and four reads cheaper a pixel (an overcast sky, with the grains above, 4.66 to 4.30 ms). Storm skies, where
+  and four reads cheaper a pixel (an overcast sky, with the grains above, 6.01 to 5.54 ms). Storm skies, where
   it barely shows, change by at most a few levels.
 
 ### Fixed
