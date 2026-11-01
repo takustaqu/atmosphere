@@ -12,6 +12,13 @@
   red on the side toward the sun, through orange and yellow to a hint of green
   and blue, with a pale tail away from it, on both sides of the sun, redder
   beside a red one. Brightest with the sun below some 20°, fading out by 44°.
+  It takes plate crystals settled flat, and most ice cloud has few: a coarse
+  field drifting on the evolution clock over tens of minutes, placed by the hour
+  and the amounts of ice and a little apart on each side (`sunDogPlates`), leaves
+  some three skies in five of those with ice and a low sun without a dog, one in
+  five with a faint one, and one in six with a clear one, a clear pair one in
+  eight. `weather.icePlates` (0..1, default 0) is a floor under it: at 1, a clear
+  pair wherever there is ice at them, as the controller's chip asks for.
   The place was wrong too: 22° / cos e of azimuth kept a dog on the 22° ring
   however high the sun. It now stands at the minimum deviation of a 60° prism
   for rays inclined by the sun's elevation (`parhelionAzimuth`, checked in the
@@ -21,9 +28,11 @@
   The dogs have a `FEATURE.DOGS` of their own, off the veil's halos, and are
   drawn in a second draw of the frame, scissored to the small rectangles they
   can fall in: carried by the program that draws the whole frame they cost
-  it a tenth to a sixth of its time, with a dog in view or not. Skies with no ice, or a sun above
-  45°, are the same picture; on others only the dogs' rectangles change, by
-  at most one level where no dog shows (in a tiny fraction of those pixels).
+  it a tenth to a sixth of its time, with a dog in view or not. Skies with no
+  ice, a sun above 45° or the plates unsettled are the same picture at the same
+  cost, the program with the dogs not even compiled; on others only the dogs'
+  rectangles change, by at most one level where no dog shows (in a tiny fraction
+  of those pixels).
   GPU time on an M2 Max at 1080p is unchanged within the noise looking away or
   under a clear sky; with a dog in view some 2% (a fair sky 2.96 to 3.02 ms). Under
   `cloudScale` and the sky cache likewise. The controller's Sky phenomena drawer

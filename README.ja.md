@@ -74,6 +74,7 @@ const sky = new Atmosphere(canvas, {
 | `windSpeed` | m/s | 地上風速 |
 | `thunder` | 0..1 | 雷の活発さ |
 | `visibility` | km | 視程 |
+| `icePlates` | 0..1 | 氷の板状結晶がどれだけ水平に揃っているかの下限。1 で氷があるかぎり幻日を出す（既定は 0、空まかせ） |
 | `convection` | 0..1 | 対流の発達（＝`clouds.cumulonimbus` の省略記法） |
 
 名前付きのプリセットも同じ観測値で定義してあるので、両者は地続きです。
