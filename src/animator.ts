@@ -120,6 +120,7 @@ export class StateAnimator {
     c.wind += (target.wind - c.wind) * k;
     c.thunder += (target.thunder - c.thunder) * k;
     c.haze += (target.haze - c.haze) * k;
+    c.icePlates += (target.icePlates - c.icePlates) * k;
 
     // transition the filter too (colors blend, so sepia → cyanotype connects smoothly)
     const f = c.filter, tf = target.filter;

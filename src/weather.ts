@@ -41,6 +41,13 @@ export interface Weather {
   thunder?: number;
   /** Visibility, km. Defaults to 30km (clear sky) */
   visibility?: number;
+  /**
+   * 0..1 a floor under how settled the ice's plate crystals are, which is what
+   * makes sun dogs. Left at 0 the sky decides for itself over tens of minutes,
+   * and most skies with ice show none; 1 is a clear pair whatever the clock says,
+   * wherever there is ice for them and a sun below some 45°
+   */
+  icePlates?: number;
 }
 
 export type WeatherId =
@@ -86,6 +93,8 @@ export interface WeatherState {
   wind: number;         // 0..1 wind strength (cloud turbulence, rain/snow slant)
   thunder: number;      // 0..1 lightning activity
   haze: number;         // 0..1 haze, derived from visibility
+  /** 0..1 the floor under how settled the ice's plates are (Weather.icePlates) */
+  icePlates: number;
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -157,5 +166,6 @@ export function resolveWeather(input: WeatherInput): WeatherState {
     wind: windCurve(w.windSpeed ?? 0),
     thunder: clamp01(w.thunder ?? 0),
     haze,
+    icePlates: clamp01(w.icePlates ?? 0),
   };
 }

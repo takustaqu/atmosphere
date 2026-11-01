@@ -52,6 +52,7 @@ const ui = {
     thunder: 0,
     visibility: 25,
     convection: 0.7,
+    icePlates: 0,
   },
   cloudMode: 'auto' as 'auto' | 'manual',
   clouds: Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])) as CloudMix,
@@ -281,6 +282,7 @@ syncers.push(chips(
       thunder: p.thunder ?? 0,
       visibility: p.visibility ?? 30,
       convection: p.convection ?? 0,
+      icePlates: 0,
     };
     ui.cloudMode = 'auto';
     ui.featureMode = 'auto';
@@ -322,6 +324,9 @@ note('Some of the sky only shows under the right conditions and in the right '
     ],
     () => false,
     (id) => {
+      // (only the Sun dogs chip holds the plates settled, and it stays held
+      // until the weather is next changed by a chip or a preset)
+      if (id !== 'away' && id !== 'toward') ui.weather = { ...ui.weather, icePlates: 0 };
       if (id === 'rainbow') {
         // rain falling with the sun out behind you, lower than 42°
         sunBetween(4, 38, 16.5);
@@ -342,9 +347,10 @@ note('Some of the sky only shows under the right conditions and in the right '
       } else if (id === 'dogs') {
         // thin ice drifting across a low sun's level, with the sun and both
         // dogs in the frame. A thin veil under the cirrus, so there is ice at
-        // them whichever strands happen to be passing
+        // them whichever strands happen to be passing, and the plates held
+        // settled: left to itself most of the sky goes without
         sunBetween(8, 25, 16.5);
-        ui.weather = { ...ui.weather, precipitation: 0, thunder: 0, visibility: 30 };
+        ui.weather = { ...ui.weather, precipitation: 0, thunder: 0, visibility: 30, icePlates: 1 };
         ui.cloudMode = 'manual';
         ui.clouds = { ...ui.clouds, ...Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])),
           cirrus: 0.55, cirrostratus: 0.2 };
@@ -425,7 +431,9 @@ note('Some of the sky only shows under the right conditions and in the right '
     + 'where the moonlit veil glows round it. Sun dogs: wherever thin ice cloud, cirrus '
     + 'or a veil, passes level with a sun below 45°, a small spot of spectrum either '
     + 'side of it, red toward the sun, 22° out and further as it climbs; water cloud '
-    + 'hides them. Moon behind clouds: a thin water cloud in '
+    + 'hides them. They take plate crystals settled flat, so left to itself most icy sky '
+    + 'shows none, some a faint one, and only now and then a clear pair; this button '
+    + 'holds them settled. Moon behind clouds: a thin water cloud in '
     + 'front of the moon glows, ringed by the corona. Iridescence: the thin edges of a '
     + 'water cloud passing near the sun pick up pastel pinks and greens. Circumzenithal '
     + 'arc: with the sun below 32° in a cirrostratus veil, an upside-down rainbow high '

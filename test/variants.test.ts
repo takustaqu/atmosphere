@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys, parhelionAzimuth, sunDogRects, sunDogShape } from '../src/renderer.js';
+import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys, parhelionAzimuth, sunDogAmounts, sunDogPlates, sunDogRects, sunDogShape } from '../src/renderer.js';
+import { stackSignature } from '../src/skycache.js';
+import { resolveWeather } from '../src/weather.js';
 import { resolveConditions } from '../src/state.js';
 import { StateAnimator } from '../src/animator.js';
 
@@ -262,6 +264,131 @@ describe('sun dogs', () => {
     expect(featureKey(s) & FEATURE.DOGS).toBe(0);
     s.clouds.cirrus = 0.0011;
     expect(featureKey(s) & FEATURE.DOGS).toBe(FEATURE.DOGS);
+  });
+
+  describe('settled plates', () => {
+    const icy = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 } } });
+    const sweep = (s: typeof icy): [number, number][] => {
+      const out: [number, number][] = [];
+      for (let evo = 0; evo < 40000; evo += 2) out.push(sunDogPlates(s, evo));
+      return out;
+    };
+    // the clock where they are fully off, and where both clear
+    const find = (s: typeof icy, f: (a: number, b: number) => boolean): number => {
+      for (let evo = 0; evo < 40000; evo += 1) { const [a, b] = sunDogPlates(s, evo); if (f(a, b)) return evo; }
+      throw new Error('never');
+    };
+
+    it('leave most icy skies without a dog, some with a faint one and a few with a clear pair', () => {
+      for (const w of [{ clouds: { cirrus: 0.3 } }, { clouds: { cirrostratus: 0.7 } }, 'fair', { clouds: { cirrus: 0.2, cirrocumulus: 0.3 } }] as const) {
+        const all = sweep(resolveConditions({ time: 16.5, weather: w }));
+        const share = (f: (a: number, b: number) => boolean) => all.filter(([a, b]) => f(a, b)).length / all.length;
+        const off = share((a, b) => Math.max(a, b) <= 0);
+        const faint = share((a, b) => Math.max(a, b) > 0 && Math.max(a, b) < 0.5);
+        const pair = share((a, b) => Math.min(a, b) >= 0.5);
+        expect(off).toBeGreaterThan(0.5);
+        expect(off).toBeLessThan(0.75);
+        expect(faint).toBeGreaterThan(0.12);
+        expect(pair).toBeGreaterThan(0.05);
+        expect(pair).toBeLessThan(0.2);
+      }
+    });
+
+    it('are the same at the same moment, and drift over tens of minutes, not frames', () => {
+      expect(sunDogPlates(icy, 123.4)).toEqual(sunDogPlates(icy, 123.4));
+      // a calm sky's clock runs 0.07 a second: a tenth of a second a step
+      let most = 0;
+      for (let evo = 0; evo < 5000; evo += 0.007) {
+        const [a, b] = sunDogPlates(icy, evo), [c, d] = sunDogPlates(icy, evo + 0.007);
+        most = Math.max(most, Math.abs(a - c), Math.abs(b - d));
+      }
+      expect(most).toBeLessThan(0.002);
+      // a spell on or off lasts a good while: a median over ten minutes (42 of the clock)
+      const spells: number[] = [];
+      let run = 0, was = Math.max(...sunDogPlates(icy, 0)) > 0;
+      for (let evo = 0; evo < 40000; evo += 1) {
+        const on = Math.max(...sunDogPlates(icy, evo)) > 0;
+        if (on === was) run++;
+        else { spells.push(run); run = 1; was = on; }
+      }
+      spells.sort((a, b) => a - b);
+      expect(spells[spells.length >> 1]).toBeGreaterThan(42);
+    });
+
+    it('differ a little from one side to the other', () => {
+      const all = sweep(icy);
+      const onOne = all.filter(([a, b]) => (a > 0) !== (b > 0)).length / all.length;
+      expect(onOne).toBeGreaterThan(0.02);
+      expect(onOne).toBeLessThan(0.2);
+    });
+
+    it('differ between skies on one clock', () => {
+      const other = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.5, cirrocumulus: 0.2 } } });
+      const a = sweep(icy), b = sweep(other);
+      const differ = a.filter((v, i) => (v[0] > 0) !== (b[i][0] > 0)).length / a.length;
+      expect(differ).toBeGreaterThan(0.2);
+    });
+
+    it('take the dogs off the key and the canvas when off, on the clock given', () => {
+      const off = find(icy, (a, b) => a <= 0 && b <= 0), on = find(icy, (a, b) => a > 0.5 && b > 0.5);
+      expect(featureKey(icy, 0, 'auto', off) & FEATURE.DOGS).toBe(0);
+      expect(featureKey(icy, 0, 'auto', on) & FEATURE.DOGS).toBe(FEATURE.DOGS);
+      // without the clock: whether this sky can ever have them
+      expect(featureKey(icy) & FEATURE.DOGS).toBe(FEATURE.DOGS);
+      expect(featureKeys(icy, 0, 'auto', off)[0].key & FEATURE.DOGS).toBe(0);
+      const cam = { yaw: icy.sunAzimuth, pitch: icy.sunElevation, fov: 1.05 };
+      expect(sunDogRects(icy, cam, 1920, 1080, off)).toEqual([]);
+      expect(sunDogRects(icy, cam, 1920, 1080, on).length).toBe(2);
+      expect(sunDogAmounts(icy, off)).toEqual([0, 0]);
+    });
+
+    it('draw only the side that has them', () => {
+      const lesser = find(icy, (a, b) => a > 0.05 && b <= 0), greater = find(icy, (a, b) => a <= 0 && b > 0.05);
+      const cam = { yaw: icy.sunAzimuth, pitch: icy.sunElevation, fov: 1.05 };
+      const left = sunDogRects(icy, cam, 1920, 1080, lesser), right = sunDogRects(icy, cam, 1920, 1080, greater);
+      expect(left.length).toBe(1);
+      expect(right.length).toBe(1);
+      // greater azimuth is to the right of the view
+      expect(left[0][0]).toBeLessThan(960);
+      expect(right[0][0]).toBeGreaterThan(960);
+    });
+
+    it('leave a veil its halo when the dogs are off', () => {
+      const veil = resolveConditions({ time: 16.5, weather: { clouds: { cirrostratus: 0.6 } } });
+      const off = find(veil, (a, b) => a <= 0 && b <= 0);
+      const k = featureKey(veil, 0, 'auto', off);
+      expect(k & FEATURE.DOGS).toBe(0);
+      expect(k & FEATURE.HALOS).toBe(FEATURE.HALOS);
+    });
+
+    it('can be held settled by the weather, and only then', () => {
+      expect(resolveWeather('fair').icePlates).toBe(0);
+      expect(resolveWeather({ icePlates: 7 }).icePlates).toBe(1);
+      expect(resolveWeather({ icePlates: -1 }).icePlates).toBe(0);
+      const held = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 }, icePlates: 1 } });
+      for (let evo = 0; evo < 3000; evo += 7) {
+        expect(sunDogPlates(held, evo)).toEqual([1, 1]);
+        expect(featureKey(held, 0, 'auto', evo) & FEATURE.DOGS).toBe(FEATURE.DOGS);
+      }
+      // a floor, not a value: where the sky has them clearer they stay so
+      const floor = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 }, icePlates: 0.3 } });
+      const on = find(icy, (a, b) => a > 0.9 && b > 0.9);
+      expect(Math.min(...sunDogPlates(floor, on))).toBeGreaterThan(0.3);
+      // still no dogs without ice, or with the sun too high
+      const dry = resolveConditions({ time: 16.5, weather: { cloudCover: 0, icePlates: 1 } });
+      expect(featureKey(dry, 0, 'auto', 100) & FEATURE.DOGS).toBe(0);
+      const noon = resolveConditions({ time: 12, weather: { clouds: { cirrus: 0.3 }, icePlates: 1 } });
+      expect(sunDogAmounts(noon, 100)).toEqual([0, 0]);
+    });
+
+    it('ease with the weather, and don\'t disturb a sky cache', () => {
+      const a = new StateAnimator(icy);
+      const held = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 }, icePlates: 1 } });
+      a.step(held, 1);
+      expect(a.current.icePlates).toBeGreaterThan(0);
+      expect(a.current.icePlates).toBeLessThan(1);
+      expect(stackSignature(held)).toEqual(stackSignature(icy));
+    });
   });
 
   describe('sunDogRects', () => {

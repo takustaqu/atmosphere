@@ -207,7 +207,8 @@ export function viewExtent(camera: Camera, aspect: number, azC: number): { azLo:
  */
 export function stackSignature(s: object): number[] {
   const out: number[] = [];
-  const SKIP = new Set(['tone', 'filter', 'polarizer', 'lens', 'timeOfDay']);
+  // (and the sun dogs' plates: the dogs are not in the stack)
+  const SKIP = new Set(['tone', 'filter', 'polarizer', 'lens', 'timeOfDay', 'icePlates']);
   const walk = (v: unknown, top: boolean): void => {
     if (typeof v === 'number') out.push(v);
     else if (typeof v === 'boolean') out.push(v ? 1 : 0);
