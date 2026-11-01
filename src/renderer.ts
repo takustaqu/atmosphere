@@ -70,8 +70,8 @@ precision mediump sampler2D;
 // texel's: at the default lowp a filtered fetch comes back in ~1/128 steps and
 // every cloud edge terraces. The texels themselves are only 8-bit endpoints.
 uniform sampler2D u_noise;   // the baked value-noise lattice — see noise.ts
-#ifdef FEAT_CB
 uniform sampler2D u_noiseQ;  // the same lattice, each texel's square of four in rgba (vnoiseHQ)
+#ifdef FEAT_CB
 uniform sampler2D u_turrets; // each turret's thrust, height, center and hashes this frame, worked out on the CPU (turretThrust, rowTurret)
 #endif
 
@@ -891,6 +891,39 @@ vec3 cloudField(vec2 cuv, float churn, vec2 ldir, float edge, float ramp, float 
   return vec3(den, lit, dcomb);
 }
 
+// Value noise with the blend done here rather than by the texture unit.
+//
+// vnoise lets the sampler's bilinear filter interpolate the lattice, and the
+// filter's weights are not continuous: GPUs carry the position between two
+// texels in a handful of bits (eight is common), so across one lattice cell
+// the noise climbs in ~256 flat steps. Invisible in a cloud's texture — but
+// the cumulonimbus raises its thrust, a function of azimuth alone, through a
+// steep power, and each step became a jump in where the silhouette's edge
+// sits: every column of the flank shifted on its own, and the edge broke up
+// into vertical hairline streaks. Reading the four corners at their texel
+// centers (vnoise of an integer point is exactly one texel) and mixing them
+// in full float precision gives the same field without the staircase. The
+// four corners come in one fetch, from a copy of the lattice with each
+// texel's square of four in its channels (u_noiseQ, see noiseQuads) — the
+// same 8-bit values the four reads of vnoise found.
+//
+// The staircase is in time as well. The storm's clock slides its reads
+// along the lattice by a few thousandths of a cell a frame, so a filtered
+// read sits still for several frames and then jumps a step — and the reads
+// that ride the clock are the ones nothing else moves across a stretch of
+// sky: a turret reads its thrust once, at its center, and the whole head
+// jumped together, the crown rattling up in steps as it grew; the anvil's
+// plate, fed by the same read, spread and shrank in steps a turret at a
+// time; and the thrust per azimuth, its fine octaves crossing their steps
+// fastest, flickered column by column down the flanks. So everything that
+// rides the clock reads all four octaves here: across a frame the fine
+// octaves' staircase hides under a pixel, but moving it is a jolt
+float vnoiseHQ(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  vec4 q = NOISEQ_FETCH((i + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)});
+  return mix(mix(q.x, q.y, f.x), mix(q.z, q.w, f.x), f.y);
+}
 // The cumulus's own reading of the field: cloudField's, less one thing and
 // with two more. x the raw density (dcomb), y the lit-ness, z the detail
 // octaves as they stand, for the shading of the crown's florets.
@@ -955,6 +988,63 @@ vec4 cuField(vec2 cuv, float churn, vec2 ldir, float edge, float clear, bool lit
   float dl = fbm(ql) * 0.64 + mix(fbm(ql * 3.3 + 17.0 + drift), 0.47, inner) * 0.36;
   float dfield = (base * 0.64 + mix(det, 0.47, inner) * 0.36) - dl;
   return vec4(dcomb, clamp(mix(dfield * 2.2, lump - cuLump(ql), CU_ENV) * 1.2, -1.0, 1.0), det, field);
+}
+// ── The fibres a thin margin comes apart into ──
+// Cloud thinning into dry air under a shear is drawn out into fibres along
+// the wind, and in the thinnest of it a ripple of cloudlets runs across them.
+// This is their texture, for a cumulus's margin and a thin layer's alike, in
+// two steps, so that the stretches of a margin that do not fray cost one read.
+// cuFrayBend at p, on the layer's plane (x along the wind): a slow noise, the
+// bend the fibres take. cuFray from it: which stretches fray, 0 none (the
+// outline as soft as its ramp left it) to 1. cuFibre then the rest, given that
+// bend and a pixel's footprint on the plane (planeFoot): x the fibres (0 to 1,
+// the mean 0.5), y how much of them the pixel can hold, z the ripple, if
+// asked for and held (the mean 0.5).
+// Read at full precision (vnoiseHQ) and not on the field's warped plane: on
+// the warp, whose reads move in 8-bit steps, fibres this fine stair-stepped
+// along their length and jittered as the warp moved. So they take a bend of
+// their own: slow, turning them some tens of degrees over a lump and drawing
+// them together and apart across the wind, with two waves along them whose
+// phase it moves (no reads, so a strand curves within its own length).
+// Straight, they were a comb, or a curtain. Three octaves, each at its own
+// small angle and each the longer against its width the finer it is, so
+// strands run long and cross a little. An octave is held only where the pixel
+// can hold it, across its fibres and along them, from two pixels a fibre to
+// five, and goes to its mean under that, so none is finer than a pixel to
+// sparkle as it drifts; and what is left is scaled back up, so a wide view
+// keeps its coarser fibres at full contrast rather than its margins going to a
+// flat glow.
+// The noise's long cells would end in lines straight across the fibres, a
+// woven look, so its rows are slid along each other (CU_FLAT): they end staggered
+#define CU_FLAT(v) (vec2((v).x + 0.38 * (v).y, (v).y))
+float cuFrayBend(vec2 p) {
+  return vnoiseHQ(vec2(p.x * 1.05, p.y * 1.25 - u_evo * 0.014) + vec2(23.1, 88.3)) - 0.5;
+}
+float cuFray(float bend) {
+  return smoothstep(-0.08, 0.22, bend);
+}
+vec3 cuFibre(vec2 p, vec2 fw, float b2, bool ripple) {
+  vec2 u = vec2(p.x, p.y + b2 * 1.45 + 0.05 * sin(p.x * 3.3 + p.y * 1.7 + b2 * 11.0) + 0.012 * sin(p.x * 9.1 - p.y * 4.3 + b2 * 23.0));
+  const vec2 f0 = vec2(1.2, 17.0), f1 = vec2(2.0, 47.0), f2 = vec2(3.2, 125.0);
+  float h0 = smoothstep(2.0, 5.0, min(1.0 / (f0.x * fw.x), 1.0 / (f0.y * fw.y)));
+  float h1 = smoothstep(2.0, 5.0, min(1.0 / (f1.x * fw.x), 1.0 / (f1.y * fw.y)));
+  float h2 = smoothstep(2.0, 5.0, min(1.0 / (f2.x * fw.x), 1.0 / (f2.y * fw.y)));
+  vec3 w = vec3(0.26, 0.38, 0.46) * vec3(h0, h1, h2);
+  float v = 0.0;
+  if (h0 > 0.0) v += w.x * (vnoiseHQ(CU_FLAT(mat2(0.990, 0.139, -0.139, 0.990) * u * f0) + vec2(17.3, 9.1)) - 0.5);
+  if (h1 > 0.0) v += w.y * (vnoiseHQ(CU_FLAT(mat2(0.994, -0.105, 0.105, 0.994) * u * f1) + vec2(34.6, 18.2)) - 0.5);
+  if (h2 > 0.0) v += w.z * (vnoiseHQ(CU_FLAT(mat2(0.984, 0.176, -0.176, 0.984) * u * f2) + vec2(51.9, 27.3)) - 0.5);
+  v *= 0.62 / sqrt(max(dot(w, w), 0.015));
+  // the ripple: crests across the flow, long and bent along their own length,
+  // turned off the fibres' square (a lattice on their axes drew square-ended
+  // dashes along each fibre, and crests ruled straight a woven cloth)
+  float r = 0.0;
+  if (ripple) {
+    const vec2 r0 = vec2(58.0, 5.0);
+    float k0 = smoothstep(2.0, 5.0, min(1.0 / (r0.x * fw.x), 1.0 / (r0.y * fw.y)));
+    if (k0 > 0.0) r = k0 * (vnoiseHQ(CU_FLAT(mat2(0.91, 0.42, -0.42, 0.91) * vec2(p.x + b2 * 0.7, u.y) * r0) + vec2(53.1, 29.7)) - 0.5);
+  }
+  return vec3(0.5 + v, smoothstep(0.0, 0.5, h0 + h1), 0.5 + r * 1.3);
 }
 // How far a ray looks into the sun, as a cloud's lighting sees it: 1 for a
 // cloud standing in front of the disc, fading out by thirty-five degrees off
@@ -1311,39 +1401,6 @@ float lobeShadow(vec2 p, float radius, float h0, vec3 L) {
   return sh;
 }
 
-// Value noise with the blend done here rather than by the texture unit.
-//
-// vnoise lets the sampler's bilinear filter interpolate the lattice, and the
-// filter's weights are not continuous: GPUs carry the position between two
-// texels in a handful of bits (eight is common), so across one lattice cell
-// the noise climbs in ~256 flat steps. Invisible in a cloud's texture — but
-// the cumulonimbus raises its thrust, a function of azimuth alone, through a
-// steep power, and each step became a jump in where the silhouette's edge
-// sits: every column of the flank shifted on its own, and the edge broke up
-// into vertical hairline streaks. Reading the four corners at their texel
-// centers (vnoise of an integer point is exactly one texel) and mixing them
-// in full float precision gives the same field without the staircase. The
-// four corners come in one fetch, from a copy of the lattice with each
-// texel's square of four in its channels (u_noiseQ, see noiseQuads) — the
-// same 8-bit values the four reads of vnoise found.
-//
-// The staircase is in time as well. The storm's clock slides its reads
-// along the lattice by a few thousandths of a cell a frame, so a filtered
-// read sits still for several frames and then jumps a step — and the reads
-// that ride the clock are the ones nothing else moves across a stretch of
-// sky: a turret reads its thrust once, at its center, and the whole head
-// jumped together, the crown rattling up in steps as it grew; the anvil's
-// plate, fed by the same read, spread and shrank in steps a turret at a
-// time; and the thrust per azimuth, its fine octaves crossing their steps
-// fastest, flickered column by column down the flanks. So everything that
-// rides the clock reads all four octaves here: across a frame the fine
-// octaves' staircase hides under a pixel, but moving it is a jolt
-float vnoiseHQ(vec2 p) {
-  vec2 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  vec4 q = NOISEQ_FETCH((i + 0.5) * ${(1 / NOISE_SIZE).toFixed(10)});
-  return mix(mix(q.x, q.y, f.x), mix(q.z, q.w, f.x), f.y);
-}
 float fbm4HQ(vec2 p) {
   vec2 p1 = p * 2.03 + vec2(17.3, 9.1);
   vec2 p2 = p1 * 2.03 + vec2(17.3, 9.1);
@@ -2337,6 +2394,13 @@ vec2 planeUV(vec3 rd, float rdY, float alt, float wind) {
   return rd.xz / rdY * alt + vec2(wind, wind * 0.15);
 }
 
+// a pixel's footprint on a plane at alt, along its x and y: its own width,
+// drawn out along the ray the lower it looks
+vec2 planeFoot(vec3 rd, float rdY, float alt) {
+  vec2 hd = normalize(rd.xz + vec2(1e-5));
+  return PX_ANGLE(rd) * alt / rdY * sqrt(1.0 + (1.0 / (rdY * rdY) - 1.0) * hd * hd);
+}
+
 // Stratiform (cirrostratus / altostratus / nimbostratus / stratus) — sheet-like clouds.
 //
 // Higher clouds look flatter, but a thick low-hanging layer (nimbostratus)
@@ -2371,7 +2435,7 @@ vec2 stratiform(vec2 uv, float breakup, float turb) {
 //
 // Raising pack makes grains bigger and denser, merging into a mottled
 // pattern. roll < 1 stretches them into rolls. Return value: x=coverage, y=lit-ness (-1..1)
-vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir) {
+vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir, vec4 fib) {
   // slowly reshuffle the arrangement of grains
   vec2 q = uv * vec2(1.0, roll)
          + 0.7 * vec2(vnoise(uv * 0.22 + u_evo * 0.20),
@@ -2386,7 +2450,28 @@ vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir) {
   // keep the threshold band narrow. Too wide and the edge bleeds endlessly
   // into a formless smudge
   float e0 = 0.62 - pack * 0.24;
-  float cell = smoothstep(e0, e0 + 0.11, n);
+  // A thin sheet's margin comes apart as a cumulus's does, into fibres along
+  // the wind (cuFibre): on the stretches where they fray, the threshold the
+  // grains and the flocks' edge below are cut at wavers along them and its
+  // band widens a little, so an edge combs out rather than standing as a torn
+  // paper edge. Only near the threshold: past the band's ends the fibres can't
+  // move the cut, and they have gone to their mean by the top of it. fib: a
+  // pixel's footprint on the plane, the fibres' scale there, and how strongly
+  // (0 none: a trace of a layer is too thin for them to show and is spared them,
+  // and so is the sky a tower stands in: the storm's own frames are its costliest)
+  float fx = 0.5;
+  float kf = 0.0;
+  if (fib.w > 0.0 && n > e0 - 0.15 && n < e0 + 0.20) {
+    vec2 fp = uv * fib.z;
+    float bend = cuFrayBend(fp);
+    kf = cuFray(bend - 0.02) * fib.w;
+    if (kf > 0.0) {
+      vec3 fb = cuFibre(fp, fib.xy * fib.z, bend, false);
+      kf *= fb.y;
+      fx = 0.5 + (fb.x - 0.5) * kf * (1.0 - smoothstep(e0 + 0.09, e0 + 0.20, n));
+    }
+  }
+  float cell = smoothstep(e0 - 0.05 * kf, e0 + 0.11 + 0.05 * kf, n + (fx - 0.5) * 0.20);
   // between the grains there is nothing to shade: every caller draws with
   // g.x as its alpha, so the lit-ness there is never seen
   if (cell <= 0.0) return vec2(0.0);
@@ -2394,7 +2479,7 @@ vec2 granular(vec2 uv, float pack, float roll, float patch, vec2 ldir) {
   // sky the same face everywhere. Raising patch merges the flocks into one
   // mottled sheet covering the sky (stratocumulus)
   float f = fbm4(uv * 0.16 + 21.0);
-  cell *= smoothstep(mix(0.34, 0.02, patch), mix(0.68, 0.38, patch), f);
+  cell *= smoothstep(mix(0.34, 0.02, patch), mix(0.68, 0.38, patch), f + (fx - 0.5) * 0.20);
   if (cell <= 0.0) return vec2(0.0);
 
   // lit-ness: the difference against density resampled shifted toward the sun (per-grain shading)
@@ -3604,6 +3689,12 @@ void main() {
   // how far from the sun a lump is lit from behind (keep backlitInView's
   // cumulus gate at the same reach)
   const float CU_BACK = 1.0;
+  // the veil of fibres round a lump: how far out it reaches (in depth under
+  // the dome), how much further per unit of the lumps' fall downwind, and its
+  // alpha at its thickest
+  const float CU_FR = 0.16;
+  const float CU_FTAIL = 0.10;
+  const float CU_FV = 0.36;
   // a cloud genus with amount 0 is skipped entirely — a clear sky costs almost nothing.
   // So is every plane layer below the horizon: each one's alpha carries
   // horizonFade, which is exactly zero there (half of every skybox bake)
@@ -3715,7 +3806,7 @@ void main() {
   }
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
   if (u_high.z > 0.001 && above && stack) {
-    vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir);
+    vec2 g = granular(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 0.55, 1.0, 0.25, ldir, vec4(planeFoot(rd, rdY, ALT_HIGH * 5.5), 0.14, smoothstep(0.04, 0.16, u_high.z) * (1.0 - smoothstep(0.02, 0.12, u_low.w))));
     vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 1.0);
     OVERM(col, g.x * u_high.z * 0.85 * horizonFade, MV_PLANE(ALT_HIGH * 5.5, 0.3));
   }
@@ -3749,7 +3840,7 @@ void main() {
   }
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
   if (u_mid.y > 0.001 && above && stack) {
-    vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir);
+    vec2 g = granular(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 0.80, 0.85, 0.35, ldir, vec4(planeFoot(rd, rdY, ALT_MID * 2.2), 0.32, smoothstep(0.04, 0.16, u_mid.y) * (1.0 - smoothstep(0.02, 0.12, u_low.w))));
     vec3 col = cloudColor(g.x, g.y, 0.30, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun, 0.5);
     OVERM(col, g.x * u_mid.y * 0.95 * horizonFade, MV_PLANE(ALT_MID * 2.2, 0.6));
   }
@@ -5967,7 +6058,7 @@ void main() {
   // ── Low layer, under 2000m ──────────────────────────
   // Stratocumulus Sc (roll cloud) — large mottled masses, arranged as rolls
   if (u_low.y > 0.001 && above && stack) {
-    vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
+    vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir, vec4(0.0));
     vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightM, sunsetF, flash, gloom, 1.05, cloudSun, 0.0);
     float scA = g.x * u_low.y * 0.95 * horizonFade;
     // Over a tower, as the cumulus's fringes (below): only what is nearly
@@ -6137,10 +6228,12 @@ void main() {
     // low in the sky split into a crown floating over its base
     float f0 = dl.w, f1 = tl.w;
     float h0 = dlz - edge;
-    float hmax = h0;
+    float hmax = h0, lm = 0.0; // (lm: the lumps at a third of the climb, for the margin's fibres)
     for (int k = 1; k < 4; k++) {
       float u = float(k) / 3.0;
-      float hk = mix(mix(f0, f1, u), cuLump(mix(q0, q1, u)), CU_ENV) - edge - CU_W * u * u;
+      float lk = cuLump(mix(q0, q1, u));
+      if (k == 1) lm = lk;
+      float hk = mix(mix(f0, f1, u), lk, CU_ENV) - edge - CU_W * u * u;
       hmax = max(hmax, hk);
     }
     // How high up the lump the ray gets in, as a share of its way from the
@@ -6151,6 +6244,45 @@ void main() {
     // jumped with it, a flicker along lines through the lumps
     float uHit = clamp(-h0 / max(hmax - h0, 0.02), 0.0, 1.0);
     float den = smoothstep(-cuSoft - 0.01, cuRamp - cuSoft, hmax);
+    // ── The margin comes apart ──
+    // Past the soft ramp above a lump's margin thins out into fibres combed
+    // along the wind (cuFibre), fading to nothing. Nothing is cut here: a level
+    // cut through noise draws shards and brush strokes, each with an outline,
+    // so the alpha only ever follows the fibres smoothly, and the haze the
+    // ramp gave stays under them. Two parts. The ramp's own margin is thinned
+    // along the fibres, the more the thinner it is, nothing at all in the body.
+    // And past the ramp a thin veil (env, off the same depth into the dome)
+    // trails out: its haze, some fifth of it, and the rest the fibres, only
+    // their crests far out, with the ripple running through them the thinner
+    // it gets. It reaches further on a lump's downwind side, where the lumps'
+    // coarse octave falls away downwind (lDown: higher a little upwind of here
+    // than here), and frays less on its upwind side, and on some stretches of
+    // any side not at all. Lit as the ramp's thin margin is, white through and
+    // glowing toward the sun, so it is brightest there and its brightness is
+    // the fibres' own, and a pale haze away from the sun; a little thicker
+    // toward the sun, a little thinner off it. (Read only in the band it can
+    // show in; the
+    // lumps at a third of the climb are the climb's own reading, lm)
+    if (hmax > -CU_FR - 0.05 && den < 0.97 && gloom < 1.0) {
+      vec2 fp = mix(cuv, tuv, 1.0 / 3.0);
+      float bend = cuFrayBend(fp);
+      float fray = cuFray(bend);
+      if (fray > 0.0) {
+        float lDown = cuLump(mix(q0, q1, 1.0 / 3.0) - vec2(0.40, 0.06)) - lm;
+        float env = smoothstep(-CU_FR, 0.02, hmax + CU_FTAIL * max(lDown, 0.0));
+        if (env > 0.14) {
+          vec3 fb = cuFibre(fp, planeFoot(rd, rdY, CU_ALT * (1.0 + cuK / 3.0)), bend, env < 0.7);
+          float rp = 0.70 * (1.0 - smoothstep(0.25, 0.70, env));
+          float tex = fb.x * mix(1.0, 0.72 + 0.56 * fb.z, rp);
+          float hold = fb.y * fray * mix(0.55, 1.0, smoothstep(-0.20, 0.12, lDown));
+          float thin = max(0.97 - den, 0.0) * (1.0 - smoothstep(0.0, 0.16, hmax));
+          float lo = 0.56 - 0.50 * env;
+          float veil = max(env * sqrt(env) - 0.05, 0.0) * (0.18 + 0.82 * smoothstep(lo, lo + 0.48, tex))
+                     * CU_FV * mix(0.8, 1.2, cuBack) * hold * (1.0 - gloom);
+          den = 1.0 - (1.0 - den * mix(1.0, 0.12 + 0.88 * smoothstep(0.08, 0.92, tex), thin * hold)) * (1.0 - veil);
+        }
+      }
+    }
     // the air between: a distant lump takes on the horizon's color and its
     // shading goes flat with it, and only the last degrees fade it out —
     // where horizonFade had every lump turning translucent from fourteen
@@ -6192,7 +6324,7 @@ void main() {
       // (the florets soft grey where the detail sits low: a fold between them)
       float crease = (1.0 - smoothstep(0.30, 0.50, tl.z)) * smoothstep(0.4, 0.8, rel) * thick;
       float tgrad = clamp(tl.y * 3.0, -1.0, 1.0);
-      float wlit = tl.y * 1.0 + tgrad * cuFlank * 0.5 + cuBias + 0.30 - crease * 0.45;
+      float wlit = (tl.y * 1.0 + tgrad * cuFlank * 0.5) * smoothstep(edge - cuSoft - 0.05, edge - cuSoft + 0.02, tl.x) + cuBias + 0.30 - crease * 0.45;
       wlit = mix(wlit, -0.35, shadeF);
       // the underside: a smooth blue-grey, darker only under a big lump,
       // with nothing of its own to shade; a sun low enough gets under it
@@ -6615,7 +6747,7 @@ void main() {
       if (u_low.y > 0.02) {
         // the stratocumulus, on its own lower plane
         vec2 x = (wp + toSun * (600.0 * 1.9 / 2.5 + 1.0)) * toPlane;
-        sunLit *= 1.0 - granular(x + vec2(u_windOff * 1.2, u_windOff * 0.18), 1.22, 0.5, 0.78, ldir).x
+        sunLit *= 1.0 - granular(x + vec2(u_windOff * 1.2, u_windOff * 0.18), 1.22, 0.5, 0.78, ldir, vec4(0.0)).x
                      * u_low.y * 0.95;
       }
       // the more of the sun the sky has already taken, the less a cloud's
