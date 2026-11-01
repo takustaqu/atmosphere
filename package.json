@@ -59,6 +59,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
     "build:site": "node scripts/build-site.mjs",
     "prepack": "pnpm run build",
@@ -73,8 +74,11 @@
     }
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.3.0",
     "esbuild": "^0.28.1",
+    "react-dom": "^19.2.8",
     "typescript": "~6.0.2",
     "vitest": "^4.1.10"
   }
