@@ -77,8 +77,9 @@ export interface SkyCacheOptions {
    * cloud then moves on continuously, rather than sitting still and
    * dissolving into its next place a keyframe later. Needs a second target
    * per slot (WEBGL_draw_buffers): the slots' memory twice over, and a
-   * sixteenth more; without it the keyframes are mixed as they stand.
-   * Defaults to true
+   * sixteenth more; a context without it draws every frame directly. false:
+   * the keyframes are mixed as they stand, at half the memory and a crossfade
+   * plain to see. Defaults to true
    */
   motion?: boolean;
   /**

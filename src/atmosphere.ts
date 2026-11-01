@@ -317,6 +317,13 @@ export class Atmosphere {
     this.cumulonimbus = p.cumulonimbus;
   }
 
+  /**
+   * Whether the sky cache is in effect — see {@link AtmosphereOptions.skyCache}:
+   * false without the option, and where the device cannot do it, every frame
+   * then being drawn directly.
+   */
+  get skyCache(): boolean { return this.renderer.skyCache; }
+
   /** the crepuscular rays' strength in effect — see {@link AtmosphereOptions.rays} */
   get rays(): number { return this.renderer.rays; }
   set rays(v: number) {

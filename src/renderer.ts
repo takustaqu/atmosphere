@@ -8478,9 +8478,10 @@ export class AtmosphereRenderer {
   private skyDraw: WEBGL_draw_buffers | null = null;
   // each slot's morph from the keyframe before it (MORPH_FRAG), a quarter
   // the size each way, and the program that finds it
-  private skyMorph: (WebGLTexture | null)[] = [null, null, null];
-  private skyMorphFbo: (WebGLFramebuffer | null)[] = [null, null, null];
+  private skyMorph: (WebGLTexture | null)[] = [null, null, null, null];
+  private skyMorphFbo: (WebGLFramebuffer | null)[] = [null, null, null, null];
   private morph: { program: WebGLProgram; u: Uniforms } | null = null;
+  private morphLink: WebGLProgram | null = null;
   private morphFailed = false;
   private skySize: [number, number] = [0, 0];
   private skySupport: boolean | null = null;
@@ -8568,6 +8569,17 @@ export class AtmosphereRenderer {
   set cloudScale(v: number) { this.cloudScaleWanted = v; }
 
   /**
+   * Whether the sky cache is in effect: false without
+   * {@link RendererOptions.skyCache}, and where the device cannot do it (no
+   * half-float targets, or no second target for its motion, or no memory for
+   * its maps), which is found out when the context is made or, for the last, on
+   * the first frame it builds. Every frame is then drawn directly.
+   */
+  get skyCache(): boolean {
+    return this.sky !== null && this.gl !== null && this.skySupport !== false;
+  }
+
+  /**
    * The crepuscular rays' strength in effect — see {@link RendererOptions.rays}.
    * 0 on a renderer built without `cloudScale`, whatever was asked for.
    */
@@ -8649,12 +8661,13 @@ export class AtmosphereRenderer {
     this.cloudTex = null;
     this.cloudSize = [0, 0];
     this.cloudSupport = null;
-    this.skyTex = [null, null, null];
-    this.skyFbo = [null, null, null];
-    this.skyFlow = [null, null, null];
-    this.skyMorph = [null, null, null];
-    this.skyMorphFbo = [null, null, null];
+    this.skyTex = [null, null, null, null];
+    this.skyFbo = [null, null, null, null];
+    this.skyFlow = [null, null, null, null];
+    this.skyMorph = [null, null, null, null];
+    this.skyMorphFbo = [null, null, null, null];
     this.morph = null;
+    this.morphLink = null;
     this.morphFailed = false;
     this.skySize = [0, 0];
     this.skySupport = null;
@@ -8678,10 +8691,18 @@ export class AtmosphereRenderer {
     }
 
     this.explicitLod = gl.getExtension('EXT_shader_texture_lod') !== null;
-    // the sky cache's keyframes carry their motion in a second target where
-    // one draw can fill two (see cacheFetch); where it cannot they are
-    // mixed as they stand
+    // the sky cache's keyframes carry their motion in a second target, one draw
+    // filling two (see cacheFetch). Where that is not to be had — nor the half
+    // floats it draws into, nor the eight texture units its composite reads —
+    // there is no cache to speak of: mixed as they stand, the keyframes are a
+    // crossfade plain to see, so unless that is what was asked for (motion:
+    // false) every frame is drawn directly
     this.skyDraw = this.sky?.motion ? gl.getExtension('WEBGL_draw_buffers') : null;
+    if (this.sky && (!gl.getExtension('OES_texture_half_float') || !gl.getExtension('OES_texture_half_float_linear')
+      || (gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) as number) < 8
+      || (this.sky.motion && (!this.skyDraw || (gl.getParameter(this.skyDraw.MAX_DRAW_BUFFERS_WEBGL) as number) < 2)))) {
+      this.skySupport = false;
+    }
     // On Windows, linkProgram is where ANGLE hands the whole shader to the
     // D3D compiler, and reading LINK_STATUS is what waits for it. Asking the
     // driver whether it's finished instead keeps the page alive through it.
@@ -8737,7 +8758,7 @@ export class AtmosphereRenderer {
     for (const k of ks) this.ensure(k.key);
     // and the sky cache's two programs, behind them: until both link, the
     // frames are drawn directly
-    if (this.sky && ks.length === 1 && hasCloudStack(s.clouds)) {
+    if (this.sky && this.skySupport !== false && ks.length === 1 && hasCloudStack(s.clouds)) {
       const key = ks[0].key & ~SPLIT_KEY;
       this.ensure((key & ~FEATURE.PARHELIA) | CACHE_BUILD);
       if (this.parheliaApart(s)) this.ensure((key & ~FEATURE.PARHELIA) | CACHE_COMP);
@@ -9367,30 +9388,33 @@ export class AtmosphereRenderer {
   private morphProgram(gl: WebGLRenderingContext): { program: WebGLProgram; u: Uniforms } | null {
     if (this.morph) return this.morph;
     if (this.morphFailed) return null;
-    const compile = (type: number, src: string): WebGLShader | null => {
-      const sh = gl.createShader(type);
-      if (!sh) return null;
-      gl.shaderSource(sh, src);
-      gl.compileShader(sh);
-      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-        console.error('atmosphere morph shader compile error:', gl.getShaderInfoLog(sh));
-        gl.deleteShader(sh);
-        return null;
+    if (!this.morphLink) {
+      const compile = (type: number, src: string): WebGLShader | null => {
+        const sh = gl.createShader(type);
+        if (!sh) return null;
+        gl.shaderSource(sh, src);
+        gl.compileShader(sh);
+        return sh;
+      };
+      const vs = compile(gl.VERTEX_SHADER, VERT), fs = compile(gl.FRAGMENT_SHADER, MORPH_FRAG);
+      const program = vs && fs ? gl.createProgram() : null;
+      if (vs && fs && program) {
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.bindAttribLocation(program, 0, 'a_pos');
+        gl.linkProgram(program);
       }
-      return sh;
-    };
-    const vs = compile(gl.VERTEX_SHADER, VERT), fs = compile(gl.FRAGMENT_SHADER, MORPH_FRAG);
-    const program = vs && fs ? gl.createProgram() : null;
-    if (vs && fs && program) {
-      gl.attachShader(program, vs);
-      gl.attachShader(program, fs);
-      gl.bindAttribLocation(program, 0, 'a_pos');
-      gl.linkProgram(program);
+      if (vs) gl.deleteShader(vs);
+      if (fs) gl.deleteShader(fs);
+      if (!program) { this.morphFailed = true; return null; }
+      this.morphLink = program;
     }
-    if (vs) gl.deleteShader(vs);
-    if (fs) gl.deleteShader(fs);
-    if (!program || !gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      if (program) gl.deleteProgram(program);
+    const program = this.morphLink;
+    if (this.parallel && !gl.getProgramParameter(program, this.parallel.COMPLETION_STATUS_KHR)) return null;
+    this.morphLink = null;
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error('atmosphere morph shader link error:', gl.getProgramInfoLog(program));
+      gl.deleteProgram(program);
       this.morphFailed = true;
       return null;
     }
@@ -9935,6 +9959,7 @@ export class AtmosphereRenderer {
       this.freeClouds(gl);
       this.freeSky(gl);
       if (this.morph) gl.deleteProgram(this.morph.program);
+      if (this.morphLink) gl.deleteProgram(this.morphLink);
       for (const p of this.pending) this.timer?.deleteQueryEXT(p.q);
       this.pending = [];
       if (options.loseContext) {

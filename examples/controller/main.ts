@@ -98,10 +98,13 @@ const sky = new Atmosphere(canvas, {
   cumulonimbus: cbParam(new URLSearchParams(location.search).get('cb')),
   // ?cache=1 draws the cloud stack from the experimental sky cache
   // (?cache=panorama for the whole round of the sky rather than the view's
-  // window); it can only be chosen when the sky is made
+  // window; ?density=0.75 for its maps' texels per radian); it can only be
+  // chosen when the sky is made
   skyCache: (() => {
-    const v = new URLSearchParams(location.search).get('cache');
-    return v === 'panorama' ? { region: 'panorama' as const } : v === '1' || v === 'view';
+    const q = new URLSearchParams(location.search), v = q.get('cache');
+    if (v !== 'panorama' && v !== '1' && v !== 'view') return false;
+    const density = Number(q.get('density')) || undefined;
+    return { region: v === 'panorama' ? 'panorama' as const : 'view' as const, density };
   })(),
   adaptiveResolution: true,
   onLight: (light) => {
@@ -695,7 +698,7 @@ host.append(perfEl);
 setInterval(() => {
   perfEl.textContent = `adaptive resolution: ×${sky.resolution.toFixed(3)} — `
     + `drawing ${canvas.width}×${canvas.height}, clouds ×${sky.cloudScale}`
-    + (new URLSearchParams(location.search).get('cache') ? ', sky cache on' : '');
+    + (new URLSearchParams(location.search).get('cache') ? (sky.skyCache ? ', sky cache on' : ', sky cache unavailable here') : '');
 }, 500);
 
 section('Camera');
