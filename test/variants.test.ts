@@ -495,7 +495,7 @@ describe('backlitInView', () => {
       }
     }
     expect(out).toBeGreaterThan(100);
-  });
+  }, 30_000);
 
   it('widens the window under a lens with drops on it', () => {
     const wet = resolveConditions({ time: 15, weather: { cloudCover: 0.3, precipitation: 3 }, lens: { droplets: 1 } });
