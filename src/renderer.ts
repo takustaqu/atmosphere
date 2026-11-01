@@ -84,6 +84,9 @@ uniform vec3  u_moon;      // moon's elevation, azimuth (radians), and its light
 uniform float u_moonEclipse; // how much of the moon's disc is in the Earth's umbra, 0..1
 uniform float u_cover;     // 0..1 total occlusion (accumulated from the cloud-genus mix)
 uniform vec3  u_high;      // amount of the ten cloud genera: cirrus Ci, cirrostratus Cs, cirrocumulus Cc
+#ifdef FEAT_DOGS
+uniform vec4  u_dog;       // the sun dogs for this sun (sunDogShape): the red's azimuth off it, the spectrum's width, how bright, cos of its elevation
+#endif
 uniform vec3  u_mid;       //                                 altostratus As, altocumulus Ac, nimbostratus Ns
 uniform vec4  u_low;       //                                 stratus St, stratocumulus Sc, cumulus Cu, cumulonimbus Cb
 uniform float u_rain;      // 0..1 rain
@@ -710,11 +713,11 @@ vec3 aurora(vec3 rd, float amt) {
 #ifdef FEAT_HALOS
 // ── Ice halos ──
 // What the ice crystals of a cirrostratus do with the sun and the moon: the
-// 22° halo (refraction through the crystals, red on its inner edge), the
-// parhelia — the sun dogs — that sit on it level with a low sun, and a pillar
-// of light standing on a sun at the horizon, off the flat faces of falling
-// plates; and high over a sun below 32 degrees, the circumzenithal arc. The
-// moon gets its halo too. Linear light to add; nothing without the veil.
+// 22° halo (refraction through the crystals, red on its inner edge) and a
+// pillar of light standing on a sun at the horizon, off the flat faces of
+// falling plates; and high over a sun below 32 degrees, the circumzenithal
+// arc. The moon gets its halo too. Linear light to add; nothing without the
+// veil. (The sun dogs are drawn from any ice, veil or not: see sunDog.)
 vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
              vec3 moonDir, float moonAng, float moonVis, float nightF) {
   float ice = u_high.y;
@@ -734,22 +737,6 @@ vec3 iceHalo(vec3 rd, float el, vec3 sunDir, float sunAng, float sunVis,
     float ring = smoothstep(-0.014, 0.006, d) * exp(-max(d, 0.0) * 22.0);
     vec3 ringCol = mix(vec3(1.0, 0.62, 0.50), vec3(1.0, 0.96, 0.90), smoothstep(0.0, 0.035, d));
     add += L(ringCol) * ring * 0.16 * sunVis;
-    // sun dogs: level with the sun, 22° out and a little more as it climbs,
-    // red on the side toward the sun and a white tail trailing away from it;
-    // brightest with the sun low, gone above 45° or so
-    float low = smoothstep(0.70, 0.10, sunEl);
-    if (low > 0.0) {
-      float spread = 0.384 / max(sqrt(1.0 - sunEl * sunEl), 0.5);
-      vec2 hs = normalize(sunDir.xz + vec2(1e-5)), hr = normalize(rd.xz + vec2(1e-5));
-      // signed azimuth from the sun, scaled to sky radians at this elevation
-      float dAz = atan(hr.x * hs.y - hr.y * hs.x, dot(hr, hs)) * sqrt(max(1.0 - rd.y * rd.y, 0.0));
-      float dEl = el - u_sun.x;
-      float x = abs(dAz) - spread * sqrt(max(1.0 - sunEl * sunEl, 0.0));   // outward from the dog
-      float dog = exp(-dEl * dEl / 0.00028)
-                * (exp(-x * x / 0.0004) + smoothstep(0.0, 0.02, x) * exp(-x * 22.0) * 0.5);
-      vec3 dogCol = mix(vec3(1.0, 0.55, 0.40), vec3(1.0, 0.95, 0.88), smoothstep(-0.012, 0.012, x));
-      add += L(dogCol) * dog * 0.45 * low * sunVis;
-    }
     // the pillar: a column above and below a sun near the horizon
     float lowP = smoothstep(0.20, 0.02, sunEl) * smoothstep(-0.08, 0.0, sunEl);
     if (lowP > 0.0) {
@@ -2540,6 +2527,89 @@ float filament(vec2 uv) {
   return min(strands + head * sparse * (0.45 + 0.35 * f), 1.0);
 }
 
+#ifdef FEAT_DOGS
+// ── Sun dogs ──
+// Plates falling flat in any thin ice cloud, on the parhelic line level with
+// the sun and either side of it: a compact spot with the spectrum drawn out
+// along the line, red toward the sun, and a pale tail trailing away. They are
+// where the ice is, read at the dog from the very layers the stack draws here
+// (the cirrus's strands, the veil, the cirrocumulus's grains), so one comes
+// and goes as the cloud drifts through it, and open sky shows none.
+// Brightest with the sun low, gone above 45° or so.
+//
+// Linear light, and how much of the pixel it takes (0: off the dog). Laid over
+// rather than added: added alone, an orange on a blue sky comes out pink, and
+// on a bright pale one, where the channels have no headroom, hardly shows.
+// The photographs show it plainly colored on either, the sky's blue falling
+// away inside the spot by as much as a third. iceT is what the ice layers let
+// through here (for the composite, which has them only baked into the stack).
+vec4 sunDog(vec3 rd, float el, float rdY, float horizonFade, vec3 sunDir, float sunVis,
+            vec3 cloudSun, float gloom, out float iceT) {
+  iceT = 1.0;
+  float dEl = el - u_sun.x;
+  if (abs(dEl) > 0.045 || u_dog.z <= 0.0 || sunVis <= 0.0 || rd.y <= 0.0) return vec4(0.0);
+  // azimuth from the sun, either way, against the red's (u_dog.x, see
+  // sunDogShape); in sky radians along the parhelic line, a circle smaller
+  // than the horizon by cos e
+  vec2 hs = normalize(sunDir.xz + vec2(1e-5)), hr = normalize(rd.xz + vec2(1e-5));
+  float x = (acos(clamp(dot(hr, hs), -1.0, 1.0)) - u_dog.x) * u_dog.w;
+  if (x < -0.03 || x > 0.16) return vec4(0.0);
+
+  float t = x / u_dog.y;
+  // spread up and down the line by the plates' tilt; the tail is the thinner
+  float sigma = 0.017 * (1.0 - 0.50 * smoothstep(0.0, 0.08, x));
+  float across = exp(-dEl * dEl / (sigma * sigma));
+  // soft on the sun's side too, and past the colors a tail fading to nothing
+  float tt = max(t - 0.35, 0.0);
+  float along = smoothstep(-0.60, 0.25, t) * mix(0.20, 1.0, exp(-tt * tt / 0.30))
+              * exp(-max(x - u_dog.y, 0.0) / 0.05) * smoothstep(0.16, 0.09, x);
+  if (across * along < 0.002) return vec4(0.0);
+
+  // how much ice is here. Thin cloud makes the dog, so this climbs fast and
+  // levels off: a cirrus of a quarter is nearly enough, a trace of one faint
+  float ci = 0.0, ciP = 0.0, cc = 0.0, ccP = 0.0, veil = 0.0, sx = 0.0;
+  if (u_high.x > 0.001) {
+    vec2 uv = planeUV(rd, rdY, 3.2, u_windOff * 0.3) + vec2(u_windOff * 0.14, 0.0);
+    ci = filament(uv);
+    // (most of it from the patch the strands are gathered in, its own noise:
+    // the ice between them too thin to see still throws light, and a dog is a
+    // smooth spot in a thin patch, not cut out in the strands' stripes)
+    ciP = (ci * 0.4 + 0.6 * smoothstep(0.32, 0.62, fbm4(uv * 0.20 + 13.0))) * u_high.x;
+    ci *= u_high.x;
+  }
+  if (u_high.y > 0.001) {
+    // (the one fbm the veil's stratiform and the halo's patchiness both read)
+    float d = fbm4(planeUV(rd, rdY, 3.2 * 0.5, u_windOff * 0.3) + vec2(u_evo * 0.15, 0.0));
+    veil = u_high.y * (0.35 + 0.65 * smoothstep(0.30, 0.72, d));
+    sx = mix(1.0, smoothstep(0.34, 0.70, d), 0.35) * u_high.y;
+  }
+  if (u_high.z > 0.001) {
+    vec2 uv = planeUV(rd, rdY, 3.2 * 5.5, u_windOff * 0.3);
+    cc = granular(uv, 0.55, 1.0, 0.25, hs, vec4(0.0)).x;
+    // (and the flock the grains are gathered in, likewise)
+    ccP = (cc * 0.3 + 0.7 * smoothstep(0.26, 0.605, fbm4(uv * 0.16 + 21.0))) * u_high.z;
+    cc *= u_high.z;
+  }
+  iceT = (1.0 - ci * 0.72 * horizonFade * (1.0 - gloom * 0.8))
+       * (1.0 - sx * 0.45 * horizonFade)
+       * (1.0 - cc * 0.85 * horizonFade);
+  float ice = 1.0 - exp(-(ciP * 8.0 + veil * 3.0 + ccP * 6.0));
+  // (seen long through the layer, near the horizon, it holds up better than
+  // the cloud's own fade to haze)
+  float amt = across * along * ice * u_dog.z * sunVis * sqrt(horizonFade);
+  if (amt <= 0.0) return vec4(0.0);
+
+  vec3 hue = vec3(1.0, 0.45, 0.32);
+  hue = mix(hue, vec3(1.0, 0.68, 0.30), smoothstep(-0.20, 0.16, t));
+  hue = mix(hue, vec3(1.0, 0.92, 0.42), smoothstep(0.14, 0.42, t));
+  hue = mix(hue, vec3(0.80, 0.97, 0.66), smoothstep(0.40, 0.68, t));
+  hue = mix(hue, vec3(0.66, 0.82, 0.98), smoothstep(0.66, 0.96, t));
+  hue = mix(hue, vec3(0.96, 0.96, 0.98), smoothstep(0.92, 1.40, t));
+  // the low sun's own color: a dog beside a red sun is a redder one
+  return vec4(L(hue) * mix(vec3(1.0), L(cloudSun), 0.6), min(amt * 0.9, 0.8));
+}
+#endif
+
 // A cluster of round lobes (the cauliflower texture of cumulus/cumulonimbus).
 //
 // As long as noise is cut with a threshold, the boundary is fractal at every
@@ -3842,6 +3912,25 @@ void main() {
     vec3 col = cloudColor(g.x, g.y * 0.8, 0.16, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 1.0);
     OVERM(col, g.x * u_high.z * 0.85 * horizonFade, MV_PLANE(ALT_HIGH * 5.5, 0.3));
   }
+#ifdef FEAT_DOGS
+  // The sun dogs, once all the ice is down and with every water cloud still to
+  // come, which hide them. The composite has no such place: see below
+#ifdef CLOUD_SPLIT
+  if (u_cloudMode < 0.5)
+#endif
+  {
+    float dogT;
+    vec4 dog = sunDog(rd, el, rdY, horizonFade, sunDir, sunVis, cloudSun, gloom, dogT);
+    if (dog.a > 0.0) {
+#ifdef CLOUD_SPLIT
+      disp = disp * cT + cC;
+      cC = vec3(0.0);
+      cT = 1.0;
+#endif
+      disp = encodeSrgb(mix(L(disp), dog.rgb, dog.a));
+    }
+  }
+#endif
 
   // ── Mid layer, 2000–7000m ───────────────────────────
   // Altostratus As (grey veil) — a translucent sheet.
@@ -6688,6 +6777,19 @@ void main() {
     return;
   }
   disp = disp * cT + cC;
+#ifdef FEAT_DOGS
+  // The stack here is all its layers as one, and the ice that makes the dog is
+  // in it: laid under, as the halo is, the dog would go dim just where its
+  // cloud is thick. So it goes over, through what lies in front of it, which is
+  // what the stack lets through less what the ice takes
+  if (u_cloudMode > 1.5) {
+    float dogT;
+    vec4 dog = sunDog(rd, el, rdY, horizonFade, sunDir, sunVis, cloudSun, gloom, dogT);
+    if (dog.a > 0.0) {
+      disp = encodeSrgb(mix(L(disp), dog.rgb, dog.a * min(cT / max(dogT, 0.01), 1.0)));
+    }
+  }
+#endif
 
 #ifdef FEAT_RAYS
   // ── Crepuscular rays ──
@@ -7591,6 +7693,12 @@ export const FEATURE = {
    * sky without a tower shares the 2D variant)
    */
   CBVOL: 16384,
+  /**
+   * the sun dogs: any thin ice cloud (cirrus, veil, cirrocumulus) under a sun
+   * below some 45°. Apart from the veil's halo, which it would drag into every
+   * sky with a wisp of cirrus
+   */
+  DOGS: 32768,
 } as const;
 
 const FEATURE_DEFINES: [number, string][] = [
@@ -7609,7 +7717,81 @@ const FEATURE_DEFINES: [number, string][] = [
   [FEATURE.IRIDESCENCE, 'FEAT_IRIDESCENCE'],
   [FEATURE.MOONLIT, 'FEAT_MOONLIT'],
   [FEATURE.CBVOL, 'FEAT_CBVOL'],
+  [FEATURE.DOGS, 'FEAT_DOGS'],
 ];
+
+/**
+ * Where the sun dogs stand, in azimuth off the sun (radians), for a sun at
+ * `elevation`: a plate crystal's side faces are a 60° prism, and a ray
+ * inclined to the prism's cross-section by the sun's elevation e bends as a
+ * level one would through ice of Bravais's index n' = sqrt(n² - sin²e) / cos e.
+ * The crystals pile the light up at the minimum deviation, 2 asin(n' / 2) - 60°:
+ * 21.8° with the sun on the horizon, 24.6° at 20, 28.7° at 30, 36.3° at 40 and
+ * 42.5° at 45, so a dog draws away from the 22° ring as the sun climbs.
+ */
+export function parhelionAzimuth(elevation: number, n = 1.31): number {
+  const s = Math.sin(elevation), c = Math.max(Math.cos(elevation), 1e-3);
+  return 2 * Math.asin(Math.min(Math.sqrt(n * n - s * s) / c / 2, 1)) - Math.PI / 3;
+}
+
+/** ice's index for the red and violet ends of the spectrum */
+const ICE_RED = 1.307;
+const ICE_VIOLET = 1.317;
+
+/**
+ * The sun dogs for a sun at `elevation`, as the shader takes them: the red's
+ * azimuth off the sun; the width of the spectrum across the sky (radians, red
+ * to violet at cos e of their azimuths, with the sun's own half degree and the
+ * crystals' wobble smearing it); how bright, 1 with the sun below some 20° and
+ * falling away to nothing at the 44° or so past which the crystals' tilt
+ * scatters it out; and cos e.
+ */
+export function sunDogShape(elevation: number): [number, number, number, number] {
+  const c = Math.cos(elevation), red = parhelionAzimuth(elevation, ICE_RED);
+  const t = Math.min(Math.max((0.70 - Math.sin(elevation)) / 0.35, 0), 1);
+  return [red, (parhelionAzimuth(elevation, ICE_VIOLET) - red) * c + 0.010, (2 - t) * t, c];
+}
+
+/**
+ * Where on the canvas a frame can show the sun dogs: a scissor rectangle
+ * [x, y, width, height] in pixels from its lower left for each dog in view,
+ * none when neither is. Read off a grid over the patch of sky the shader's
+ * sunDog can touch (keep the two windows the same: x in -0.03..0.16 along the
+ * parhelic line, 0.045 up and down it), which is small enough for the grid's
+ * straight lines to follow it, with a pixel or two over. Its corners may fall
+ * behind the eye; what is left of them there is far off the frame's edge.
+ */
+export function sunDogRects(s: AtmosphereState, camera: Camera, width: number, height: number): [number, number, number, number][] {
+  const [red, , bright, c] = sunDogShape(s.sunElevation);
+  if (bright <= 0) return [];
+  const aspect = width / Math.max(1, height);
+  const t = Math.tan(camera.fov * 0.5);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const out: [number, number, number, number][] = [];
+  for (const side of [-1, 1]) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let j = 0; j <= 4; j++) {
+      const el = s.sunElevation + (j / 2 - 1) * 0.045;
+      const ce = Math.cos(el), wy = Math.sin(el);
+      for (let i = 0; i <= 5; i++) {
+        const az = s.sunAzimuth + side * (red + (-0.03 + 0.19 * i / 5) / c);
+        // the shader's viewRay run backward: world to camera to the frame
+        const wx = ce * Math.sin(az), wz = ce * Math.cos(az);
+        const dx = wx * cy - wz * sy, dzh = wx * sy + wz * cy;
+        const dy = wy * cp - dzh * sp, dz = wy * sp + dzh * cp;
+        if (dz <= 0.02) continue;
+        const px = (dx / dz / (aspect * t) * 0.5 + 0.5) * width, py = (dy / dz / t * 0.5 + 0.5) * height;
+        x0 = Math.min(x0, px); x1 = Math.max(x1, px);
+        y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+      }
+    }
+    const a = Math.max(Math.floor(x0) - 2, 0), b = Math.min(Math.ceil(x1) + 2, width);
+    const d = Math.max(Math.floor(y0) - 2, 0), e = Math.min(Math.ceil(y1) + 2, height);
+    if (a < b && d < e) out.push([a, d, b - a, e - d]);
+  }
+  return out;
+}
 
 /**
  * every feature compiled in: the one program the renderer used to be. (Its
@@ -7617,7 +7799,7 @@ const FEATURE_DEFINES: [number, string][] = [
  * anything, so a renderer compiling everything into one program takes that
  * bit from its own cumulonimbus option, not from here)
  */
-export const ALL_FEATURES = 32767;
+export const ALL_FEATURES = 65535;
 
 /** how the cumulonimbus's towers are drawn — see {@link RendererOptions.cumulonimbus} */
 export type CumulonimbusMode = 'auto' | '2d' | 'volumetric';
@@ -7668,6 +7850,13 @@ export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: Cumulonim
   if (s.particles.contrails > 0.001) k |= FEATURE.CONTRAILS;
   if (rays > 0) k |= FEATURE.RAYS;
   if (s.clouds.cirrostratus > 0.001) k |= FEATURE.HALOS;
+  // the dogs' gate: ice, and a sun both up and below their 45° (their low, and
+  // sunVis). The sine a hair past each, as for the lighting below
+  const c0 = s.clouds, sinSun = Math.sin(s.sunElevation);
+  if ((c0.cirrus > 0.001 || c0.cirrostratus > 0.001 || c0.cirrocumulus > 0.001)
+      && sinSun > -0.0601 && sinSun < 0.7001) {
+    k |= FEATURE.DOGS;
+  }
   if (s.rain > 0.01) k |= FEATURE.RAINBOW;
   if (s.thunder > 0.001) k |= FEATURE.BOLT;
   // an eased bortle only approaches 6 on its way back from a dark site, so
@@ -7804,7 +7993,7 @@ export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number
  * program; changing it at run time compiles the other, the last one
  * drawing while it links.
  */
-const SPLIT_KEY = 32768;
+const SPLIT_KEY = 65536;
 
 /**
  * The bits of a variant's key that mark the sky cache's programs
@@ -7815,8 +8004,8 @@ const SPLIT_KEY = 32768;
  * unlike it never a stand-in for any other key, nor any other for them —
  * neither draws a frame on its own
  */
-const CACHE_BUILD = 65536;
-const CACHE_COMP = 131072;
+const CACHE_BUILD = 131072;
+const CACHE_COMP = 262144;
 const CACHE_BITS = CACHE_BUILD | CACHE_COMP;
 
 /** how many variants to keep linked at once; the least recently drawn goes first */
@@ -7910,7 +8099,7 @@ const UNIFORM_NAMES = [
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift',
   'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset',
-  'u_cloudMode', 'u_clouds', 'u_xfade',
+  'u_cloudMode', 'u_clouds', 'u_xfade', 'u_dog',
   'u_map0', 'u_map1', 'u_mapStep', 'u_mapMix', 'u_clouds2',
   'u_flow', 'u_flow2', 'u_box0', 'u_box1', 'u_mapWind', 'u_mapTexels', 'u_evoPerWind', 'u_morph',
 ] as const;
@@ -8402,12 +8591,16 @@ export class AtmosphereRenderer {
     if (!this.gl || this.lost) return;
     const ks = this.keysFor(s);
     if (this.current === null) this.wanted = ks[0].key;
+    // (a sky with sun dogs is drawn without them and then again with them on
+    // top: see drawDogs. Its plain frame first, for the first frame to ask for)
+    if (ks.length === 1 && this.dogsApart(s)) this.ensure(ks[0].key & ~FEATURE.DOGS);
     for (const k of ks) this.ensure(k.key);
     // and the sky cache's two programs, behind them: until both link, the
     // frames are drawn directly
     if (this.sky && ks.length === 1 && hasCloudStack(s.clouds)) {
       const key = ks[0].key & ~SPLIT_KEY;
-      this.ensure(key | CACHE_BUILD);
+      this.ensure((key & ~FEATURE.DOGS) | CACHE_BUILD);
+      if (this.dogsApart(s)) this.ensure((key & ~FEATURE.DOGS) | CACHE_COMP);
       this.ensure(key | CACHE_COMP);
     }
   }
@@ -8728,9 +8921,57 @@ export class AtmosphereRenderer {
     const w = this.canvas.width, h = this.canvas.height;
     const query = this.beginTiming(w * h);
     if (!this.sky || !this.drawCached(gl, passes.length, timeSec, s, camera, windOff, evo)) {
-      passes.forEach((p, i) => this.drawFrame(gl, p.v, i > 0 ? p.share : 1, timeSec, s, camera, windOff, evo));
+      let mode = 0;
+      passes.forEach((p, i) => { mode = this.drawFrame(gl, p.v, i > 0 ? p.share : 1, timeSec, s, camera, windOff, evo); });
+      if (passes.length === 1) this.drawDogs(gl, passes[0].v, mode, timeSec, s, camera, windOff, evo);
     }
     if (query) this.timer!.endQueryEXT(this.timer!.TIME_ELAPSED_EXT);
+  }
+
+  /**
+   * Whether a frame of this sky has its sun dogs drawn apart from it (drawDogs)
+   * rather than in its program: not the one program that carries everything,
+   * nor through a lens with drops on it, which bends rays across the frame
+   * from outside any rectangle. (A crossfade's two frames keep them in as well:
+   * neither alone is the picture to lay them over.)
+   */
+  private dogsApart(s: AtmosphereState): boolean {
+    return this.opts.variants !== false && !(s.rain > 0.05 && s.lens.droplets > 0.001);
+  }
+
+  /**
+   * The sun dogs, over the plain frame just drawn: the same frame again from
+   * the program that carries them, only where one can show. They are two spots
+   * in a sky with a wisp of ice in it, which is most of them below 45°; carried
+   * by the program that draws the whole frame they cost it a tenth to a sixth
+   * of its time (an M2 Max, 1080p: a fair sky, a cirrus one), with a dog in view
+   * or not, though they run on a few thousandths of its pixels. A sunDog cut
+   * down to its gates cost nothing, and either its noise or its colors alone
+   * brought the whole of that back, so it looks to be how the rest of the
+   * program compiles around them, not their work. This way every pixel
+   * outside the rectangles is the frame without them, at its cost, and the
+   * rectangles are a few hundredths of the frame. It keeps the whole sky's
+   * variant, so turning the view doesn't compile another, and until that has
+   * linked the frame goes without. A split frame's stack stays as it was drawn
+   * and only the composite is drawn again.
+   */
+  private drawDogs(
+    gl: WebGLRenderingContext, main: Variant, mode: number,
+    timeSec: number, s: AtmosphereState, camera: Camera, windOff: number, evo: number,
+  ): void {
+    const key = this.keysFor(s)[0].key;
+    if (!(key & FEATURE.DOGS) || (main.key & FEATURE.DOGS)) return;
+    // (over this very sky, not a stand-in for it while its own links; the
+    // light from behind is left out of a frame only where it would draw nothing)
+    if ((main.key | FEATURE.BACKLIT | FEATURE.DOGS) !== (key | FEATURE.BACKLIT)) return;
+    const w = this.canvas.width, h = this.canvas.height;
+    const rects = sunDogRects(s, camera, w, h);
+    if (!rects.length) return;
+    const v = this.ensure(key);
+    if (!v?.linked) return;
+    this.drawFrame(gl, v, 1, timeSec, s, camera, windOff, evo, { rects, mode });
+    // (what the frame was drawn with, as far as what is linked and in use goes)
+    this.current = main;
   }
 
   /**
@@ -8770,8 +9011,13 @@ export class AtmosphereRenderer {
     // the whole sky's key, the light from behind kept in: a panorama looks
     // every way. Not the split program's: the cache is a split of its own
     const key = this.keysFor(s)[0].key & ~SPLIT_KEY;
-    const kb = key | CACHE_BUILD, kc = key | CACHE_COMP;
-    this.skyKeys = [kb, kc];
+    // (the sun dogs stand still on the sky as the keyframes move past: they
+    // are the composite's, which reads the ice at them for itself, and apart
+    // from it as any frame's are)
+    const apart = this.dogsApart(s);
+    const kb = (key & ~FEATURE.DOGS) | CACHE_BUILD, kc = (apart ? key & ~FEATURE.DOGS : key) | CACHE_COMP;
+    const kd = key | CACHE_COMP;
+    this.skyKeys = [kb, kc, kd];
     const vb = this.ensure(kb), vc = this.ensure(kc);
     if (!vb?.linked || !vc?.linked) return no(vb?.failed || vc?.failed ? 'failed' : 'compiling');
     const w = this.canvas.width, h = this.canvas.height;
@@ -8789,7 +9035,26 @@ export class AtmosphereRenderer {
     }
     if (!plan.show) return false;
     const { a, b, mix } = plan.show;
-    this.bind(vc, timeSec, s, windOff, evo);
+    this.drawComposite(gl, vc, a, b, mix, timeSec, s, camera, windOff, evo);
+    if (kd !== kc) {
+      const rects = sunDogRects(s, camera, w, h);
+      const vd = rects.length ? this.ensure(kd) : null;
+      if (vd?.linked) {
+        this.drawComposite(gl, vd, a, b, mix, timeSec, s, camera, windOff, evo, rects);
+        this.current = vc;
+      }
+    }
+    return true;
+  }
+
+  /** a frame composited from two keyframes, or these rectangles of one */
+  private drawComposite(
+    gl: WebGLRenderingContext, v: Variant, a: CacheKeyframe, b: CacheKeyframe, mix: number,
+    timeSec: number, s: AtmosphereState, camera: Camera, windOff: number, evo: number,
+    rects?: [number, number, number, number][],
+  ): void {
+    const w = this.canvas.width, h = this.canvas.height;
+    this.bind(v, timeSec, s, windOff, evo);
     const u = this.u;
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this.skyTex[a.slot]);
@@ -8828,8 +9093,8 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
     gl.uniform1f(u.u_lensDrops, s.lens.droplets);
     gl.uniform1f(u.u_lensFx, 1);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-    return true;
+    if (rects) this.drawRects(gl, rects);
+    else gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
   /**
@@ -9075,6 +9340,8 @@ export class AtmosphereRenderer {
   private passes(s: AtmosphereState, camera?: Camera, aspect = 1): { v: Variant; share: number }[] | null {
     if (!this.gl || this.lost) return null;
     const ks = this.keysFor(s, camera, aspect);
+    // (the sun dogs are drawn on their own over the frame: see drawDogs)
+    if (ks.length === 1 && this.dogsApart(s)) ks[0].key &= ~FEATURE.DOGS;
     // (a view that leaves the light from behind out has the variants that
     // carry it compiling behind it, for when it turns toward the sun: drawn
     // for this view while they link, they draw the same picture, but the
@@ -9105,12 +9372,15 @@ export class AtmosphereRenderer {
 
   /**
    * One frame drawn with one variant: laid over what the canvas holds at
-   * `share` (the second tower of a crossfade), or over nothing at 1
+   * `share` (the second tower of a crossfade), or over nothing at 1. Returns
+   * the cloud mode it was drawn in. `again`: only these parts of a frame just
+   * drawn in that mode, whose cloud stack still stands
    */
   private drawFrame(
     gl: WebGLRenderingContext, v: Variant, share: number,
     timeSec: number, s: AtmosphereState, camera: Camera, windOff: number, evo: number,
-  ): void {
+    again?: { rects: [number, number, number, number][]; mode: number },
+  ): number {
     this.bind(v, timeSec, s, windOff, evo);
     const u = this.u;
     const w = this.canvas.width, h = this.canvas.height;
@@ -9124,12 +9394,12 @@ export class AtmosphereRenderer {
     // frame with that stack laid in (mode 2) — or the frame in one pass (mode
     // 0), which is also what a cloudless frame takes: the same picture, and
     // none of the split's two extra steps
-    let mode = 0;
+    let mode = again ? again.mode : 0;
     const scale = this.cloudScale;
     // the rays are read off the cloud stack's target, so they too want the
     // split (and only the split program can: a one-pass one standing in
     // while it links draws the frame whole)
-    if ((scale < 1 || this.rays > 0) && hasCloudStack(s.clouds) && (v.key & SPLIT_KEY)) {
+    if (!again && (scale < 1 || this.rays > 0) && hasCloudStack(s.clouds) && (v.key & SPLIT_KEY)) {
       const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
       if (this.cloudTarget(gl, cw, ch)) {
         // the target's texture must not sit on a unit the program samples
@@ -9163,8 +9433,20 @@ export class AtmosphereRenderer {
     // (only the frame itself is laid over the last: the cloud stack's own
     // pass above replaces its target's contents, as it always does)
     if (share < 1) this.blendOver(gl);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (again) this.drawRects(gl, again.rects);
+    else gl.drawArrays(gl.TRIANGLES, 0, 3);
     if (share < 1) gl.disable(gl.BLEND);
+    return mode;
+  }
+
+  /** the frame's triangle, only inside these rectangles */
+  private drawRects(gl: WebGLRenderingContext, rects: [number, number, number, number][]): void {
+    gl.enable(gl.SCISSOR_TEST);
+    for (const [x, y, w, h] of rects) {
+      gl.scissor(x, y, w, h);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    gl.disable(gl.SCISSOR_TEST);
   }
 
   /**
@@ -9382,6 +9664,7 @@ export class AtmosphereRenderer {
     const c = s.clouds;
     gl.uniform1f(u.u_cover, s.cloudCover);
     gl.uniform3f(u.u_high, c.cirrus, c.cirrostratus, c.cirrocumulus);
+    gl.uniform4fv(u.u_dog, sunDogShape(s.sunElevation));
     gl.uniform3f(u.u_mid, c.altostratus, c.altocumulus, c.nimbostratus);
     gl.uniform4f(u.u_low, c.stratus, c.stratocumulus, c.cumulus, c.cumulonimbus);
     gl.uniform1f(u.u_rain, s.rain);

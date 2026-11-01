@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys } from '../src/renderer.js';
+import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys, parhelionAzimuth, sunDogRects, sunDogShape } from '../src/renderer.js';
 import { resolveConditions } from '../src/state.js';
 import { StateAnimator } from '../src/animator.js';
 
@@ -179,6 +179,141 @@ describe('featureKey', () => {
     const s = resolveConditions({ time: 22, weather: 'clear', celestial: 'suburban' });
     s.celestial.bortle = 5.9999;
     expect(featureKey(s) & FEATURE.DARKSKY).toBe(0);
+  });
+});
+
+describe('sun dogs', () => {
+  const DEG = Math.PI / 180;
+  const bit = (c: Parameters<typeof resolveConditions>[0]) => featureKey(resolveConditions(c)) & FEATURE.DOGS;
+
+  // A ray traced through a 60° prism standing upright, its faces' normals
+  // level: Snell at each face in 3D, the deviation read as the azimuth between
+  // what came in and what went out (the elevation comes back as it went in)
+  const refract = (d: number[], nrm: number[], eta: number): number[] => {
+    const c = -(d[0] * nrm[0] + d[1] * nrm[1] + d[2] * nrm[2]);
+    const k = 1 - eta * eta * (1 - c * c);
+    return d.map((v, i) => eta * v + (eta * c - Math.sqrt(k)) * nrm[i]);
+  };
+  const deviation = (inc: number, e: number, n: number): number => {
+    // in the prism's cross-section (x, z), up y; the entry face's normal along -z
+    const d = [Math.cos(e) * Math.sin(inc), Math.sin(e), Math.cos(e) * Math.cos(inc)];
+    const inside = refract(d, [0, 0, -1], 1 / n);
+    const a = 60 * DEG;
+    const out = refract(inside, [Math.sin(a), 0, Math.cos(a)].map((v) => -v), n);
+    return Math.abs(Math.atan2(out[0], out[2]) - inc);
+  };
+  const minDeviation = (e: number, n: number): number => {
+    let best = Infinity;
+    for (let i = 0; i < 4000; i++) {
+      const inc = (15 + i * 0.015) * DEG;
+      const v = deviation(inc, e, n);
+      if (Number.isFinite(v)) best = Math.min(best, v);
+    }
+    return best;
+  };
+
+  it('stand where a 60° prism throws the sun: at its minimum deviation in azimuth', () => {
+    for (const el of [0, 10, 20, 30, 40, 45]) {
+      expect(parhelionAzimuth(el * DEG)).toBeCloseTo(minDeviation(el * DEG, 1.31), 3);
+    }
+  });
+
+  it('draw away from the 22° ring as the sun climbs', () => {
+    expect(parhelionAzimuth(0) / DEG).toBeCloseTo(21.84, 1);
+    expect(parhelionAzimuth(30 * DEG) / DEG).toBeCloseTo(28.7, 0);
+    expect(parhelionAzimuth(45 * DEG) / DEG).toBeCloseTo(42.5, 0);
+    // and across the sky too, not just in azimuth: the old 22° / cos e kept
+    // the dog on the ring. At 30 up one stands near 25° from the sun
+    const apart = (e: number) => Math.acos(Math.sin(e) ** 2 + Math.cos(e) ** 2 * Math.cos(parhelionAzimuth(e)));
+    expect(apart(30 * DEG) / DEG).toBeGreaterThan(24.5);
+    expect(apart(30 * DEG)).toBeGreaterThan(apart(0) + 2 * DEG);
+  });
+
+  it('are brightest with the sun low and gone above some 45°', () => {
+    expect(sunDogShape(5 * DEG)[2]).toBe(1);
+    expect(sunDogShape(15 * DEG)[2]).toBe(1);
+    expect(sunDogShape(30 * DEG)[2]).toBeLessThan(sunDogShape(20 * DEG)[2]);
+    expect(sunDogShape(40 * DEG)[2]).toBeGreaterThan(0.1);
+    expect(sunDogShape(45 * DEG)[2]).toBe(0);
+    expect(sunDogShape(60 * DEG)[2]).toBe(0);
+    // red nearest the sun, and the spectrum wider the higher it stands
+    const spread = (e: number) => parhelionAzimuth(e, 1.317) - parhelionAzimuth(e, 1.307);
+    expect(spread(5 * DEG)).toBeGreaterThan(0);
+    expect(spread(40 * DEG)).toBeGreaterThan(spread(5 * DEG));
+  });
+
+  it('compile in for ice under a low sun, and nothing else', () => {
+    const ice = { clouds: { cirrus: 0.3 } };
+    expect(bit({ time: 16.5, weather: ice })).toBe(FEATURE.DOGS);
+    expect(bit({ time: 16.5, weather: { clouds: { cirrostratus: 0.3 } } })).toBe(FEATURE.DOGS);
+    expect(bit({ time: 16.5, weather: { clouds: { cirrocumulus: 0.3 } } })).toBe(FEATURE.DOGS);
+    // a wisp of cirrus does not bring the veil's halo with it, nor a veil lose it
+    expect(featureKey(resolveConditions({ time: 16.5, weather: ice })) & FEATURE.HALOS).toBe(0);
+    expect(featureKey(resolveConditions({ time: 16.5, weather: { clouds: { cirrostratus: 0.3 } } })) & FEATURE.HALOS).toBe(FEATURE.HALOS);
+    // no ice, or water only
+    expect(bit({ time: 16.5, weather: 'clear' })).toBe(0);
+    expect(bit({ time: 16.5, weather: { clouds: { cumulus: 0.5, altocumulus: 0.4, stratus: 0.3 } } })).toBe(0);
+    // the sun too high (the nominal noon stands at 46°), or down
+    expect(bit({ time: 12, weather: ice })).toBe(0);
+    expect(bit({ time: 23, weather: ice })).toBe(0);
+    // the same threshold as the shader's 0.001
+    const s = resolveConditions({ time: 16.5, weather: 'clear' });
+    s.clouds.cirrus = 0.001;
+    expect(featureKey(s) & FEATURE.DOGS).toBe(0);
+    s.clouds.cirrus = 0.0011;
+    expect(featureKey(s) & FEATURE.DOGS).toBe(FEATURE.DOGS);
+  });
+
+  describe('sunDogRects', () => {
+    const W = 1920, H = 1080;
+    const s = resolveConditions({ time: 16.5, weather: { clouds: { cirrus: 0.3 } } });
+    // a dog's place on the canvas, as the shader's viewRay would have it
+    const place = (side: number, cam: { yaw: number; pitch: number; fov: number }, x = 0.02): [number, number] | null => {
+      const az = s.sunAzimuth + side * (sunDogShape(s.sunElevation)[0] + x / Math.cos(s.sunElevation));
+      const e = s.sunElevation, wx = Math.cos(e) * Math.sin(az), wy = Math.sin(e), wz = Math.cos(e) * Math.cos(az);
+      const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+      const dx = wx * cy - wz * sy, dh = wx * sy + wz * cy;
+      const dy = wy * cp - dh * sp, dz = wy * sp + dh * cp;
+      if (dz <= 0) return null;
+      const t = Math.tan(cam.fov / 2);
+      return [(dx / dz / (W / H * t) * 0.5 + 0.5) * W, (dy / dz / t * 0.5 + 0.5) * H];
+    };
+    const inRect = (p: [number, number], r: number[]) => p[0] >= r[0] && p[0] <= r[0] + r[2] && p[1] >= r[1] && p[1] <= r[1] + r[3];
+
+    it('has one round each dog in view, and each a few hundredths of the frame', () => {
+      const cam = { yaw: s.sunAzimuth, pitch: s.sunElevation, fov: 1.05 };
+      const rs = sunDogRects(s, cam, W, H);
+      expect(rs.length).toBe(2);
+      for (const side of [-1, 1]) {
+        const p = place(side, cam)!;
+        expect(rs.some((r) => inRect(p, r))).toBe(true);
+      }
+      for (const r of rs) expect(r[2] * r[3] / (W * H)).toBeLessThan(0.03);
+    });
+
+    it('has none looking away, or with the sun too high', () => {
+      expect(sunDogRects(s, { yaw: s.sunAzimuth + Math.PI, pitch: 0.2, fov: 1.05 }, W, H)).toEqual([]);
+      expect(sunDogRects(s, { yaw: s.sunAzimuth, pitch: 1.3, fov: 0.4 }, W, H)).toEqual([]);
+      const high = { ...s, sunElevation: 50 * DEG };
+      expect(sunDogRects(high, { yaw: s.sunAzimuth, pitch: 0.8, fov: 1.2 }, W, H)).toEqual([]);
+    });
+
+    it('stays on the canvas and holds a dog at every turn of the view', () => {
+      for (let k = 0; k < 96; k++) {
+        const cam = { yaw: s.sunAzimuth + k * Math.PI / 48, pitch: 0.2 + 0.1 * (k % 5), fov: 0.5 + 0.2 * (k % 4) };
+        const rs = sunDogRects(s, cam, W, H);
+        for (const r of rs) {
+          expect(r[0]).toBeGreaterThanOrEqual(0);
+          expect(r[1]).toBeGreaterThanOrEqual(0);
+          expect(r[0] + r[2]).toBeLessThanOrEqual(W);
+          expect(r[1] + r[3]).toBeLessThanOrEqual(H);
+        }
+        for (const side of [-1, 1]) {
+          const p = place(side, cam);
+          if (p && p[0] > 0 && p[0] < W && p[1] > 0 && p[1] < H) expect(rs.some((r) => inRect(p, r))).toBe(true);
+        }
+      }
+    });
   });
 });
 
