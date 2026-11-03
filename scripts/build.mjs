@@ -11,6 +11,7 @@
 //   dist/types/**                     declarations emitted by tsc (see tsconfig.build.json)
 import { build } from 'esbuild';
 import { cp, rm, writeFile } from 'node:fs/promises';
+import { stripShaders } from './strip-glsl.mjs';
 
 await rm('dist', { recursive: true, force: true });
 
@@ -21,6 +22,7 @@ await build({
   target: 'es2022',
   outfile: 'dist/index.js',
   sourcemap: true,
+  plugins: [stripShaders],
 });
 
 await build({

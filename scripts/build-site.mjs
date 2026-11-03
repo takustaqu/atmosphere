@@ -20,13 +20,14 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripShaders } from './strip-glsl.mjs';
 
 await rm('_site', { recursive: true, force: true });
 await mkdir('_site', { recursive: true });
 
 // Same esbuild settings as scripts/build.mjs, minus sourcemaps: nothing debugs
 // against the deployed site, and minify keeps the shader-heavy bundles small.
-const common = { bundle: true, format: 'esm', target: 'es2022', minify: true };
+const common = { bundle: true, format: 'esm', target: 'es2022', minify: true, plugins: [stripShaders] };
 
 // Pages serves every file with a ten-minute max-age and the bundles keep the
 // same names from one deploy to the next, so a visitor who came by recently
