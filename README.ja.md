@@ -693,6 +693,15 @@ const sky = new Atmosphere(canvas, { respectReducedMotion: false });  // 設定�
 sky.reducedMotion;   // 静止させている間は true
 ```
 
+ビューポートの外へスクロールした canvas や `display: none` の下の canvas は描画しません。
+時計・トランジション・ライトプローブは進み続けるので、戻ったときには描き続けていた
+場合と同じ空になります。見えない canvas を何かが読み出している場合（別のレンダラの
+テクスチャ、`captureStream()` など）は、描画を続けるよう指定します。
+
+```ts
+const sky = new Atmosphere(canvas, { pauseOffscreen: false });
+```
+
 ## API
 
 | export | 役割 |

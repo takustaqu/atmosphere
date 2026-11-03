@@ -781,6 +781,15 @@ const sky = new Atmosphere(canvas, { respectReducedMotion: false });  // keep an
 sky.reducedMotion;   // true while the sky is being held still
 ```
 
+A canvas scrolled out of the viewport or under `display: none` is not drawn,
+though its clocks, transitions and light probe go on, so it comes back as if it
+had been drawn all along. If something reads the canvas from out of view (a
+texture for another renderer, `captureStream()`), keep it drawing:
+
+```ts
+const sky = new Atmosphere(canvas, { pauseOffscreen: false });
+```
+
 ## API
 
 | export | role |

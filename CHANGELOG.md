@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Performance
+
+- **The bundle is half the size.** Two thirds of the fragment shader's source
+  was its comments, and a minifier leaves the inside of a template literal alone,
+  so every page downloaded them and handed them to the driver for every variant.
+  The build now strips the comments and indentation from the shaders:
+  `dist/index.js` from 596 to 307 KB (gzip 192 to 89, brotli 159 to 76), a
+  variant's compile and link 3 to 4 ms shorter (M2 Max, of 26–56 ms). The pictures
+  are the same to the byte on the 14 skies compared. The source keeps its
+  comments, and every shader line keeps its number, so a driver's error or a stack
+  trace through the source map still points at the source.
+- **A canvas out of view is not drawn.** A browser goes on asking for frames for
+  a canvas scrolled out of the viewport or under `display: none`, and each was a
+  whole frame's GPU time. The clocks and transitions go on undrawn, and the light
+  probe with them, so the sky comes back where it would have been. A still frame
+  is drawn as ever, and a canvas outside the document is always drawn.
+  `pauseOffscreen: false` (also on `AtmosphereCanvas`) keeps drawing, for a canvas
+  that something reads from out of view.
+
 ## 0.10.0 — 2026-11-02
 
 ### Performance
