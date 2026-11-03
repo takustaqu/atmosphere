@@ -155,3 +155,85 @@ describe('a running loop', () => {
     expect(renderer.render).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('out of view', () => {
+  let tick: (t: number) => void;
+  let seen: ((entries: { isIntersecting: boolean }[]) => void) | null;
+  let watching: boolean;
+  const inDocument = () => ({ ...sized(640, 360), isConnected: true }) as HTMLCanvasElement;
+  const view = (isIntersecting: boolean) => seen?.([{ isIntersecting }]);
+
+  beforeEach(() => {
+    seen = null;
+    watching = false;
+    vi.stubGlobal('requestAnimationFrame', (f: (t: number) => void) => { tick = f; return 1; });
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(f: typeof seen) { seen = f; }
+      observe() { watching = true; }
+      disconnect() { watching = false; }
+    });
+  });
+
+  it('draws nothing, and draws again on the way back without waiting for a tick', () => {
+    const { renderer } = mount({ fps: 60 }, inDocument());
+    tick(100);
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+    view(false);
+    tick(200);
+    tick(300);
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+    view(true);
+    expect(renderer.render).toHaveBeenCalledTimes(2);
+    tick(400);
+    expect(renderer.render).toHaveBeenCalledTimes(3);
+  });
+
+  it('goes on with the clocks, so the sky comes back where it would have been', () => {
+    const { sky, renderer } = mount({ fps: 60 }, inDocument());
+    const before = sky.state;
+    tick(1000);
+    const evo = renderer.render.mock.calls[0][4];
+    view(false);
+    for (let t = 1100; t < 3000; t += 100) tick(t);
+    view(true);
+    expect(renderer.render.mock.calls[1][4]).toBeGreaterThan(evo + 0.05);
+    expect(sky.state.timeOfDay).toBeCloseTo(before.timeOfDay);
+  });
+
+  it('still draws what it is asked to with no loop running', () => {
+    const { sky, renderer } = mount({ autoStart: false }, inDocument());
+    view(false);
+    sky.jump();
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not draw on the way back with the loop stopped', () => {
+    const { sky, renderer } = mount({ autoStart: false }, inDocument());
+    sky.start();
+    sky.stop();
+    view(false);
+    view(true);
+    expect(renderer.render).not.toHaveBeenCalled();
+  });
+
+  it('draws on a canvas outside the document, which never intersects anything', () => {
+    const { renderer } = mount({ fps: 60 });
+    view(false);
+    tick(100);
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws on under pauseOffscreen: false, watching nothing', () => {
+    const { renderer } = mount({ fps: 60, pauseOffscreen: false }, inDocument());
+    expect(watching).toBe(false);
+    tick(100);
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops watching when disposed', () => {
+    const { sky } = mount({}, inDocument());
+    expect(watching).toBe(true);
+    sky.dispose();
+    expect(watching).toBe(false);
+  });
+});

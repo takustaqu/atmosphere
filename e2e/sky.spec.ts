@@ -125,6 +125,64 @@ test.describe('a still frame', () => {
   });
 });
 
+test.describe('a canvas out of view', () => {
+  /** how many draws the page's WebGL has made so far */
+  const draws = (page: Page) => page.evaluate(() => (window as unknown as { draws: number }).draws);
+  const counting = (page: Page) => page.evaluate(() => {
+    const w = window as unknown as { draws: number };
+    w.draws = 0;
+    const proto = WebGLRenderingContext.prototype, orig = proto.drawArrays;
+    proto.drawArrays = function (...a) { w.draws++; return orig.apply(this, a); };
+  });
+
+  test('is not drawn, and is drawn again with the sky moved on when it comes back', async ({ page }) => {
+    await open(page, 'no-preference');
+    await counting(page);
+    await page.evaluate(() => {
+      document.body.append(Object.assign(document.createElement('div'), { style: 'height:3000px' }));
+      window.sky = new window.Atmosphere(document.querySelector('canvas')!, { time: 14, weather: 'fair', resolutionScale: 1 });
+    });
+    await daylightOn(page, 'canvas');
+    await expect.poll(() => draws(page)).toBeGreaterThan(0);
+
+    await page.evaluate(() => window.scrollTo(0, 2000));
+    await page.waitForTimeout(300);
+    const out = await draws(page);
+    await page.waitForTimeout(700);
+    expect(await draws(page)).toBe(out);
+
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect.poll(() => draws(page)).toBeGreaterThan(out);
+    await daylightOn(page, 'canvas');
+  });
+
+  test('comes back from under display: none, at its new size', async ({ page }) => {
+    await open(page, 'no-preference');
+    await page.evaluate(() => {
+      window.sky = new window.Atmosphere(document.querySelector('canvas')!, { time: 14, weather: 'fair', resolutionScale: 1 });
+    });
+    await daylightOn(page, 'canvas');
+    await page.evaluate(() => { document.querySelector('canvas')!.style.display = 'none'; });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => { document.querySelector('canvas')!.style.cssText = 'display:block;width:400px'; });
+    await page.waitForFunction(() => document.querySelector('canvas')!.width === 400);
+    await daylightOn(page, 'canvas');
+  });
+
+  test('is drawn on under pauseOffscreen: false', async ({ page }) => {
+    await open(page, 'no-preference');
+    await counting(page);
+    await page.evaluate(() => {
+      document.body.append(Object.assign(document.createElement('div'), { style: 'height:3000px' }));
+      window.sky = new window.Atmosphere(document.querySelector('canvas')!, { time: 14, weather: 'fair', resolutionScale: 1, pauseOffscreen: false });
+      window.scrollTo(0, 2000);
+    });
+    await expect.poll(() => draws(page), { timeout: 30_000 }).toBeGreaterThan(0);
+    const before = await draws(page);
+    await expect.poll(() => draws(page)).toBeGreaterThan(before);
+  });
+});
+
 test.describe('AtmosphereCanvas', () => {
   const cases: [string, AtmosphereCanvasProps, AtmosphereCanvasProps][] = [
     ['tone', { time: 14, weather: 'fair' }, { tone: { exposure: 1.5 } }],

@@ -75,6 +75,18 @@ export interface AtmosphereOptions extends Conditions {
    */
   respectReducedMotion?: boolean;
   /**
+   * pass false to keep drawing while the canvas is out of view.
+   *
+   * On by default: a browser goes on asking for frames for a canvas scrolled
+   * out of the viewport or under `display: none`, and each one is a whole
+   * frame's GPU time that nobody sees. The sky's clocks and transitions go on
+   * as they were, the light probe with them, so it comes back as if it had been
+   * drawn all along. Turn it off for a canvas in the page that something reads
+   * from out of view — a texture for another renderer, `captureStream()`. One
+   * that isn't in the document is always drawn.
+   */
+  pauseOffscreen?: boolean;
+  /**
    * Measure the sky's light for whatever is drawn in front of it — see
    * {@link Atmosphere.light}. Off by default: each measurement is a small
    * extra draw and a GPU readback. `true` takes the defaults.
@@ -162,6 +174,8 @@ export class Atmosphere {
 
   private raf = 0;
   private observer: ResizeObserver | null = null;
+  private viewObserver: IntersectionObserver | null = null;
+  private inView = true;
   private startedAt = 0;
   private last = 0;
   private lastDraw = 0;
@@ -252,6 +266,18 @@ export class Atmosphere {
     if (options.respectReducedMotion !== false && typeof matchMedia !== 'undefined') {
       this.motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
       this.motionQuery.addEventListener('change', this.onMotionChange);
+    }
+    if (options.pauseOffscreen !== false && typeof IntersectionObserver !== 'undefined') {
+      this.viewObserver = new IntersectionObserver((entries) => {
+        const inView = entries[entries.length - 1].isIntersecting;
+        const back = inView && !this.inView;
+        this.inView = inView;
+        // not left to the next tick, up to a frame interval off: what it left
+        // with is a moment long gone, and a new size has cleared the canvas of it
+        if (back && this.raf) this.draw(performance.now());
+        // (a little ahead of the edge, for a slow scroll to bring in this moment's sky)
+      }, { rootMargin: '64px' });
+      this.viewObserver.observe(canvas);
     }
     if (options.autoStart !== false) this.start();
   }
@@ -519,7 +545,8 @@ export class Atmosphere {
   private draw(t: number): void {
     // jump() can be called before start(). Pin the reference time here
     if (!this.startedAt) { this.startedAt = t; this.last = t; }
-    const dt = Math.min(0.2, (t - this.last) / 1000);
+    // (a draw on the clock, not on a tick, may be followed by a tick stamped earlier)
+    const dt = Math.max(0, Math.min(0.2, (t - this.last) / 1000));
     this.last = t;
     this.animator.step(this.target, dt);
     // A meteor only reads as a meteor because it moves. Under reduced motion the
@@ -527,6 +554,10 @@ export class Atmosphere {
     // as a scratch across the sky — suppress them rather than freeze them.
     if (this.reducedMotion) this.animator.current.celestial.meteors = 0;
     if (this.opts.lightProbe) this.maybeProbe(t);
+    // Out of view, only a running loop's frames go undrawn: a still frame has no
+    // next tick to come back on. (A canvas outside the document never intersects
+    // anything, and whoever made it means to read it)
+    if (this.raf && !this.inView && this.canvas.isConnected) return;
     this.renderer.render(
       (t - this.startedAt) / 1000,
       this.animator.current,
@@ -581,6 +612,8 @@ export class Atmosphere {
     this.stop();
     this.observer?.disconnect();
     this.observer = null;
+    this.viewObserver?.disconnect();
+    this.viewObserver = null;
     this.motionQuery?.removeEventListener('change', this.onMotionChange);
     this.motionQuery = null;
     this.renderer.dispose(options);

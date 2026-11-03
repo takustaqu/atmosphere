@@ -87,6 +87,8 @@ export interface AtmosphereCanvasProps extends Conditions {
   rays?: AtmosphereOptions['rays'];
   /** hold frames inside a GPU budget by trading resolution. Init-only */
   adaptiveResolution?: AtmosphereOptions['adaptiveResolution'];
+  /** pass false to keep drawing while the canvas is out of view. Init-only */
+  pauseOffscreen?: AtmosphereOptions['pauseOffscreen'];
   /** class name appended to the default "atmo-canvas" */
   className?: string;
 }
@@ -105,6 +107,7 @@ export function AtmosphereCanvas({
   cloudScale,
   rays,
   adaptiveResolution,
+  pauseOffscreen,
   className,
 }: AtmosphereCanvasProps) {
   // compare conditions by value, so inline literals (`camera={{ ... }}`)
@@ -136,7 +139,7 @@ export function AtmosphereCanvas({
   // read the initial values via a ref so they aren't re-read on remount
   const initRef = useRef({
     ...conditions,
-    fps, resolutionScale, animator, lightProbe, cloudScale, rays, adaptiveResolution,
+    fps, resolutionScale, animator, lightProbe, cloudScale, rays, adaptiveResolution, pauseOffscreen,
   });
   // read through a ref, so a new callback each render never rebuilds the sky
   const onLightRef = useRef(onLight);
