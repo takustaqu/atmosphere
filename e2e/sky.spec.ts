@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { build } from 'esbuild';
-import type { Atmosphere, AtmosphereRenderer, resolveConditions } from '../src/index.js';
+import type { Atmosphere, AtmosphereRenderer, Conditions, resolveConditions } from '../src/index.js';
 import type { AtmosphereCanvasProps } from '../examples/react/index.js';
 
 declare global {
@@ -190,6 +190,7 @@ test.describe('AtmosphereCanvas', () => {
     ['tone', { time: 14, weather: 'fair' }, { tone: { exposure: 1.5 } }],
     ['polarizer', { time: 14, weather: 'clear', camera: { yaw: 0, pitch: 0.7 } }, { polarizer: { strength: 1 } }],
     ['celestial', { time: 23, weather: 'clear', camera: { yaw: 0, pitch: 0.5 }, location: { latitude: 65, longitude: 25 } }, { celestial: 'aurora' }],
+    ['lens', { time: 14, weather: 'fair' }, { lens: { vignette: false } }],
   ];
 
   for (const [name, base, prop] of cases) {
@@ -212,6 +213,103 @@ test.describe('AtmosphereCanvas', () => {
       }, { timeout: 30_000 }).toBe(true);
     });
   }
+});
+
+/** what is really on the screen there, every pixel: rgba rows from the top */
+async function pixels(page: Page, selector: string): Promise<{ width: number; height: number; data: number[] }> {
+  const png = (await page.locator(selector).screenshot()).toString('base64');
+  return page.evaluate(async (b64) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${b64}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const x = c.getContext('2d')!;
+    x.drawImage(img, 0, 0);
+    return { width: c.width, height: c.height, data: Array.from(x.getImageData(0, 0, c.width, c.height).data) };
+  }, png);
+}
+
+type Pixels = Awaited<ReturnType<typeof pixels>>;
+
+/** how many pixels are near white, and the mean level of those `from`..`to` px from a point */
+function aroundSun(p: Pixels, x: number, y: number, from: number, to: number) {
+  let white = 0, sum = 0, n = 0;
+  for (let j = 0; j < p.height; j++) for (let i = 0; i < p.width; i++) {
+    const k = (j * p.width + i) * 4, d = p.data;
+    if (Math.min(d[k], d[k + 1], d[k + 2]) >= 250) white++;
+    const r = Math.hypot(i - x, j - y);
+    if (r >= from && r <= to) { sum += (d[k] + d[k + 1] + d[k + 2]) / 3; n++; }
+  }
+  return { white, ring: sum / Math.max(1, n) };
+}
+
+/** how many pixels of two pictures differ by more than a few levels */
+function changed(a: Pixels, b: Pixels): number {
+  let n = 0;
+  for (let k = 0; k < a.data.length; k += 4) {
+    if (Math.max(Math.abs(a.data[k] - b.data[k]), Math.abs(a.data[k + 1] - b.data[k + 1]), Math.abs(a.data[k + 2] - b.data[k + 2])) > 4) n++;
+  }
+  return n;
+}
+
+test.describe('the lens and the sun', () => {
+  // a still noon sky looking just off the sun, the canvas drawn at 480×300
+  async function sunInShot(page: Page): Promise<{ x: number; y: number }> {
+    await open(page, 'reduce');
+    return page.evaluate(async () => {
+      const canvas = document.querySelector('canvas')!;
+      canvas.style.cssText = 'width:480px;height:300px';
+      const s = window.resolveConditions({ time: 12, weather: 'clear' });
+      const camera = { yaw: s.sunAzimuth + 0.12, pitch: s.sunElevation - 0.08, fov: 1.05 };
+      window.sky = new window.Atmosphere(canvas, { time: 12, weather: 'clear', camera, resolutionScale: 1 });
+      await window.sky.whenSettled();
+      const { x, y } = window.sky.light.sun.screen;
+      return { x: x * 480, y: y * 300 };
+    });
+  }
+
+  /** the still frame once these conditions are on it */
+  async function under(page: Page, c: Conditions): Promise<Pixels> {
+    await page.evaluate(async (c) => { window.sky.set(c); await window.sky.whenSettled(); }, c);
+    await settled(page, 'canvas');
+    return pixels(page, 'canvas');
+  }
+
+  test('switches the flare and the vignette off on their own', async ({ page }) => {
+    await sunInShot(page);
+    const base = await under(page, {});
+    const noFlare = await under(page, { lens: { flare: false } });
+    const noVignette = await under(page, { lens: { flare: true, vignette: false } });
+    const back = await under(page, { lens: { vignette: true } });
+    const [flare, vignette, again] = [changed(base, noFlare), changed(base, noVignette), changed(base, back)];
+    console.log(`pixels changed: flare off ${flare}, vignette off ${vignette}, both back on ${again} (of ${base.data.length / 4})`);
+    expect(flare).toBeGreaterThan(300);
+    expect(vignette).toBeGreaterThan(5000);
+    expect(again).toBeLessThan(50);
+    // the vignette darkens the corners: without it they are brighter
+    const corner = (p: Pixels) => p.data[0] + p.data[1] + p.data[2];
+    expect(corner(noVignette)).toBeGreaterThan(corner(base) + 6);
+  });
+
+  test('draws the sun smaller, and without its glare', async ({ page }) => {
+    const { x, y } = await sunInShot(page);
+    const at = (p: Pixels) => aroundSun(p, x, y, 25, 80);
+    const base = at(await under(page, {}));
+    const small = at(await under(page, { sun: { disc: 0.53 } }));
+    const bare = at(await under(page, { sun: { disc: 0.53, glare: 0 } }));
+    // (a set() replaces the whole of the sun's settings: the disc goes back to its default)
+    const glareless = at(await under(page, { sun: { glare: 0 } }));
+    console.log(`near-white px / mean level 25-80 px out: default ${base.white} / ${base.ring.toFixed(1)}, `
+      + `disc 0.53 ${small.white} / ${small.ring.toFixed(1)}, disc 0.53 glare 0 ${bare.white} / ${bare.ring.toFixed(1)}, `
+      + `glare 0 ${glareless.white} / ${glareless.ring.toFixed(1)}`);
+    expect(base.white).toBeGreaterThan(400);
+    expect(small.white).toBeLessThan(base.white / 10);
+    expect(small.white).toBeGreaterThan(0);
+    expect(glareless.ring).toBeLessThan(base.ring - 10);
+    expect(bare.ring).toBeLessThan(small.ring - 10);
+  });
 });
 
 test.describe('settling', () => {
