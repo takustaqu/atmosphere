@@ -8,7 +8,7 @@
 // towers are drawn (cumulonimbus). Given alongside either setting, the
 // setting given wins.
 
-import { type CumulonimbusMode } from './renderer.js';
+import { type CumulonimbusMode } from './features.js';
 
 export type QualityPreset = 'high' | 'balanced' | 'low';
 

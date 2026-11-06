@@ -5,11 +5,11 @@
 // No DOM/framework dependency. React bindings are the sample in examples/.
 
 export { Atmosphere, type AtmosphereOptions, type LightProbeOptions } from './atmosphere.js';
+export { AtmosphereRenderer, type RendererOptions, type ProbeOptions, type GpuTime } from './renderer.js';
 export {
-  AtmosphereRenderer, FEATURE, ALL_FEATURES, featureKey, featureKeys,
-  CB_AUTO_BAND, cbVolumetricShare,
-  type RendererOptions, type ProbeOptions, type GpuTime, type CumulonimbusMode,
-} from './renderer.js';
+  FEATURE, ALL_FEATURES, featureKey, featureKeys,
+  CB_AUTO_BAND, cbVolumetricShare, type CumulonimbusMode,
+} from './features.js';
 export { parhelionAzimuth, parheliaPlates } from './parhelia.js';
 export {
   QUALITY_IDS, QUALITY_PRESETS, resolveQuality, qualityOf,

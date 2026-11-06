@@ -13,7 +13,8 @@ import {
   type AtmosphereLight, type LightMeasurement,
 } from './light.js';
 import { ResolutionGovernor } from './governor.js';
-import { AtmosphereRenderer, type CumulonimbusMode, type ProbeOptions } from './renderer.js';
+import { type CumulonimbusMode } from './features.js';
+import { AtmosphereRenderer, type ProbeOptions } from './renderer.js';
 import { type SkyCacheOptions } from './skycache.js';
 import { qualityOf, resolveQuality, QUALITY_PRESETS, type QualityPreset } from './quality.js';
 import {
