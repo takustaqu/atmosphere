@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.11.0 — 2026-11-06
+
 ### Performance
 
 - **The bundle is half the size.** Two thirds of the fragment shader's source
