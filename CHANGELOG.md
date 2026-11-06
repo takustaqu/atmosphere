@@ -23,6 +23,19 @@
   level of 147 to 109. Part of the sky, not the lens, so the sea, a skybox and
   the light probe see the sun as drawn. Both ease, and both are uniforms, with
   no new shader variant; at the defaults the pictures are the same to the pixel.
+- **Knowing when the sky has settled: `settled`, `onSettled`, `whenSettled()`.**
+  `ready` turns true as soon as anything can draw, a stand-in included, so there
+  was no public way to know that a `set()` needing a new shader variant had got
+  it — the moment to bake a cubemap from the sky, or take a screenshot of it.
+  `sky.settled` is false from such a `set()` (or `jump()`) until the variant has
+  linked and a frame has been drawn with it (with no loop running, until it
+  links); `onSettled(true)` fires on each turn to true, and `whenSettled()`
+  resolves `true` then, or at once. Where the sky can never draw, `onSettled(false)`
+  fires along with `onReady(false)` and `whenSettled()` resolves `false`, as it
+  does for a sky disposed while waiting. `AtmosphereRenderer.isSettled(state)`
+  answers the same for a loop of your own. Each frame it costs a look over the
+  variants in hand. A variant that links in the same turn as the first now also
+  fires the renderer's `onLinked`, so a still frame is drawn again with it.
 
 ## 0.11.0 — 2026-11-06
 

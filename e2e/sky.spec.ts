@@ -1,11 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
 import { build } from 'esbuild';
-import type { Atmosphere } from '../src/index.js';
+import type { Atmosphere, AtmosphereRenderer, resolveConditions } from '../src/index.js';
 import type { AtmosphereCanvasProps } from '../examples/react/index.js';
 
 declare global {
   interface Window {
     Atmosphere: typeof Atmosphere;
+    AtmosphereRenderer: typeof AtmosphereRenderer;
+    resolveConditions: typeof resolveConditions;
     renderSky(id: string, props: AtmosphereCanvasProps): void;
     sky: Atmosphere;
   }
@@ -210,4 +212,74 @@ test.describe('AtmosphereCanvas', () => {
       }, { timeout: 30_000 }).toBe(true);
     });
   }
+});
+
+test.describe('settling', () => {
+  test('is said after the start and again after a set() that needs a new variant', async ({ page }) => {
+    await open(page, 'no-preference');
+    const said = () => page.evaluate(() => (window as unknown as { said: boolean[] }).said);
+    await page.evaluate(() => {
+      const w = window as unknown as { said: boolean[] };
+      w.said = [];
+      window.sky = new window.Atmosphere(document.querySelector('canvas')!, {
+        time: 14, weather: 'clear', resolutionScale: 1, onSettled: (ok) => w.said.push(ok),
+      });
+    });
+    await expect.poll(said, { timeout: 30_000 }).toEqual([true]);
+    expect(await page.evaluate(() => window.sky.settled)).toBe(true);
+    await daylightOn(page, 'canvas');
+
+    // the sea is a variant of its own, not linked until asked for
+    expect(await page.evaluate(() => { window.sky.set({ ground: 'sea' }); return window.sky.settled; })).toBe(false);
+    expect(await page.evaluate(() => window.sky.whenSettled())).toBe(true);
+    expect(await said()).toEqual([true, true]);
+
+    // and a set() that needs nothing new says nothing
+    expect(await page.evaluate(() => { window.sky.set({ time: 14.5 }); return window.sky.settled; })).toBe(true);
+    await page.waitForTimeout(500);
+    expect(await said()).toEqual([true, true]);
+  });
+
+  test('on the renderer: at once under compile: sync, and from prepare() to the link under auto', async ({ page }) => {
+    await open(page, 'no-preference');
+    const r = await page.evaluate(async () => {
+      const until = async (f: () => boolean) => {
+        const t0 = performance.now();
+        while (!f() && performance.now() - t0 < 30_000) await new Promise((go) => setTimeout(go, 20));
+        return f();
+      };
+      const fair = window.resolveConditions({ time: 14, weather: 'fair' });
+      const sea = window.resolveConditions({ time: 14, weather: 'fair', ground: 'sea' });
+
+      const sync = new window.AtmosphereRenderer(document.createElement('canvas'), { compile: 'sync' });
+      sync.prepare(fair);
+      const syncFair = sync.isSettled(fair);
+      sync.prepare(sea);
+      const syncSea = sync.isSettled(sea);
+      sync.dispose({ loseContext: true });
+
+      const auto = new window.AtmosphereRenderer(document.createElement('canvas'));
+      auto.prepare(fair);
+      const autoBefore = auto.isSettled(fair);
+      const autoAfter = await until(() => auto.isSettled(fair));
+      auto.prepare(sea);
+      const seaBefore = auto.isSettled(sea);
+      const seaAfter = await until(() => auto.isSettled(sea));
+      auto.dispose({ loseContext: true });
+      return { syncFair, syncSea, autoBefore, autoAfter, seaBefore, seaAfter };
+    });
+    expect(r).toEqual({ syncFair: true, syncSea: true, autoBefore: false, autoAfter: true, seaBefore: false, seaAfter: true });
+  });
+
+  test('says false where there is no WebGL, as onReady does', async ({ page }) => {
+    await open(page, 'no-preference');
+    const r = await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.getContext = (() => null) as typeof canvas.getContext;
+      const ready: boolean[] = [], said: boolean[] = [];
+      const sky = new window.Atmosphere(canvas, { onReady: (ok) => ready.push(ok), onSettled: (ok) => said.push(ok) });
+      return { ready, said, settled: sky.settled, when: await sky.whenSettled() };
+    });
+    expect(r).toEqual({ ready: [false], said: [false], settled: false, when: false });
+  });
 });

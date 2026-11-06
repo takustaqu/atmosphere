@@ -4,8 +4,10 @@ import { Atmosphere } from '../src/atmosphere.js';
 // The Atmosphere's bookkeeping round a renderer that does nothing: what gets
 // drawn when there is no loop to draw it. A canvas here is only its numbers.
 
-const { made, FakeRenderer } = vi.hoisted(() => {
+const { made, FakeRenderer, atStart } = vi.hoisted(() => {
   const made: InstanceType<typeof FakeRenderer>[] = [];
+  // whether a renderer is made with its variant already linked (compile on the spot)
+  const atStart = { linked: false };
   class FakeRenderer {
     available = true;
     ready = false;
@@ -16,6 +18,9 @@ const { made, FakeRenderer } = vi.hoisted(() => {
     render = vi.fn();
     prepare = vi.fn();
     dispose = vi.fn();
+    // what isSettled answers: flipped by the tests as variants start and land
+    linked = atStart.linked;
+    isSettled = vi.fn(() => this.available && this.linked);
     takeGpuTimes = () => [];
     readonly canvas: HTMLCanvasElement;
     readonly opts: { onReady?: (available: boolean) => void; onLinked?: () => void };
@@ -29,7 +34,7 @@ const { made, FakeRenderer } = vi.hoisted(() => {
       this.canvas.height = h;
     }
   }
-  return { made, FakeRenderer };
+  return { made, FakeRenderer, atStart };
 });
 
 vi.mock('../src/renderer.js', async (importOriginal) => ({
@@ -51,6 +56,7 @@ function reduceMotion(matches: boolean) {
 
 beforeEach(() => {
   made.length = 0;
+  atStart.linked = false;
   vi.stubGlobal('requestAnimationFrame', () => 1);
   vi.stubGlobal('cancelAnimationFrame', () => {});
   reduceMotion(false);
@@ -235,5 +241,117 @@ describe('out of view', () => {
     expect(watching).toBe(true);
     sky.dispose();
     expect(watching).toBe(false);
+  });
+});
+
+describe('settling', () => {
+  let tick: (t: number) => void;
+  let now = 0;
+  const frame = () => tick((now += 100));
+
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', (f: (t: number) => void) => { tick = f; return 1; });
+  });
+
+  /** a set() that needs a variant the renderer has not got */
+  const needsNew = (renderer: InstanceType<typeof FakeRenderer>) =>
+    renderer.prepare.mockImplementation(() => { renderer.linked = false; });
+  /** the variant landing */
+  const link = (renderer: InstanceType<typeof FakeRenderer>) => { renderer.linked = true; renderer.opts.onLinked?.(); };
+
+  it('says so once the first variant is in and has been drawn', async () => {
+    const onSettled = vi.fn();
+    const { sky, renderer } = mount({ fps: 60, onSettled });
+    expect(sky.settled).toBe(false);
+    renderer.linked = true;
+    renderer.ready = true;
+    renderer.opts.onReady?.(true);
+    // (the loop draws it on its next tick, and says so then)
+    expect(onSettled).not.toHaveBeenCalled();
+    frame();
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith(true);
+    expect(sky.settled).toBe(true);
+    await expect(sky.whenSettled()).resolves.toBe(true);
+    frame();
+    expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes unsettled on a set() that needs a new variant, and settles again once it is in', async () => {
+    const onSettled = vi.fn();
+    const { sky, renderer } = mount({ fps: 60, onSettled });
+    link(renderer);
+    frame();
+    expect(onSettled).toHaveBeenCalledTimes(1);
+
+    needsNew(renderer);
+    sky.set({ weather: 'rain' });
+    expect(sky.settled).toBe(false);
+    const waiting = sky.whenSettled();
+    frame();
+    frame();
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    link(renderer);
+    frame();
+    expect(onSettled).toHaveBeenCalledTimes(2);
+    expect(onSettled).toHaveBeenLastCalledWith(true);
+    await expect(waiting).resolves.toBe(true);
+  });
+
+  it('says nothing for a set() that needs no new variant', () => {
+    const onSettled = vi.fn();
+    const { sky, renderer } = mount({ fps: 60, onSettled });
+    link(renderer);
+    frame();
+    sky.set({ time: 15 });
+    frame();
+    expect(sky.settled).toBe(true);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles as soon as the variant lands with no loop to draw it', () => {
+    const onSettled = vi.fn();
+    const { sky, renderer } = mount({ autoStart: false, onSettled });
+    needsNew(renderer);
+    sky.set({ weather: 'rain' });
+    link(renderer);
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith(true);
+    expect(renderer.render).not.toHaveBeenCalled();
+  });
+
+  it('draws a still frame again before it says so, under reduced motion', () => {
+    reduceMotion(true);
+    const onSettled = vi.fn(() => expect(renderer.render).toHaveBeenCalledTimes(2));
+    const { sky, renderer } = mount({ onSettled });
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+    link(renderer);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(sky.settled).toBe(true);
+  });
+
+  it('is settled from the start where the shader compiles on the spot', async () => {
+    const onSettled = vi.fn();
+    atStart.linked = true;
+    const { sky } = mount({ autoStart: false, onSettled });
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith(true);
+    await expect(sky.whenSettled()).resolves.toBe(true);
+  });
+
+  it('says false, and lets the waiters go, when the sky will never draw', async () => {
+    const onSettled = vi.fn();
+    const { sky, renderer } = mount({ fps: 60, onSettled });
+    const waiting = sky.whenSettled();
+    renderer.available = false;
+    renderer.opts.onReady?.(false);
+    expect(onSettled).toHaveBeenCalledExactlyOnceWith(false);
+    await expect(waiting).resolves.toBe(false);
+    await expect(sky.whenSettled()).resolves.toBe(false);
+    expect(sky.settled).toBe(false);
+  });
+
+  it('lets the waiters go when disposed first', async () => {
+    const { sky } = mount({ fps: 60 });
+    const waiting = sky.whenSettled();
+    sky.dispose();
+    await expect(waiting).resolves.toBe(false);
   });
 });

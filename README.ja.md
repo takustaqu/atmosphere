@@ -745,7 +745,7 @@ const sky = new Atmosphere(canvas, { pauseOffscreen: false });
 
 | export | 役割 |
 |:---|:---|
-| `Atmosphere` | canvas + レンダラ + 描画ループ。`set()` / `jump()` / `start()` / `stop()` / `dispose()` |
+| `Atmosphere` | canvas + レンダラ + 描画ループ。`set()` / `jump()` / `start()` / `stop()` / `dispose()` / `whenSettled()` |
 | `AtmosphereRenderer` | 1回の `render()` が1枚。自前のループやオフスクリーン描画向け |
 | `StateAnimator` | 目標への追従と、風・形状進化の積分。DOM非依存 |
 | `resolveConditions(c)` | `Conditions` → `AtmosphereState` |
@@ -823,6 +823,28 @@ ANGLE の Direct3D バックエンド経由で動き、そのコンパイラは�
 消えることはなく、機能は求めてから一瞬遅れて現れます。`set()` はその遷移に先立って
 コンパイルを始めます。`variants: false` を渡すと従来どおり一本のプログラムに全部を
 組み込みます。`examples/bench/` は両者を突き合わせて計測します。
+
+`ready` は何かが描けるようになった時点で — 代役の変種でも — true になります。空が
+求められた機能をすべて備えた自前の変種で描かれているかを知りたいとき — キューブマップを
+焼く前や、スクリーンショットを撮る前 — は `settled`・`onSettled`・`whenSettled()` を
+使います。
+
+```ts
+const sky = new Atmosphere(canvas, { weather: 'fair', onSettled: (ok) => ok && bake() });
+sky.set({ ground: 'sea' });            // 海の変種：リンクするまで sky.settled は false
+if (await sky.whenSettled()) bake();   // リンクして描かれたら true
+```
+
+`settled` は、まだリンクしていない変種を要する `set()` や `jump()` で false になり、
+その変種がリンクしてそれで1フレーム描かれると true に戻ります（ループが回っていない
+とき — 静止画や `autoStart: false` — はリンクした時点で）。`onSettled` は true に
+戻るたびに呼ばれ、新しい変種を要しない `set()` では何も起きません。空がけっして
+描けない場合 — WebGL がない、シェーダーがコンパイルできない — は `onReady(false)` と
+一緒に `onSettled(false)` が呼ばれ、`whenSettled()` は `false` で解決します（待って
+いる間に dispose された場合も同じ）。フレームごとのコストは手元の変種を見渡すだけで、
+ほぼありません。`AtmosphereRenderer` を自分で回す場合は、`renderer.prepare(state)` の
+あとに `renderer.isSettled(state)` で同じことがわかります。`compile: 'sync'` では
+常に true です。
 
 ## 多言語対応
 

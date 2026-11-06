@@ -836,7 +836,7 @@ const sky = new Atmosphere(canvas, { pauseOffscreen: false });
 
 | export | role |
 |:---|:---|
-| `Atmosphere` | canvas + renderer + render loop. `set()` / `jump()` / `start()` / `stop()` / `dispose()` |
+| `Atmosphere` | canvas + renderer + render loop. `set()` / `jump()` / `start()` / `stop()` / `dispose()` / `whenSettled()` |
 | `AtmosphereRenderer` | one `render()` call draws one frame. For custom loops or offscreen rendering |
 | `StateAnimator` | following a target, and integrating wind / shape evolution. No DOM dependency |
 | `resolveConditions(c)` | `Conditions` → `AtmosphereState` |
@@ -922,6 +922,28 @@ variant, so the feature appears a fraction of a second after it is asked for
 rather than the picture blanking. `set()` starts that compile ahead of the
 transition. Pass `variants: false` to compile everything into one program
 instead; `examples/bench/` measures the two against each other.
+
+`ready` turns true as soon as anything can draw, a stand-in included. To know
+when the sky is drawn by its own variants, with every feature it was asked for
+— before baking a cubemap from it, or taking a screenshot — there is
+`settled`, `onSettled` and `whenSettled()`:
+
+```ts
+const sky = new Atmosphere(canvas, { weather: 'fair', onSettled: (ok) => ok && bake() });
+sky.set({ ground: 'sea' });            // the sea's variant: sky.settled is false until it links
+if (await sky.whenSettled()) bake();   // true once it has linked and been drawn
+```
+
+`settled` goes false on a `set()` or `jump()` that needs a variant not yet
+linked, and true again once it has linked and a frame has been drawn with it
+(with no loop running — a still frame, `autoStart: false` — as soon as it
+links). `onSettled` fires on each turn to true; a `set()` that needs nothing new
+fires nothing. Where the sky can never draw — no WebGL, or a shader that would
+not compile — `onSettled(false)` fires along with `onReady(false)`, and
+`whenSettled()` resolves `false`, as it does for a sky disposed while waiting.
+It costs a frame nothing to speak of: a look over the variants in hand. Driving
+`AtmosphereRenderer` yourself, `renderer.isSettled(state)` answers the same
+after `renderer.prepare(state)`; under `compile: 'sync'` it is always true.
 
 ## Internationalization
 

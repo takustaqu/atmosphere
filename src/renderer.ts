@@ -184,9 +184,11 @@ export interface RendererOptions {
    */
   onReady?: (available: boolean) => void;
   /**
-   * A variant has finished linking in the background, after {@link RendererOptions.onReady}.
-   * A frame drawn meanwhile went without it, from a stand-in: a caller that
-   * isn't drawing again anyway (a still frame) should draw this one again.
+   * A variant has finished linking in the background (or been refused by
+   * the driver), after {@link RendererOptions.onReady}. A frame drawn
+   * meanwhile went without it, from a stand-in: a caller that isn't drawing
+   * again anyway (a still frame) should draw this one again. It is also when
+   * {@link AtmosphereRenderer.isSettled} may have come true.
    */
   onLinked?: () => void;
   /**
@@ -450,6 +452,33 @@ export class AtmosphereRenderer {
   }
 
   /**
+   * true when this state is drawn by its own programs: {@link ready}, and
+   * none of the variants it needs (as {@link prepare} starts them: its frame's,
+   * both towers' inside the 'auto' crossfade, the parhelia's, the sky
+   * cache's) is still linking. Until then a frame of it is drawn by a stand-in,
+   * without whatever feature the missing variant carries, and a bake of it
+   * would be too. Call prepare(s) first, so that what it needs is linking.
+   *
+   * Cheap enough for every frame: with nothing linking it is a look over the
+   * variants in hand, and the state's own keys are only worked out while
+   * something is. A variant the driver refused counts as done (the frame goes
+   * without its feature for good), and so does one never asked for. Always
+   * true while {@link ready} under `compile: 'sync'`, where nothing is ever
+   * left linking.
+   */
+  isSettled(s: AtmosphereState): boolean {
+    if (!this.gl || this.lost || !this.ready) return false;
+    let linking = false;
+    for (const v of this.variants.values()) if (!v.linked && !v.failed) { linking = true; break; }
+    if (!linking) return true;
+    for (const k of this.programsFor(s)) {
+      const v = this.variants.get(k);
+      if (v && !v.linked && !v.failed) return false;
+    }
+    return true;
+  }
+
+  /**
    * The space actually being rendered into — `'display-p3'` only where the
    * browser supports it, whatever was requested.
    *
@@ -653,20 +682,27 @@ export class AtmosphereRenderer {
    */
   prepare(s: AtmosphereState): void {
     if (!this.gl || this.lost) return;
+    if (this.current === null) this.wanted = this.keysFor(s)[0].key;
+    for (const key of this.programsFor(s)) this.ensure(key);
+  }
+
+  /** the variants a state is drawn with, in the order prepare() starts them */
+  private programsFor(s: AtmosphereState): number[] {
     const ks = this.keysFor(s);
-    if (this.current === null) this.wanted = ks[0].key;
+    const out: number[] = [];
     // (a sky with parhelia is drawn without them and then again with them on
     // top: see drawParhelia. Its plain frame first, for the first frame to ask for)
-    if (ks.length === 1 && this.parheliaApart(s)) this.ensure(ks[0].key & ~FEATURE.PARHELIA);
-    for (const k of ks) this.ensure(k.key);
+    if (ks.length === 1 && this.parheliaApart(s)) out.push(ks[0].key & ~FEATURE.PARHELIA);
+    for (const k of ks) out.push(k.key);
     // and the sky cache's two programs, behind them: until both link, the
     // frames are drawn directly
     if (this.sky && this.skySupport !== false && ks.length === 1 && hasCloudStack(s.clouds)) {
       const key = ks[0].key & ~SPLIT_KEY;
-      this.ensure((key & ~FEATURE.PARHELIA) | CACHE_BUILD);
-      if (this.parheliaApart(s)) this.ensure((key & ~FEATURE.PARHELIA) | CACHE_COMP);
-      this.ensure(key | CACHE_COMP);
+      out.push((key & ~FEATURE.PARHELIA) | CACHE_BUILD);
+      if (this.parheliaApart(s)) out.push((key & ~FEATURE.PARHELIA) | CACHE_COMP);
+      out.push(key | CACHE_COMP);
     }
+    return out;
   }
 
   /** the variant for a key, compiling it if this is the first ask */
@@ -778,17 +814,18 @@ export class AtmosphereRenderer {
       const gl = this.gl, parallel = this.parallel;
       if (!gl || !parallel) return;
       let pending = false, finished = false;
-      const reported = this.reported;
       for (const v of this.variants.values()) {
         if (v.linked || v.failed) continue;
         if (gl.getProgramParameter(v.program, parallel.COMPLETION_STATUS_KHR)) {
+          const first = !this.reported;
           this.finishLink(v);
-          finished = true;
+          // (the first one to be drawn is onReady's to tell; any other that
+          // lands in the same turn, before or after it, is onLinked's)
+          if (!(first && this.reported)) finished = true;
         } else pending = true;
       }
       if (pending) this.poll = setTimeout(step, POLL_MS);
-      // (the first one to be drawn is onReady's to tell)
-      if (finished && reported && this.gl) this.opts.onLinked?.();
+      if (finished && this.reported && this.gl) this.opts.onLinked?.();
     };
     // a turn of the event loop before the first ask, so the caller gets to
     // finish constructing and paint its fallback first

@@ -67,6 +67,21 @@ export interface AtmosphereOptions extends Conditions {
    */
   onReady?: (available: boolean) => void;
   /**
+   * Called each time the sky settles: every shader variant its target state
+   * needs has linked and is being drawn — after the first compile, and again
+   * after each `set()` (or `jump()`) that needed a new variant, once that one
+   * is in. Until then the frames are drawn by a stand-in, without the feature
+   * the new variant carries. The moment to bake a cubemap from the sky, or to
+   * take a screenshot of it — see {@link Atmosphere.settled} and
+   * {@link Atmosphere.whenSettled}. With the loop running it fires from the
+   * first frame drawn with the new variant; with none (a still frame,
+   * `autoStart: false`), as soon as it links.
+   *
+   * `false`, once, alongside `onReady(false)`: the sky will never draw. A
+   * `set()` that needs no new variant fires nothing.
+   */
+  onSettled?: (available: boolean) => void;
+  /**
    * pass false to keep animating even under `prefers-reduced-motion: reduce`.
    *
    * On by default: a full-screen sky in constant motion is hard on users with
@@ -194,6 +209,9 @@ export class Atmosphere {
   // never reads back a size it set itself and shrinks again
   private readonly fallbackSize: [number, number];
   private lastProbe = -Infinity;
+  // whether onSettled last said settled, and who is waiting for it to
+  private settledSaid = false;
+  private settledWaiters: ((settled: boolean) => void)[] = [];
   // The shader compiles asynchronously, so the frames the caller asked for
   // before it was ready drew nothing. A running loop picks itself up on its
   // next tick; a still frame — reduced motion, or a jump() before start() —
@@ -201,10 +219,15 @@ export class Atmosphere {
   private readonly onRendererReady = (available: boolean) => {
     if (available) this.redrawStill();
     this.opts.onReady?.(available);
+    if (available) this.checkSettled();
+    else this.unsettle();
   };
   // and a still frame drawn while the variant it needed was still linking went
   // without that variant's feature
-  private readonly onVariantLinked = () => this.redrawStill();
+  private readonly onVariantLinked = () => {
+    this.redrawStill();
+    this.checkSettled();
+  };
   private readonly onMotionChange = () => {
     if (!this.wantRunning) return;
     if (this.reducedMotion) {
@@ -282,6 +305,8 @@ export class Atmosphere {
       this.viewObserver.observe(canvas);
     }
     if (options.autoStart !== false) this.start();
+    // (under compile on the spot, everything is linked by now)
+    this.checkSettled();
   }
 
   /** true when the environment asks for reduced motion (and the option honors it) */
@@ -295,6 +320,62 @@ export class Atmosphere {
    * canvas. Starts false; {@link AtmosphereOptions.onReady} fires when it flips.
    */
   get ready(): boolean { return this.renderer.ready; }
+
+  /**
+   * true when the sky is drawn by its own shader variants: every one the
+   * target state needs has linked, so the next frame — or a cubemap baked
+   * from this sky — carries all of its features rather than a stand-in's.
+   * Goes false on a `set()` that needs a new variant, and true again once it
+   * has linked and been drawn. Always false where {@link available} is.
+   * {@link AtmosphereOptions.onSettled} fires as it turns true.
+   */
+  get settled(): boolean { return this.settledSaid && this.renderer.isSettled(this.target); }
+
+  /**
+   * Resolves once the sky is {@link settled} — at once if it is now — with
+   * `true`; or with `false` if it never will be: WebGL is unavailable, the
+   * shader failed to compile, or the Atmosphere was disposed first.
+   *
+   * ```ts
+   * sky.set({ weather: 'storm' });
+   * if (await sky.whenSettled()) bakeCubemap();
+   * ```
+   */
+  whenSettled(): Promise<boolean> {
+    if (this.settled) return Promise.resolve(true);
+    if (!this.available) return Promise.resolve(false);
+    return new Promise((resolve) => this.settledWaiters.push(resolve));
+  }
+
+  /**
+   * See whether the sky has settled or come unsettled, and tell whoever is
+   * waiting when it settles. A link that lands with the loop running is
+   * only on the canvas at the next tick, so it is said then, from the
+   * frame; one with no loop to draw it is said now
+   */
+  private checkSettled(fromFrame = false): void {
+    // (onReady can fire inside the renderer's constructor, before it is ours)
+    if (!this.renderer) return;
+    const now = this.renderer.isSettled(this.target);
+    if (now === this.settledSaid || (now && !fromFrame && this.raf)) return;
+    this.settledSaid = now;
+    if (!now) return;
+    this.opts.onSettled?.(true);
+    this.resolveSettled(true);
+  }
+
+  /** the sky will never settle: say so, once, and let go of the waiters */
+  private unsettle(): void {
+    this.settledSaid = false;
+    this.opts.onSettled?.(false);
+    this.resolveSettled(false);
+  }
+
+  private resolveSettled(settled: boolean): void {
+    const waiters = this.settledWaiters;
+    this.settledWaiters = [];
+    for (const w of waiters) w(settled);
+  }
 
   /** the space actually being rendered into (`'display-p3'` only where supported) */
   get colorSpace(): PredefinedColorSpace { return this.renderer.colorSpace; }
@@ -325,6 +406,7 @@ export class Atmosphere {
   set cumulonimbus(v: CumulonimbusMode) {
     this.renderer.cumulonimbus = v;
     this.renderer.prepare(this.target);
+    this.checkSettled();
     if (this.wantRunning && !this.raf) this.draw(performance.now());
   }
 
@@ -478,6 +560,8 @@ export class Atmosphere {
     // a feature the new target brings in gets its variant compiling now,
     // ahead of the transition that will cross its threshold
     this.renderer.prepare(this.target);
+    // (and the sky is unsettled from now until it links)
+    this.checkSettled();
   }
 
   /** recompute internal resolution from the canvas's displayed size */
@@ -560,7 +644,7 @@ export class Atmosphere {
     // Out of view, only a running loop's frames go undrawn: a still frame has no
     // next tick to come back on. (A canvas outside the document never intersects
     // anything, and whoever made it means to read it)
-    if (this.raf && !this.inView && this.canvas.isConnected) return;
+    if (this.raf && !this.inView && this.canvas.isConnected) { this.checkSettled(true); return; }
     this.renderer.render(
       (t - this.startedAt) / 1000,
       this.animator.current,
@@ -578,6 +662,8 @@ export class Atmosphere {
         if (this.governor.update(times, w * h, t) !== before) this.applySize();
       }
     }
+    // (a look over the variants in hand while nothing is linking)
+    this.checkSettled(true);
   }
 
   /**
@@ -620,5 +706,7 @@ export class Atmosphere {
     this.motionQuery?.removeEventListener('change', this.onMotionChange);
     this.motionQuery = null;
     this.renderer.dispose(options);
+    this.settledSaid = false;
+    this.resolveSettled(false);
   }
 }
