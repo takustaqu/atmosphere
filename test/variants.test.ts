@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys, parhelionAzimuth, parheliaAmounts, parheliaPlates, parheliaRects, parheliaShape } from '../src/renderer.js';
+import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys } from '../src/renderer.js';
+import { parhelionAzimuth, parheliaAmounts, parheliaPlates, parheliaRects, parheliaShape } from '../src/parhelia.js';
 import { stackSignature } from '../src/skycache.js';
 import { resolveWeather } from '../src/weather.js';
 import { resolveConditions } from '../src/state.js';
