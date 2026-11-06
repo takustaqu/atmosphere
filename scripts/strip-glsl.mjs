@@ -10,6 +10,8 @@
 // a driver's error, or in a stack trace through the source map, is still the
 // source's. It costs a byte a line, and next to nothing once compressed.
 import { readFile } from 'node:fs/promises';
+import { relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** the body of a shader's template literal, `${...}` left as it stands */
 export function stripGlsl(src) {
@@ -39,28 +41,48 @@ export function stripGlsl(src) {
   return out.replace(/^[ \t]+|[ \t]+$/gm, '');
 }
 
-const SHADERS = /^(const (?:VERT|FRAG|MORPH_FRAG) = `)([\s\S]*?)(^`;)/gm;
+/**
+ * Every shader in src/, by the file it is in (its path from src/). A shader is
+ * a template literal opened at the end of a `const NAME = ` line and closed by
+ * a line of its own; one turning up in any other file, or under another name,
+ * or one of these going missing, has to fail loudly rather than ship unstripped
+ */
+export const SHADERS = {
+  'shaders/vert.ts': ['VERT'],
+  'shaders/sky.ts': ['FRAG'],
+  'shaders/morph.ts': ['MORPH_FRAG'],
+};
 
-/** renderer.ts with its three shaders stripped. A fourth, or one renamed, has to fail loudly */
-export function stripRenderer(source) {
-  let found = 0;
-  const out = source.replace(SHADERS, (_, open, body, close) => {
-    found++;
+const SHADER = /^((?:export )?const (\w+) = `)$([\s\S]*?)^(`;)/gm;
+const OPENED = /^(?:export )?(?:const|let|var) \w+ = `/gm;
+
+/** a file of src/ with its shaders stripped: exactly the ones SHADERS lists for it, and none in any other */
+export function stripSource(file, source) {
+  const want = SHADERS[file] ?? [];
+  const found = [];
+  const out = source.replace(SHADER, (_, open, name, body, close) => {
+    found.push(name);
     return open + stripGlsl(body) + close;
   });
-  if (found !== 3 || /^const \w+ = `$/gm.test(out.replace(SHADERS, ''))) {
-    throw new Error(`strip-glsl: expected renderer.ts's three shaders, found ${found}`);
+  if (found.join() !== want.join() || (source.match(OPENED)?.length ?? 0) !== found.length) {
+    throw new Error(`strip-glsl: expected ${want.join(', ') || 'no shader'} in src/${file}, found ${found.join(', ') || 'none'}`);
   }
   return out;
 }
 
-/** the esbuild plugin */
+const SRC = fileURLToPath(new URL('../src/', import.meta.url));
+
+/** the esbuild plugin: every file of src/ goes through stripSource */
 export const stripShaders = {
   name: 'strip-shaders',
   setup(b) {
-    b.onLoad({ filter: /[\\/]src[\\/]renderer\.ts$/ }, async (args) => ({
-      contents: stripRenderer(await readFile(args.path, 'utf8')),
-      loader: 'ts',
-    }));
+    b.onLoad({ filter: /\.tsx?$/ }, async (args) => {
+      if (!args.path.startsWith(SRC)) return undefined;
+      const file = relative(SRC, args.path).split(sep).join('/');
+      return {
+        contents: stripSource(file, await readFile(args.path, 'utf8')),
+        loader: args.path.endsWith('x') ? 'tsx' : 'ts',
+      };
+    });
   },
 };
