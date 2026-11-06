@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.12.0 — 2026-11-07
+
 ### Added
 
 - **The lens flare and the vignette, each switchable.** `lens` takes `flare`
