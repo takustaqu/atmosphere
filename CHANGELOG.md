@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- **The lens flare and the vignette, each switchable.** `lens` takes `flare`
+  and `vignette` beside `droplets`, each a 0..1 strength or a boolean, both 1 by
+  default: `lens: { flare: false, vignette: false }` for an app that draws its
+  own flare and glare over the sky, or for a skybox from `renderCubeFaces` with
+  nothing of the camera in it. They ease as the droplets do, and at 0 the flare
+  is not drawn at all. Uniforms only, no new shader variant; at the defaults the
+  pictures are the same to the pixel.
+
 ## 0.11.0 — 2026-11-06
 
 ### Performance

@@ -95,7 +95,7 @@ uniform vec4  u_pol;       // polarizer: strength, angle, saturation, stopLoss
 uniform vec4  u_sky;       // celestial: bortle, milkyWay, meteors/hr, hasRadiant
 uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
 uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the lens
-uniform float u_lensFx;    // 1 = draw the flare and vignette, 0 = the bare sky (environment probes)
+uniform vec2  u_lensFx;    // 0..1 the flare's strength, the vignette's (both 0 for the bare sky of the environment probes)
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
 uniform vec3 u_snowDrift;  // how far the snow has fallen, integrated on the CPU (see snowFallDir)
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
@@ -7429,14 +7429,14 @@ void main() {
   }
 
   // ── Lens flare (only while the sun is on screen. An artifact inside the lens, so screen space) ──
-  if (sunVis * u_lensFx > 0.001) {
+  if (sunVis * u_lensFx.x > 0.001) {
     vec3 proj = projectDir(sunDir, u_cam.x, u_cam.y, u_cam.z, aspect);
     if (proj.z > 0.0) {
       vec2 sunPos = proj.xy * 0.5 + 0.5;
       vec2 axis = vec2(0.5, 0.5) - sunPos;   // the optical axis from the sun to screen center
       // weaken the further it strays off-screen
       float onScreen = smoothstep(1.6, 0.9, max(abs(proj.x), abs(proj.y)));
-      float fl = sunVis * smoothstep(0.02, 0.18, sunEl) * onScreen;
+      float fl = sunVis * smoothstep(0.02, 0.18, sunEl) * onScreen * u_lensFx.x;
       vec3 flare = vec3(0.0);
       // ghosts lined up along the optical axis (each a different color, from chromatic aberration)
       flare += L(vec3(1.0, 0.75, 0.45)) * 0.055 * ghost(p, sunPos + axis * 0.45, 0.030, aspect);
@@ -7466,7 +7466,7 @@ void main() {
   // transmission and belongs in linear light; a vignette is a chosen falloff that
   // was dialled in on encoded values, and multiplying linear light by the same
   // factor lands visibly weaker (0.5 goes to 0.48 instead of 0.45).
-  sky = L(disp * (1.0 - 0.22 * u_lensFx * length(p - vec2(0.5, 0.45))));
+  sky = L(disp * (1.0 - 0.22 * u_lensFx.y * length(p - vec2(0.5, 0.45))));
 
   // ── Linear light → display ──
   // Everything above this line is linear scene light and may run far past 1.0

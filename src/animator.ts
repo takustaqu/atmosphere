@@ -160,6 +160,9 @@ export class StateAnimator {
     // switching the droplets off lets the ones already on the glass dry away
     // rather than vanish between two frames
     c.lens.droplets += (target.lens.droplets - c.lens.droplets) * k;
+    // the flare and the vignette fade rather than snap, as the rest does
+    c.lens.flare += (target.lens.flare - c.lens.flare) * k;
+    c.lens.vignette += (target.lens.vignette - c.lens.vignette) * k;
     // and the rain or snow thins out rather than stopping dead
     c.particles.precipitation += (target.particles.precipitation - c.particles.precipitation) * k;
     c.particles.contrails += (target.particles.contrails - c.particles.contrails) * k;

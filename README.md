@@ -73,6 +73,7 @@ be an easy way to get a sky that keeps changing procedurally.
   rainbow's reflection (see [Ground](#ground--the-sea))
 - **Visibility** — haze/mist/fog. Thin haze only crushes the horizon; thick haze covers the whole sky
 - **Lens flare** — ghosts along the optical axis, chromatic aberration, anamorphic-style streaks
+  (switchable, as is the vignette — see [Lens](#lens))
 - **Color filters** — sepia, monochrome, cyanotype, and more
 - **Photographic controls** — a tone curve over the linear-light composite,
   and a circular-polarizer emulation
@@ -254,6 +255,10 @@ uploading as cube-map faces. It creates and disposes a throwaway WebGL context
 per call, so it's for baking on a scene change, not for calling every frame
 (it throws when WebGL isn't available).
 
+Each face is drawn as a frame is, lens and all: give the conditions
+`lens: { droplets: false, flare: false, vignette: false }` for a skybox with
+nothing of the camera in it.
+
 ## The night sky — light pollution, the Milky Way, meteors
 
 The counterpart to `weather`. Weather is what the air is doing; `celestial` is
@@ -406,24 +411,32 @@ Presets: `none` `light` `strong` `crossed`.
 
 ## Lens
 
-What happens on the glass rather than in the sky. For now that is the raindrops
-that collect on the lens while it rains — they bead up, bend the sky behind
-them, and dry off again. They are on by default; a sky behind a UI often wants
-the rain without the water on an imaginary camera.
+What happens on the glass rather than in the sky: the raindrops that collect
+on the lens while it rains — they bead up, bend the sky behind them, and dry off
+again — the flare the sun throws across the frame, and the vignette. All three
+are on by default. A sky behind a UI often wants the rain without the water on
+an imaginary camera; an app that draws its own flare and glare over the sky
+wants neither of the lens's own.
 
 ```ts
-sky.set({ lens: { droplets: false } });   // rain through clean glass
-sky.set({ lens: { droplets: 0.4 } });     // fainter droplets
-sky.set({ lens: { droplets: true } });    // back to the default
+sky.set({ lens: { droplets: false } });                 // rain through clean glass
+sky.set({ lens: { droplets: 0.4 } });                   // fainter droplets
+sky.set({ lens: { flare: false, vignette: false } });   // no flare, no vignette
+sky.set({ lens: { droplets: true } });                  // back to the default
 ```
 
 | field | what it does |
 |:---|:---|
 | `droplets` | 0..1 (or a boolean) ceiling on the lens droplets. They still follow the rain, so a dry sky shows none at any value. Defaults to 1 |
+| `flare` | 0..1 (or a boolean) strength of the lens flare: the ghosts along the optical axis, the faint ring and the horizontal streak while the sun is in shot. Defaults to 1 |
+| `vignette` | 0..1 (or a boolean) strength of the darkening toward the corners. Defaults to 1 |
 
-Changing it eases over the same few seconds as everything else, so switching
-them off lets the drops on the glass dry away instead of vanishing. At 0 the
-droplet pass is skipped outright, not just drawn invisibly.
+Changing them eases over the same few seconds as everything else, so switching
+the droplets off lets the drops on the glass dry away instead of vanishing. At 0
+the droplet pass and the flare are skipped outright, not just drawn invisibly.
+The environment the light probe measures leaves the flare and the vignette out
+whatever these say; `renderCubeFaces` draws its faces as a frame, so pass it
+`lens: { flare: false, vignette: false }` for a skybox without them.
 
 ## Falling rain and snow
 

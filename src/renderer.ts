@@ -1184,7 +1184,7 @@ export class AtmosphereRenderer {
     gl.uniform4f(u.u_frame, 0, 0, w, h);
     gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
     gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.uniform1f(u.u_lensFx, 1);
+    gl.uniform2f(u.u_lensFx, s.lens.flare, s.lens.vignette);
     if (rects) this.drawRects(gl, rects);
     else gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
@@ -1526,7 +1526,7 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_cloudMode, mode);
     gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
     gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.uniform1f(u.u_lensFx, 1);
+    gl.uniform2f(u.u_lensFx, s.lens.flare, s.lens.vignette);
     // (only the frame itself is laid over the last: the cloud stack's own
     // pass above replaces its target's contents, as it always does)
     if (share < 1) this.blendOver(gl);
@@ -1712,7 +1712,7 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_aspect, this.canvas.width / Math.max(1, this.canvas.height));
     gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
     gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.uniform1f(u.u_lensFx, 1);
+    gl.uniform2f(u.u_lensFx, s.lens.flare, s.lens.vignette);
     // one pass: at a few dozen pixels there is nothing to save by splitting
     gl.uniform1f(u.u_cloudMode, 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -1720,7 +1720,7 @@ export class AtmosphereRenderer {
     if (layout.environment) {
       gl.uniform1f(u.u_aspect, 1);
       gl.uniform1f(u.u_lensDrops, 0);
-      gl.uniform1f(u.u_lensFx, 0);
+      gl.uniform2f(u.u_lensFx, 0, 0);
       CUBE_FACE_CAMERAS.forEach((face, i) => {
         gl.viewport(i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);
         gl.uniform4f(u.u_frame, i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);

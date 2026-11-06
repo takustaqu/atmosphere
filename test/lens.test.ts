@@ -4,8 +4,8 @@ import { DEFAULT_LENS, resolveLens } from '../src/lens.js';
 import { resolveConditions } from '../src/state.js';
 
 describe('resolveLens', () => {
-  it('keeps the droplets on by default, which is what the renderer has always drawn', () => {
-    expect(resolveLens(undefined)).toEqual({ droplets: 1 });
+  it('keeps everything on by default, which is what the renderer has always drawn', () => {
+    expect(resolveLens(undefined)).toEqual({ droplets: 1, flare: 1, vignette: 1 });
     expect(resolveLens(null)).toEqual(DEFAULT_LENS);
     expect(resolveLens({})).toEqual(DEFAULT_LENS);
   });
@@ -19,6 +19,13 @@ describe('resolveLens', () => {
     expect(resolveLens({ droplets: 0.4 }).droplets).toBe(0.4);
     expect(resolveLens({ droplets: -1 }).droplets).toBe(0);
     expect(resolveLens({ droplets: 3 }).droplets).toBe(1);
+  });
+
+  it('takes the flare and the vignette on their own, as the droplets are taken', () => {
+    expect(resolveLens({ flare: false })).toEqual({ droplets: 1, flare: 0, vignette: 1 });
+    expect(resolveLens({ vignette: false })).toEqual({ droplets: 1, flare: 1, vignette: 0 });
+    expect(resolveLens({ flare: 0.25, vignette: true })).toEqual({ droplets: 1, flare: 0.25, vignette: 1 });
+    expect(resolveLens({ flare: -2, vignette: 7 })).toEqual({ droplets: 1, flare: 0, vignette: 1 });
   });
 
   it('returns a fresh object, so the default is never shared', () => {
@@ -42,6 +49,18 @@ describe('lens in the state', () => {
     expect(a.current.lens.droplets).toBeLessThan(1);
     for (let i = 0; i < 2000; i++) a.step(target, 1 / 30);
     expect(a.current.lens.droplets).toBeCloseTo(0, 6);
+  });
+
+  it('eases the flare and the vignette off too', () => {
+    const a = new StateAnimator(resolveConditions({}));
+    const target = resolveConditions({ lens: { flare: false, vignette: false } });
+    a.step(target, 1 / 30);
+    expect(a.current.lens.flare).toBeGreaterThan(0);
+    expect(a.current.lens.flare).toBeLessThan(1);
+    expect(a.current.lens.vignette).toBeCloseTo(a.current.lens.flare, 12);
+    for (let i = 0; i < 2000; i++) a.step(target, 1 / 30);
+    expect(a.current.lens.flare).toBeCloseTo(0, 6);
+    expect(a.current.lens.vignette).toBeCloseTo(0, 6);
   });
 
   it('the animator never aliases the target lens', () => {
