@@ -26,7 +26,8 @@ be an easy way to get a sky that keeps changing procedurally.
 
 ## What it draws
 
-- **Time of day** — the sky's gradient, the sun (an outline-less blown-out glare),
+- **Time of day** — the sky's gradient, the sun (an outline-less blown-out glare,
+  or smaller and bare — see [The sun](#the-sun)),
   sunset/magic-hour mauve, city lights at night
 - **The night sky** — light pollution on the Bortle scale, a Milky Way made of
   resolved stars with its bulge and Great Rift, meteor showers at a ZHR with the
@@ -336,6 +337,34 @@ sky.set({ sunset: { warmth: 1, glow: 1 } });  // the defaults
 | `glow` | 0..2 what the rest of the sky takes at magic hour: the pink of the far side and the lavender above the band. 0 leaves the far side cold, 2 lights the whole sky. Defaults to 1 |
 
 Both ease like everything else.
+
+## The sun
+
+The sun is drawn as an overexposure, not a disc: a core about 3.4° across —
+six times the real sun — blown flat white, and a wide glare round it. That is
+on purpose, and it stays the default: a sun you cannot look at is what the eye
+reports. An app that draws its own glare over the sky — streaks, a bloom, a
+flare of its own — wants the sun small and bare underneath it.
+
+```ts
+sky.set({ sun: { disc: 0.53 } });            // the sun at its true size
+sky.set({ sun: { glare: 0 } });              // no bleed of light round it
+sky.set({ sun: { disc: 0.53, glare: 0 } });  // both: a bare, true-size sun to draw over
+```
+
+| field | what it does |
+|:---|:---|
+| `disc` | the angular diameter, in degrees, of the sun's blown core — the part drawn flat white at full emission, before the tone curve. 0.1..10. Defaults to `DEFAULT_SUN_DISC` (about 3.39); `TRUE_SUN_DISC` is the real sun's 0.53. Its soft edge scales with it, and on screen it still blooms past it: at the default exposure what reads as white is nearly twice the diameter given |
+| `glare` | 0..1 the wide bleed of light round the disc, in the sky and in the sun's path on the sea. 0 leaves the disc bare. Defaults to 1 |
+
+Both ease like everything else. They are part of the sky, not the lens, so the
+sea's mirror, a `renderCubeFaces` skybox and the light probe all see the sun as
+drawn: a smaller, bare sun puts less of its light into what the probe measures
+(the sun's directional light is unchanged). The sky's own brightening toward the
+sun and the clouds lit through from behind it are the air's, and stay. Measured
+at 1920×1080 with a 1.05 rad fov, the sun in shot at noon: the near-white
+(≥250) patch is about 109 px across by default, 17 px at `disc: 0.53`; `glare: 0`
+takes the sky 100–300 px out from the sun from a mean level of 147 down to 109.
 
 ## Tone curve
 
@@ -826,6 +855,7 @@ const sky = new Atmosphere(canvas, { pauseOffscreen: false });
 | `resolveParticles(p)` | resolving a falling-particle specification |
 | `resolveGround(g)` | resolving a ground specification (the sea) |
 | `resolveSunset(s)` | resolving a sunset specification (warmth, glow) |
+| `resolveSun(s)` | resolving the sun's disc size and glare |
 | `celestialLights(s, cam, aspect)` | the sun and moon as directional lights, without a probe |
 | `ResolutionGovernor` | the adaptive resolution's control loop, for a custom render loop (feed it `renderer.takeGpuTimes()` with `timing: true`) |
 | `sampleLightGrid(g, x, y)` / `sampleEnvironment(env, n)` | reading a light measurement at a screen point / for a surface normal |

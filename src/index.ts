@@ -140,6 +140,15 @@ export {
 } from './lens.js';
 
 export {
+  resolveSun,
+  DEFAULT_SUN,
+  DEFAULT_SUN_DISC,
+  TRUE_SUN_DISC,
+  type Sun,
+  type SunInput,
+} from './sundisc.js';
+
+export {
   resolveSunset,
   DEFAULT_SUNSET,
   type Sunset,

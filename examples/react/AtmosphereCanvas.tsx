@@ -96,7 +96,7 @@ export interface AtmosphereCanvasProps extends Conditions {
 export function AtmosphereCanvas({
   time: timeProp, location: locationProp, weather: weatherProp,
   filter: filterProp, tone: toneProp, polarizer: polarizerProp, celestial: celestialProp,
-  lens: lensProp, particles: particlesProp, ground: groundProp, sunset: sunsetProp, camera: cameraProp,
+  lens: lensProp, particles: particlesProp, ground: groundProp, sunset: sunsetProp, sun: sunProp, camera: cameraProp,
   enabled = true,
   fps = 30,
   resolutionScale,
@@ -123,9 +123,10 @@ export function AtmosphereCanvas({
   const particles = useStableValue(particlesProp);
   const ground = useStableValue(groundProp);
   const sunset = useStableValue(sunsetProp);
+  const sun = useStableValue(sunProp);
   const camera = useStableValue(cameraProp);
   const conditions: EveryCondition = {
-    time, location, weather, filter, tone, polarizer, celestial, lens, particles, ground, sunset, camera,
+    time, location, weather, filter, tone, polarizer, celestial, lens, particles, ground, sunset, sun, camera,
   };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -162,7 +163,7 @@ export function AtmosphereCanvas({
 
   useEffect(() => {
     skyRef.current?.set(conditions);
-  }, [time, location, weather, filter, tone, polarizer, celestial, lens, particles, ground, sunset, camera]);
+  }, [time, location, weather, filter, tone, polarizer, celestial, lens, particles, ground, sunset, sun, camera]);
 
   // leave the fade to CSS, and stop drawing once it's no longer visible
   useEffect(() => {

@@ -100,6 +100,7 @@ uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowf
 uniform vec3 u_snowDrift;  // how far the snow has fallen, integrated on the CPU (see snowFallDir)
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
 uniform vec2  u_sunset;    // sunset: the warmth of the band on the sun's side, the glow all round
+uniform vec4  u_sunLook;   // the sun's disc and glare (sunShape): its core's falloff in the sky, and on the sea; the glare's strength; the limb the corona is measured from (radians)
 uniform float u_aurora;    // 0..1 how much aurora is in the sky
 uniform float u_contrails; // 0..1 how often a jet draws a trail
 uniform float u_rays;      // 0..1 crepuscular rays, in the split variant's composite
@@ -3545,10 +3546,11 @@ void main() {
   g_corona = corona(moonLimb);
 #endif
   // the sun's, likewise from its limb (the drawn disc's flat core reaches
-  // about 0.035 rad out) and not cut by the cover. Within ten degrees or so;
-  // past fifteen there is nothing a thin cloud makes of it
+  // about 0.035 rad out at the default size, u_sunLook.w as drawn) and not
+  // cut by the cover. Within ten degrees or so; past fifteen there is
+  // nothing a thin cloud makes of it
 #ifdef FEAT_IRIDESCENCE
-  float sunLimb = max(acos(clamp(dot(rd, sunDir), -1.0, 1.0)) - 0.035, 0.0);
+  float sunLimb = max(acos(clamp(dot(rd, sunDir), -1.0, 1.0)) - u_sunLook.w, 0.0);
   g_sunLimb = sunLimb;
   g_sunFwd = dayF * smoothstep(-0.02, 0.08, sunEl)
            * (exp(-sunLimb / 0.10) + exp(-sunLimb / 0.20) * 0.40)
@@ -3705,16 +3707,17 @@ void main() {
   float sunAng = acos(clamp(dot(rd, sunDir), -1.0, 1.0));
   if (sunVis > 0.0) {
     vec3 sunCol = L(mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF));
-    // gain the core and clamp → produces a flat, saturated white patch at the center
-    float core = clamp(exp(-sunAng * sunAng * 900.0) * 2.2, 0.0, 1.0);
+    // gain the core and clamp → produces a flat, saturated white patch at the
+    // center. Its falloff (900 by default) sets how wide it is drawn
+    float core = clamp(exp(-sunAng * sunAng * u_sunLook.x) * 2.2, 0.0, 1.0);
     // At the horizon the disc itself is dimmed and reddened by the air it
     // comes through — an orange you can look at, not a white you cannot.
     // The blowout is kept for a sun with any height
     float low = smoothstep(0.14, -0.02, sunEl);
     vec3 disc = mix(vec3(SUN_LUM), L(vec3(1.0, 0.42, 0.16)) * SUN_LUM * 0.12, low);
     sky = mix(sky, disc, core * sunVis);
-    // keep the surrounding bleed subtle (a scattering halo)
-    float halo = exp(-sunAng * 4.0);
+    // keep the surrounding bleed subtle (a scattering halo), as strong as the glare asks
+    float halo = exp(-sunAng * 4.0) * u_sunLook.z;
     sky += sunCol * halo * 0.22 * sunVis * HALO_LUM;
     // no sunsetF gate: at midday sunCol is near-white and the widening is
     // self-cancelling, so this only bites once the halo has turned orange.
@@ -7042,11 +7045,11 @@ void main() {
     if (sunVis > 0.0) {
       float ang = acos(clamp(dot(r, sunDir), -1.0, 1.0));
       vec3 sunCol = L(mix(vec3(1.0, 0.98, 0.92), vec3(1.05, 0.6, 0.3), sunsetF));
-      float core = clamp(exp(-ang * ang * 400.0) * 2.2, 0.0, 1.0);
+      float core = clamp(exp(-ang * ang * u_sunLook.y) * 2.2, 0.0, 1.0);
       // and none of it where a cloud's shadow lies
       float lightS = sunVis * clear * (1.0 - shade);
       mir = mix(mir, vec3(SUN_LUM), core * lightS);
-      mir += sunCol * exp(-ang * 4.0) * 0.22 * HALO_LUM * lightS;
+      mir += sunCol * (exp(-ang * 4.0) * u_sunLook.z) * 0.22 * HALO_LUM * lightS;
     }
     // the moon's, at night
     if (moonVis > 0.0) {

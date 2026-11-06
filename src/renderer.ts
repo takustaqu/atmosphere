@@ -33,6 +33,7 @@ import { fragSource } from './shaders/variants.js';
 import { VERT } from './shaders/vert.js';
 import { TURRET_ROWS, TURRET_SLOTS, stormAmount, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
+import { sunShape } from './sundisc.js';
 
 /** how many variants to keep linked at once; the least recently drawn goes first */
 const MAX_VARIANTS = 8;
@@ -124,7 +125,7 @@ const UNIFORM_NAMES = [
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift',
-  'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset',
+  'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset', 'u_sunLook',
   'u_cloudMode', 'u_clouds', 'u_xfade', 'u_parhelia',
   'u_map0', 'u_map1', 'u_mapStep', 'u_mapMix', 'u_clouds2',
   'u_flow', 'u_flow2', 'u_box0', 'u_box1', 'u_mapWind', 'u_mapTexels', 'u_evoPerWind', 'u_morph',
@@ -1772,6 +1773,10 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_fall, s.particles.precipitation);
     gl.uniform2f(u.u_sea, s.ground.sea, s.ground.swell);
     gl.uniform2f(u.u_sunset, s.sunset.warmth, s.sunset.glow);
+    {
+      const [sky, sea, limb] = sunShape(s.sun.disc);
+      gl.uniform4f(u.u_sunLook, sky, sea, s.sun.glare, limb);
+    }
     gl.uniform1f(u.u_wind, s.wind);
     gl.uniform1f(u.u_thunder, s.thunder);
     gl.uniform1f(u.u_haze, s.haze);

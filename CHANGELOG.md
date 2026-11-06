@@ -11,6 +11,18 @@
   nothing of the camera in it. They ease as the droplets do, and at 0 the flare
   is not drawn at all. Uniforms only, no new shader variant; at the defaults the
   pictures are the same to the pixel.
+- **The sun's size and glare: `sun: { disc, glare }`.** The big blown sun stays
+  the default, but an app that draws its own glare over the sky can now have
+  the sun small and bare underneath. `disc` is the angular diameter of the
+  flat white core in degrees, about 3.39 by default (`DEFAULT_SUN_DISC`), 0.53
+  for the real sun (`TRUE_SUN_DISC`), 0.1..10; its soft edge, the sun's path on
+  the sea and the thin clouds' corona round it scale with it. `glare` 0..1 is
+  the bleed of light round the disc, in the sky and on the sea. At 1080p with a
+  1.05 rad fov the near-white patch is 109 px across by default and 17 px at
+  `disc: 0.53`; `glare: 0` takes the sky 100–300 px from the sun from a mean
+  level of 147 to 109. Part of the sky, not the lens, so the sea, a skybox and
+  the light probe see the sun as drawn. Both ease, and both are uniforms, with
+  no new shader variant; at the defaults the pictures are the same to the pixel.
 
 ## 0.11.0 — 2026-11-06
 

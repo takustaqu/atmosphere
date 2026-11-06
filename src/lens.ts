@@ -24,7 +24,8 @@ export interface Lens {
    * axis, the faint ring and the horizontal streak, while the sun is in shot.
    *
    * 1 (the default) is the full effect; 0 turns it off, and the flare is then
-   * not drawn at all.
+   * not drawn at all. The sun's own disc and the glare round it belong to the
+   * sky, not the lens — see the `sun` condition.
    */
   flare: number;
   /**

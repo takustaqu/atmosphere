@@ -225,7 +225,8 @@ export function viewExtent(camera: Camera, aspect: number, azC: number): { azLo:
 
 /**
  * The numbers of a state the cloud stack reads, flattened — all of it but
- * the parts only the picture's finish reads (tone, filter, polarizer, lens)
+ * the parts only the picture's finish reads (tone, filter, polarizer, lens,
+ * the sun's disc and glare)
  * and the time of day, which reaches the shader only as the sun and moon.
  * A leap in any of them between frames is what sends the cache back to its
  * soft map
@@ -233,7 +234,7 @@ export function viewExtent(camera: Camera, aspect: number, azC: number): { azLo:
 export function stackSignature(s: object): number[] {
   const out: number[] = [];
   // (and the parhelia's plates: the parhelia are not in the stack)
-  const SKIP = new Set(['tone', 'filter', 'polarizer', 'lens', 'timeOfDay', 'icePlates']);
+  const SKIP = new Set(['tone', 'filter', 'polarizer', 'lens', 'sun', 'timeOfDay', 'icePlates']);
   const walk = (v: unknown, top: boolean): void => {
     if (typeof v === 'number') out.push(v);
     else if (typeof v === 'boolean') out.push(v ? 1 : 0);
