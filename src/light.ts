@@ -142,7 +142,7 @@ export interface AtmosphereLight {
 export const MOON_RELATIVE = 0.15;
 
 // ── The shader's own formulas, mirrored ──────────────────
-// Each of these is a line of FRAG in renderer.ts; keep them in step.
+// Each of these is a line of FRAG in shaders/sky.ts; keep them in step.
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 /** GLSL smoothstep, including the reversed-edge form the shader leans on */

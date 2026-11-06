@@ -758,7 +758,7 @@ sits well inside sRGB. Measured with a two-space readback diff, deliberately
 widening the light sources moves them under 1.5% past sRGB, and magic hour never
 leaves sRGB at all. Getting a visible wide-gamut sky means re-tuning the ~60
 color literals against P3 primaries; the machinery for that is in place
-(`GAMUT_REACH` in `renderer.ts`), unused.
+(`GAMUT_REACH` in `src/shaders/sky.ts`), unused.
 
 Baking wide-gamut faces needs the receiving 2D canvas to agree, or the copy
 clips back to sRGB. `renderCubeFaces` handles this; a hand-rolled loop should

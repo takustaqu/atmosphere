@@ -10,7 +10,7 @@
 //
 // So the lattice is generated here instead, uploaded as a small tiling
 // texture, and the GPU's own bilinear filter does the interpolation. See
-// `vnoise` in renderer.ts for why the filter reproduces the old arithmetic
+// `vnoise` in shaders/sky.ts for why the filter reproduces the old arithmetic
 // exactly rather than approximating it.
 
 /**

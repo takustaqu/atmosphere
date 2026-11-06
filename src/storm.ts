@@ -1,6 +1,6 @@
 // storm.ts — each cumulonimbus turret's thrust, read on the CPU
 //
-// A thunderhead's skyline is a row of turrets (turretRow in renderer.ts),
+// A thunderhead's skyline is a row of turrets (turretRow in shaders/sky.ts),
 // and how high each may climb is the storm's thrust read once, at the
 // turret's center — one number per turret, the same for every pixel of it.
 // The shader used to read it per pixel all the same: three or four turrets

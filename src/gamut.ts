@@ -9,7 +9,7 @@
 // adaptation.
 //
 // The matrix lives here rather than as a GLSL literal so that the numbers the
-// tests check are the numbers that ship: renderer.ts interpolates these
+// tests check are the numbers that ship: shaders/sky.ts interpolates these
 // constants into the fragment shader source.
 
 /**
@@ -22,7 +22,7 @@
  * On an sRGB display the P3 path is indistinguishable from the sRGB one — the
  * conversion is appearance-preserving. What P3 buys is the light sources (sun,
  * moon, stars, lightning) and the magic-hour amber reaching colors sRGB cannot
- * express; see `GAMUT_REACH` in renderer.ts.
+ * express; see `GAMUT_REACH` in shaders/sky.ts.
  */
 export type ColorSpaceOption = 'auto' | 'srgb' | 'display-p3';
 
