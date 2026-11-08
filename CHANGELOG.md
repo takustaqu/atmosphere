@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- **A towering sky appears in seconds on a first visit to Windows, not tens of
+  them.** The program with a cumulonimbus in it takes a long while to link through
+  ANGLE's Direct3D backend, and the canvas stayed empty until it had. If the first
+  link is still running 400 ms in, and it is one with a tower, the sky is now
+  compiled without the tower beside it, drawn until the tower's own has landed, and
+  the tower fades in over it across 1.2 s. On a Radeon 8060S the first frame of a
+  summer sky went from 15–18 s to 2.6 s, of a thunderstorm from 10 s to 2.6 s (and
+  link times there wander: on a slower evening the summer sky took 41 s before and
+  3.2 s after). Where links take milliseconds, as they do elsewhere and on any later
+  visit, the 400 ms pass first and nothing changes. `onReady` fires at that first
+  frame, and `settled` stays false until the tower has come in.
+- **Variants that no frame is waiting on link after the ones that one is**, not
+  beside them: links started together slow each other on Direct3D (two take 1.5× as
+  long as one, four 2.1×). The tower of a summer sky comes in at 11 s instead of
+  15–17 s; its parhelia, which only ever fill two small rectangles, come after it,
+  so the sky settles at 22 s instead of 18 s.
+
 ## 0.12.0 — 2026-11-07
 
 ### Added

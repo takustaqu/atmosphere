@@ -777,6 +777,12 @@ it never acts. On 2160p summer at 60 fps it settled at 0.78 (3000×1688,
 `EXT_disjoint_timer_query` (Chrome and Edge on the desktop); elsewhere the
 resolution holds.
 
+On Windows and integrated GPUs, turn one of these on for anything near 2160p: a
+towering sky is the heaviest case, and at the default quality it overruns a 60 fps
+budget even on a Radeon 8060S (ANGLE / Direct3D 11, 2160p summer: 16.1 ms; 11.7 ms
+at `cloudScale: 0.75`, 4.2 ms at `quality: 'low'`). None of them is on by default,
+since each changes the picture when it acts.
+
 ## Display P3
 
 Rendered in Display P3 where the browser supports it, sRGB otherwise. No setup
@@ -885,7 +891,9 @@ The shader is compiled off the main thread, so nothing is drawn for the first
 moment of a page's life. `render()` is a no-op until then, `ready` says whether
 it has happened, and `onReady` fires when it does — with `false` if the device
 could not compile the shader at all, which is the signal to keep your fallback
-background for good.
+background for good. Where a sky with a cumulonimbus in it would keep the canvas
+empty for long (a first visit on Windows, see below), that first frame is the sky
+without the tower, which fades in when its own program lands.
 
 ```tsx
 const [ready, setReady] = useState(false);
@@ -896,11 +904,13 @@ useEffect(() => {
 // <canvas style={{ opacity: ready ? 1 : 0, transition: 'opacity 600ms' }} />
 ```
 
-How long that takes is a browser and driver question, not a scene one. On
-Windows, WebGL runs through ANGLE's Direct3D backend, whose compiler inlines
-and unrolls a shader this size into something very large; a first visit costs
-a few seconds there, and near nothing on macOS. Every visit after that is
-instant on any platform — browsers keep compiled shaders in an on-disk cache.
+How long that takes is mostly a browser and driver question. On Windows, WebGL
+runs through ANGLE's Direct3D backend, whose compiler inlines and unrolls a
+shader this size into something very large; a first visit costs a few seconds
+there, and near nothing on macOS. A sky with a cumulonimbus in it takes tens of
+seconds, though the rest of that sky appears within a few. Every visit after
+that is instant on any platform — browsers keep compiled shaders in an on-disk
+cache.
 
 Pass `compile: 'sync'` to `AtmosphereRenderer` to block until the program is
 linked instead. That is what `renderCubeFaces` does, because a bake has no

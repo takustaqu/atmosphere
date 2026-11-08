@@ -688,6 +688,11 @@ new Atmosphere(canvas, { skyCache: { region: 'panorama', frames: 30 } });
 読めます。`EXT_disjoint_timer_query`（デスクトップの Chrome・Edge）が必要で、
 使えない環境では解像度を変えません。
 
+Windows や内蔵 GPU で 2160p に近いサイズを描くときは、これらのどれかを有効にしてください。
+積乱雲のある空がいちばん重く、既定の品質では Radeon 8060S（ANGLE / Direct3D 11）でも
+60fps の予算を超えます（2160p の夏空で 16.1ms。`cloudScale: 0.75` で 11.7ms、
+`quality: 'low'` で 4.2ms）。どれも作動すると絵が変わるので、既定では無効にしています。
+
 ## Display P3
 
 対応しているブラウザでは Display P3 で、そうでなければ sRGB で描きます。
@@ -794,6 +799,8 @@ requestAnimationFrame(frame);
 ひとときは何も描かれません。その間 `render()` は何もせず、済んだかどうかは `ready`、
 済んだ瞬間は `onReady` でわかります。引数が `false` のときはその端末ではシェーダーを
 コンパイルできなかったという意味なので、フォールバックの背景をそのまま出し続けてください。
+積乱雲のある空でキャンバスが長く空白になる場合（Windows での初回アクセスなど）は、最初の
+フレームは積乱雲のない空になり、積乱雲は自身のプログラムがリンクされた時点でフェードインします。
 
 ```tsx
 const [ready, setReady] = useState(false);
@@ -804,10 +811,10 @@ useEffect(() => {
 // <canvas style={{ opacity: ready ? 1 : 0, transition: 'opacity 600ms' }} />
 ```
 
-待ち時間を決めるのはシーンの内容ではなくブラウザとドライバです。Windows の WebGL は
+待ち時間を決めるのは主にブラウザとドライバです。Windows の WebGL は
 ANGLE の Direct3D バックエンド経由で動き、そのコンパイラはこの規模のシェーダーを
 インライン展開・ループ展開して巨大な中間表現にするため、初回訪問だけ数秒かかります
-（macOS ではほぼ一瞬）。2回目以降はどの環境でも即座です——ブラウザがコンパイル済み
+（macOS ではほぼ一瞬）。積乱雲のある空は数十秒かかりますが、それ以外の部分は数秒で現れます。2回目以降はどの環境でも即座です——ブラウザがコンパイル済み
 シェーダーをディスクにキャッシュするためです。
 
 リンクが終わるまでブロックさせたい場合は `AtmosphereRenderer` に `compile: 'sync'` を

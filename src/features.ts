@@ -302,3 +302,18 @@ export const SPLIT_KEY = 65536;
 export const CACHE_BUILD = 131072;
 export const CACHE_COMP = 262144;
 export const CACHE_BITS = CACHE_BUILD | CACHE_COMP;
+
+/**
+ * What to draw a towering sky with while its own program links, the first
+ * time, where that takes a long while: the key without the tower and without
+ * the lighting and ornaments that are only ever seen for what they add to a
+ * finished sky, keeping what changes the whole picture (the sea, a dark
+ * site's stars, the aurora, a polarizer) and how the frame is drawn. On a
+ * Radeon 8060S under ANGLE / Direct3D 11 it links in 2–3 s where the
+ * volumetric tower's takes 10–40 s. A key with no
+ * tower is its own: there is nothing long to wait for.
+ */
+export function firstPaintKey(key: number): number {
+  if (!(key & FEATURE.CB) || (key & CACHE_BITS)) return key;
+  return key & (FEATURE.SEA | FEATURE.AURORA | FEATURE.DARKSKY | FEATURE.POLARIZER | SPLIT_KEY);
+}

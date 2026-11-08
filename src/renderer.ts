@@ -17,7 +17,7 @@
 
 import { CLOUD_GENERA_IDS, type CloudMix } from './clouds.js';
 import {
-  ALL_FEATURES, CACHE_BITS, CACHE_BUILD, CACHE_COMP, CB_AUTO_BAND, FEATURE, SPLIT_KEY,
+  ALL_FEATURES, CACHE_BITS, CACHE_BUILD, CACHE_COMP, CB_AUTO_BAND, FEATURE, SPLIT_KEY, firstPaintKey,
   backlitInView, cbModeOf, featureKeys, type CumulonimbusMode,
 } from './features.js';
 import { type ColorSpaceOption } from './gamut.js';
@@ -114,6 +114,13 @@ function hasCloudStack(c: CloudMix): boolean {
  * compile that runs for seconds.
  */
 const POLL_MS = 16;
+
+/** how long the first link may run before a towering sky is given a first paint */
+const FIRST_PAINT_AFTER_MS = 400;
+/** how long the tower takes to come in over the first paint when it lands */
+const FIRST_PAINT_FADE_MS = 1200;
+/** a frame this soon after the last is part of a running loop, not a still frame */
+const FIRST_PAINT_FADE_GAP_MS = 250;
 
 type Uniforms = Record<string, WebGLUniformLocation | null>;
 
@@ -335,6 +342,17 @@ export class AtmosphereRenderer {
   private snowAt = Number.NaN;
   // whether the first drawable variant has been reported through onReady
   private reported = false;
+  // variants asked for ahead of need, waiting for the links in flight to land
+  // (ensureLater)
+  private linkQueue: number[] = [];
+  // the first-paint variant, once it has been asked for (see startFirstPaint),
+  // and when the first link began
+  private firstPaint = -1;
+  private linkBegan = 0;
+  // when the first-paint variant began giving way to the sky's own, and when
+  // the last frame was drawn (firstPaintFade)
+  private fadeBegan = 0;
+  private lastFrame = 0;
   private parallel: { COMPLETION_STATUS_KHR: number } | null = null;
   private explicitLod = false;
   private buffer: WebGLBuffer | null = null;
@@ -448,7 +466,8 @@ export class AtmosphereRenderer {
   get ready(): boolean {
     if (!this.gl) return false;
     if (!this.parallel) return true;
-    return !!this.variants.get(this.wanted)?.linked || this.current !== null;
+    return !!this.variants.get(this.wanted)?.linked || this.current !== null
+      || !!this.variants.get(this.firstPaint)?.linked;
   }
 
   /**
@@ -468,12 +487,13 @@ export class AtmosphereRenderer {
    */
   isSettled(s: AtmosphereState): boolean {
     if (!this.gl || this.lost || !this.ready) return false;
-    let linking = false;
-    for (const v of this.variants.values()) if (!v.linked && !v.failed) { linking = true; break; }
+    if (this.fadeBegan > 0 && performance.now() - this.fadeBegan < FIRST_PAINT_FADE_MS) return false;
+    let linking = this.linkQueue.length > 0;
+    if (!linking) for (const v of this.variants.values()) if (!v.linked && !v.failed) { linking = true; break; }
     if (!linking) return true;
     for (const k of this.programsFor(s)) {
       const v = this.variants.get(k);
-      if (v && !v.linked && !v.failed) return false;
+      if ((v && !v.linked && !v.failed) || this.linkQueue.includes(k)) return false;
     }
     return true;
   }
@@ -580,6 +600,11 @@ export class AtmosphereRenderer {
 
   private init(): void {
     this.variants = new Map();
+    this.linkQueue = [];
+    this.firstPaint = -1;
+    this.linkBegan = 0;
+    this.fadeBegan = 0;
+    this.lastFrame = 0;
     this.current = null;
     this.reported = false;
     this.u = {};
@@ -682,8 +707,10 @@ export class AtmosphereRenderer {
    */
   prepare(s: AtmosphereState): void {
     if (!this.gl || this.lost) return;
-    if (this.current === null) this.wanted = this.keysFor(s)[0].key;
-    for (const key of this.programsFor(s)) this.ensure(key);
+    const keys = this.programsFor(s);
+    // (what the first frame will ask for: without the parhelia, drawn apart)
+    if (this.current === null) this.wanted = keys[0];
+    keys.forEach((key, i) => { if (i === 0) this.ensure(key); else this.ensureLater(key); });
   }
 
   /** the variants a state is drawn with, in the order prepare() starts them */
@@ -740,6 +767,7 @@ export class AtmosphereRenderer {
     gl.attachShader(prog, fs);
     gl.bindAttribLocation(prog, 0, 'a_pos');
     gl.linkProgram(prog);
+    if (!this.linkBegan) this.linkBegan = performance.now();
     gl.deleteShader(vs);
     gl.deleteShader(fs);
     const v: Variant = { key, program: prog, u: {}, linked: false, failed: false, used: this.frame };
@@ -748,6 +776,23 @@ export class AtmosphereRenderer {
     if (!this.parallel) this.finishLink(v);
     else this.startPolling();
     return v;
+  }
+
+  /**
+   * The variant for a key that no frame is waiting on yet: compiled once
+   * the links in flight have landed. Links started side by side slow each
+   * other where the driver compiles through D3D: on a Radeon 8060S under
+   * ANGLE / Direct3D 11, two take 1.5× as long as one and four 2.1×, and a
+   * towering sky's own program came a third later for the parhelia's linking
+   * beside it.
+   */
+  private ensureLater(key: number): void {
+    if (this.variants.has(key) || this.linkQueue.includes(key)) return;
+    if (!this.parallel) { this.ensure(key); return; }
+    for (const v of this.variants.values()) {
+      if (!v.linked && !v.failed) { this.linkQueue.push(key); return; }
+    }
+    this.ensure(key);
   }
 
   /**
@@ -769,7 +814,32 @@ export class AtmosphereRenderer {
       const base = this.ensure(0);
       return base?.linked ? base : null;
     }
-    return this.standIn(key) ?? (this.current?.linked && !(this.current.key & CACHE_BITS) ? this.current : null);
+    return this.standIn(key) ?? (this.current?.linked && !(this.current.key & CACHE_BITS) ? this.current : null)
+      ?? this.firstPaintFor(key);
+  }
+
+  /** the first-paint variant, if it has linked and draws nothing this key does not */
+  private firstPaintFor(key: number): Variant | null {
+    const v = this.variants.get(this.firstPaint);
+    return v?.linked && !(v.key & ~key) ? v : null;
+  }
+
+  /**
+   * A towering sky's program takes tens of seconds to link where the driver
+   * compiles through D3D (ANGLE on Windows, on a first visit only), and until
+   * something has linked the canvas stays empty. So if the first link is still
+   * running a moment in, and it is one of those, compile the sky without the
+   * tower beside it, a few seconds' work, to draw until the tower's own lands
+   * (see firstPaintKey). Where links take milliseconds, as they do elsewhere
+   * and on any later visit, the moment passes first and this never happens.
+   */
+  private startFirstPaint(): void {
+    if (this.reported || this.firstPaint >= 0 || this.opts.variants === false) return;
+    if (performance.now() - this.linkBegan < FIRST_PAINT_AFTER_MS) return;
+    const key = firstPaintKey(this.wanted);
+    if (key === this.wanted) return;
+    this.firstPaint = key;
+    this.ensure(key);
   }
 
   /**
@@ -813,6 +883,7 @@ export class AtmosphereRenderer {
       this.poll = 0;
       const gl = this.gl, parallel = this.parallel;
       if (!gl || !parallel) return;
+      this.startFirstPaint();
       let pending = false, finished = false;
       for (const v of this.variants.values()) {
         if (v.linked || v.failed) continue;
@@ -825,6 +896,15 @@ export class AtmosphereRenderer {
         } else pending = true;
       }
       if (pending) this.poll = setTimeout(step, POLL_MS);
+      else {
+        // the next one that is still to do, if any (an urgent ask may have
+        // started one of them since, and a shader that fails to compile
+        // starts nothing to wait for)
+        while (this.gl && this.linkQueue.length) {
+          const v = this.ensure(this.linkQueue.shift()!);
+          if (v && !v.linked && !v.failed) break;
+        }
+      }
       if (finished && this.reported && this.gl) this.opts.onLinked?.();
     };
     // a turn of the event loop before the first ask, so the caller gets to
@@ -954,7 +1034,7 @@ export class AtmosphereRenderer {
     gl.uniform1i(v.u.u_flow2, 6);
     gl.uniform1i(v.u.u_morph, 7);
     v.linked = true;
-    if (!this.reported && v.key === this.wanted) {
+    if (!this.reported && (v.key === this.wanted || v.key === this.firstPaint)) {
       this.reported = true;
       this.notifyReady(true);
     }
@@ -1483,12 +1563,12 @@ export class AtmosphereRenderer {
     // other way round a frame would wait on them — see backlitInView)
     if (camera && this.parallel) {
       const whole = this.keysFor(s);
-      whole.forEach((k, i) => { if (k.key !== ks[i]?.key) this.ensure(k.key); });
+      whole.forEach((k, i) => { if (k.key !== ks[i]?.key) this.ensureLater(k.key); });
     }
     if (ks.length === 1) {
       this.wantedVol = -1;
       const v = this.pick(ks[0].key);
-      return v ? [{ v, share: 1 }] : null;
+      return v ? this.firstPaintFade(v) ?? [{ v, share: 1 }] : null;
     }
     const [a, b] = ks;
     this.wantedVol = b.key;
@@ -1503,6 +1583,29 @@ export class AtmosphereRenderer {
     if (va && vb) return [{ v: va, share: 1 }, { v: vb, share: b.share }];
     const v = va ?? vb ?? this.pick(this.wanted);
     return v ? [{ v, share: 1 }] : null;
+  }
+
+  /**
+   * The tower coming in over the first paint, once its program has landed:
+   * the sky's own frame laid over the first-paint one at a share that climbs,
+   * through the 'auto' crossfade's own draw. Null when there is nothing to fade
+   * — and for a still frame, which is drawn once and would stay at the start of
+   * the fade: only a frame following closely on the last one starts it.
+   */
+  private firstPaintFade(v: Variant): { v: Variant; share: number }[] | null {
+    const now = performance.now();
+    const follows = now - this.lastFrame < FIRST_PAINT_FADE_GAP_MS;
+    this.lastFrame = now;
+    const from = this.variants.get(this.firstPaint);
+    if (!from?.linked || v === from || !(v.key & FEATURE.CB)) return null;
+    if (!this.fadeBegan) {
+      if (this.current !== from || !follows) return null;
+      this.fadeBegan = now;
+    }
+    const share = (now - this.fadeBegan) / FIRST_PAINT_FADE_MS;
+    if (share >= 1) { this.fadeBegan = 0; this.firstPaint = -1; return null; }
+    // (0 is not a share to the shader: it reads as no crossfade at all)
+    return [{ v: from, share: 1 }, { v, share: Math.max(0.001, share) }];
   }
 
   /**

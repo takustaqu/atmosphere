@@ -1,10 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, CB_AUTO_BAND, FEATURE, backlitInView, cbVolumetricShare, featureKey, featureKeys } from '../src/features.js';
+import { ALL_FEATURES, CACHE_BUILD, CB_AUTO_BAND, FEATURE, SPLIT_KEY, backlitInView, cbVolumetricShare, featureKey, featureKeys, firstPaintKey } from '../src/features.js';
 import { parhelionAzimuth, parheliaAmounts, parheliaPlates, parheliaRects, parheliaShape } from '../src/parhelia.js';
 import { stackSignature } from '../src/skycache.js';
 import { resolveWeather } from '../src/weather.js';
 import { resolveConditions } from '../src/state.js';
 import { StateAnimator } from '../src/animator.js';
+
+describe('firstPaintKey', () => {
+  it('takes the tower and its dressing out of a towering sky', () => {
+    const key = featureKey(resolveConditions({ time: 14, weather: 'summer' }), 0, 'volumetric');
+    expect(key & FEATURE.CBVOL).toBe(FEATURE.CBVOL);
+    expect(firstPaintKey(key)).toBe(0);
+  });
+
+  it('keeps what changes the whole picture, and how the frame is drawn', () => {
+    const keep = FEATURE.SEA | FEATURE.AURORA | FEATURE.DARKSKY | FEATURE.POLARIZER | SPLIT_KEY;
+    expect(firstPaintKey(keep | FEATURE.CB | FEATURE.CBVOL | FEATURE.SHAFTS)).toBe(keep);
+  });
+
+  it('leaves a sky with no tower as it is, having nothing long to wait for', () => {
+    const key = featureKey(resolveConditions({ time: 14, weather: 'fair' }));
+    expect(key & FEATURE.CB).toBe(0);
+    expect(firstPaintKey(key)).toBe(key);
+  });
+
+  it("leaves the sky cache's programs alone, which draw only half a frame", () => {
+    const key = FEATURE.CB | CACHE_BUILD;
+    expect(firstPaintKey(key)).toBe(key);
+  });
+});
 
 describe('featureKey', () => {
   it('a clear suburban noon needs nothing optional', () => {
