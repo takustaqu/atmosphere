@@ -81,6 +81,7 @@ uniform float u_snow;      // 0..1 snow
 uniform float u_wind;      // 0..1 wind
 uniform float u_thunder;   // 0..1 thunder
 uniform float u_haze;      // 0..1 haze
+uniform float u_lent;      // 0..1 lenticular banks low over the horizon (features.lenticular)
 uniform vec4  u_cbFeat;    // cumulonimbus companion forms: anvil, veil; the storm's distance; its softness
 uniform float u_windOff;   // wind's integrated offset (speed×dt accumulated on the CPU side)
 uniform float u_evo;       // shape evolution's integrated offset (same idea)
@@ -2565,6 +2566,66 @@ vec4 flocks(vec2 uv, float grain, float roll, float flock, float amt, float dept
   return vec4(a, lit, puff * k, k);
 }
 
+// A sheet of altocumulus, the layer run together over the whole sky, where
+// flocks() is patches of it with sky between. What makes one is three things at
+// three scales. Broad and slow, how thick the layer is: thick it is a dark grey
+// mass with hardly a mark on it, and thin it lets the light through and shows
+// every cell. In the middle, the cells themselves, of a consistent size, each a
+// soft rise with the light coming through the seams. And over them, here and
+// there, the waves in the air (undulatus) that line the cells up in rows, which
+// the perspective draws together into ribs toward the horizon.
+//   uv, fw  the plane, and a pixel's footprint on it (planeFoot)
+// x the opacity, y the lit-ness, z the thickness to shade by, w how thick the
+// layer is here, smooth across the cells
+vec4 acSheet(vec2 uv, vec2 fw, vec2 ldir, float rdy) {
+  float foot = length(fw) * 0.8;
+  vec2 wp = uv * 0.09 + vec2(u_evo * 0.05, -u_evo * 0.04);
+  vec2 p = uv * 0.20 + 1.9 * vec2(vnoise(wp + 3.7), vnoise(wp + 11.3));
+  // (and low in the sky it is seen edgewise, its thick and thin drawn into
+  // streaks: it is left thin there, as the bright band under the mass)
+  float D = smoothstep(0.30, 0.74, fbm4(p + 41.0)) * smoothstep(0.06, 0.28, rdy);
+
+  const float CELLS = 7.5;
+  vec2 q = (uv + 0.05 * vec2(vnoise(uv * 1.3 + 5.0), vnoise(uv * 1.3 + 15.0))) * CELLS;
+  float px = foot * CELLS;
+  float h0 = 1.0 - smoothstep(0.25, 0.80, px);
+  float h1 = 1.0 - smoothstep(0.12, 0.32, px * 2.1);
+  float h2 = 1.0 - smoothstep(0.12, 0.32, px * 4.4);
+  float g = 0.5, g0 = 0.5;
+  vec2 q0 = mat2(0.966, 0.259, -0.259, 0.966) * q;
+  // (past what a pixel can hold the cells give way to the bands they draw
+  // together into, which is how the layer reads toward the horizon)
+  float hc = 1.0 - smoothstep(0.25, 0.80, px * 0.14);
+  if (hc > 0.0 && h0 < 1.0) g += (vnoise(vec2(q.x * 0.10, q.y * 0.42) + 3.0) - 0.5) * 0.32 * hc * (1.0 - h0);
+  if (h0 > 0.0) {
+    g0 = vnoise(q0);
+    g += (g0 + vnoise(mat2(0.407, 0.914, -0.914, 0.407) * q * 1.17 + 5.0) - 1.0) * 0.46 * h0;
+  }
+  if (h1 > 0.0) g += (vnoise(mat2(0.70, -0.71, 0.71, 0.70) * q * 2.1 + 9.0) - 0.5) * 0.20 * h1;
+  // (the frayed, cottony edge of each)
+  if (h2 > 0.0) g += (vnoise(mat2(0.31, 0.95, -0.95, 0.31) * q * 4.4 + 13.0) - 0.5) * 0.08 * h2;
+
+  // the waves: rows across the wind, bent by a slow field and broken up, only
+  // in places, and only as long as a pixel can hold one
+  const float WAVES = 2.7;
+  float hw = 1.0 - smoothstep(0.06, 0.20, foot * WAVES * 2.0);
+  if (hw > 0.0) {
+    float bend = vnoise(uv * 0.75 + 23.0) * 1.1 + vnoise(uv * 2.3 + 37.0) * 0.28;
+    float rows = sin((uv.x * 0.42 + uv.y * 0.91 + bend) * WAVES * 6.2832);
+    float where = smoothstep(0.46, 0.72, vnoise(uv * 0.30 + 57.0));
+    g += rows * 0.10 * where * hw;
+  }
+
+  // seams open only where the layer is thin; thick, they close and only a
+  // faint mottling is left of the cells
+  float cell = smoothstep(0.18, 0.84, g);
+  float a = mix(0.84 + 0.16 * cell, 0.99, smoothstep(0.1, 0.7, D));
+  float thick = mix(0.05 + 0.46 * (1.0 - cell), 0.90 + 0.07 * (1.0 - cell), smoothstep(0.0, 0.8, D));
+  float lit = 0.0;
+  if (h0 > 0.0) lit = clamp((g0 - vnoise(q0 + ldir * 0.5)) * 1.2 * h0 * (1.0 - D), -1.0, 1.0);
+  return vec4(a, lit, thick, D);
+}
+
 // Filament (cirrus) — a stroke swept by a brush.
 // Stretch strongly along the wind direction (uv's x-axis), and bend it with
 // low frequency across the perpendicular direction for a flowing look
@@ -4024,10 +4085,65 @@ void main() {
     OVERM(col, s.x * u_mid.x * 0.95 * horizonFade, MV_STRAT(ALT_MID * 0.55, 0.6));
   }
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
+  // (and under a sheet of it lights the strip of clear air along the horizon:
+  // down to where the ground takes over, so no line of blue is left between)
+#define ACLOW (dayF * (1.0 - smoothstep(0.12, 0.55, sunEl)))
+#define ACSUN mix(vec3(1.0, 0.93, 0.76), cloudSun, sunsetF * 0.35)
+  if (u_mid.y > 0.72 && stack && rd.y > -0.06) {
+    float strip = (1.0 - smoothstep(0.02, 0.26, rd.y)) * mix(0.42, 1.0, exp(-sunAng * 0.75))
+                * ACLOW * smoothstep(0.72, 0.95, u_mid.y);
+    if (strip > 0.0) OVER(ACSUN, strip * 0.9);
+  }
   if (u_mid.y > 0.001 && above && stack) {
-    vec4 g = flocks(planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), 10.0, 0.85, 0.40, u_mid.y, 2.4, ldir, true, planeFoot(rd, rdY, ALT_MID * 2.2));
-    vec3 col = cloudColor(g.w, g.y, 0.15 + 0.3 * g.z, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun, 0.5);
-    OVERM(col, g.x * horizonFade, MV_PLANE(ALT_MID * 2.2, 0.6));
+    vec2 acUV = planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), acFw = planeFoot(rd, rdY, ALT_MID * 2.2);
+    // (past the most a sky of its own makes of it, the layer runs together
+    // into a sheet: below that, what it always was, to the pixel)
+    float sheet = smoothstep(0.72, 0.95, u_mid.y);
+    vec3 col = vec3(0.0);
+    float acA = 0.0;
+    if (sheet < 1.0) {
+      vec4 g = flocks(acUV, 10.0, 0.85, 0.40, u_mid.y, 2.4, ldir, true, acFw);
+      col = cloudColor(g.w, g.y, 0.15 + 0.3 * g.z, dayF, nightM, sunsetF, flash, gloom, 0.9, cloudSun, 0.5);
+      acA = g.x * horizonFade;
+    }
+    if (sheet > 0.0) {
+      vec4 g = acSheet(acUV, acFw, ldir, rd.y);
+      vec3 sc = cloudColor(g.x, g.y, g.z, dayF, nightM, sunsetF, flash, gloom, 1.3, cloudSun, 0.5);
+      // a low sun comes through the thin of the layer pale
+      sc = sc * 0.93 + ACSUN * exp(-sunAng * 1.3) * (1.0 - g.w) * ACLOW * 0.26;
+      // (the mass overhead is a plain grey; the blue is the air's)
+      sc = mix(sc, vec3(dot(sc, vec3(0.3333))), 0.45 * g.w);
+      col = mix(col, sc, sheet);
+      // (it thins out before the horizon, leaving that strip)
+      acA = mix(acA, g.x * smoothstep(0.02, 0.26, rd.y), sheet);
+    }
+    OVERM(col, acA, MV_PLANE(ALT_MID * 2.2, 0.6));
+  }
+  // Lenticular banks — long smooth lenses low over the horizon, each a dark
+  // flat shape against the bright sky, sharp along the top and soft beneath.
+  // Laid out round the sky rather than on a plane, where they'd crowd into
+  // the horizon's vanishing point instead of lying along it
+  if (u_lent > 0.001 && above && stack && rd.y < 0.42) {
+    float lentA = 0.0;
+    vec2 ld = vec2(sin(az + u_windOff * 0.02), cos(az + u_windOff * 0.02));
+    for (int k = 0; k < 3; k++) {
+      float fk = float(k);
+      float base = 0.055 + fk * 0.052 + (vnoise(ld * 1.1 + 70.0 + fk * 9.0) - 0.5) * 0.05;
+      float n = vnoise(ld * (1.7 + fk * 0.7) + vec2(13.0 + fk * 7.0, u_evo * 0.03)) * 0.72
+              + vnoise(ld * (6.0 + fk * 1.7) + vec2(fk * 3.0, 31.0)) * 0.28;
+      float h = smoothstep(mix(0.60, 0.42, u_lent), 0.82, n) * (0.042 - fk * 0.008);
+      if (h <= 0.0) continue;
+      float ragged = (vnoise(ld * 42.0 + fk) - 0.5) * 0.006;
+      float y = rd.y - base + ragged;
+      float top = 1.0 - smoothstep(h * 0.62 - 0.002, h * 0.62 + 0.003, y);
+      float bot = smoothstep(-h * 0.5 - 0.009, -h * 0.5 + 0.004, y);
+      lentA = max(lentA, top * bot * smoothstep(0.0, 0.010, h));
+    }
+    if (lentA > 0.0) {
+      vec3 lc = cloudColor(lentA, 0.0, 1.0, dayF, nightM, sunsetF, flash, gloom, 1.4, cloudSun, 0.3);
+      lc = mix(lc, vec3(dot(lc, vec3(0.3333))), 0.5) * 0.92;
+      OVER(lc, lentA * smoothstep(0.0, 0.25, u_lent) * 0.95);
+    }
   }
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
   if (u_mid.z > 0.001 && above && stack) {

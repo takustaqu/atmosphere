@@ -113,6 +113,7 @@ export class StateAnimator {
     }
     c.features.anvil += (target.features.anvil - c.features.anvil) * k;
     c.features.velum += (target.features.velum - c.features.velum) * k;
+    c.features.lenticular += (target.features.lenticular - c.features.lenticular) * k;
     // a storm drawing nearer or receding, not one jumping across the miles
     c.features.distance += (target.features.distance - c.features.distance) * k;
     c.features.softness += (target.features.softness - c.features.softness) * k;

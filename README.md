@@ -103,6 +103,7 @@ The named presets are defined with the same observation values, so presets and r
 | `clear` | Clear | 0 | — | 2 | 45 | — |
 | `fair` | Fair | 0.22 | — | 3 | 35 | — |
 | `summer` | Summer sky | 0.38 | — | 3 | 25 | — |
+| `dappled` | Dappled (a sheet of altocumulus) | from its clouds | — | 4 | 25 | — |
 | `overcast` | Overcast | 0.82 | — | 5 | 15 | — |
 | `fog` | Fog | 0.75 | — | 1 | 0.6 | — |
 | `rain` | Rain | 0.95 | 8 | 7 | 8 | 0.08 |
@@ -1091,6 +1092,12 @@ sky.set({ weather: {
 }});
 ```
 
+`altocumulus` past about 0.72 runs together into a sheet: thick in places, a plain
+grey mass, and thin in others, where its cells and the waves that line them up in
+rows show and a low sun comes through pale, over a strip of clear lit air along the
+horizon. `features.lenticular` (0..1, 0 unless asked for) lays long dark lens-shaped
+banks low over the horizon. The `dappled` weather is the two together.
+
 `features.distance` (0..1, default 0.65) is how far off the storm stands. At 0
 its base looms overhead, the tower fills the sky and the anvil spreads right
 above you, mammatus and all; at 1 it is a small storm on the horizon with its
@@ -1156,7 +1163,7 @@ single, smooth white sheet over the tower's flank.
 
 ## Not implemented
 
-- Other variants (lenticular, fallstreak holes, mammatus, pileus, etc.)
+- Other variants (fallstreak holes, mammatus, pileus, etc.)
 - A physical atmospheric-scattering model (colors are hand-tuned, not Rayleigh/Mie)
 - A path for temperature, humidity, and pressure themselves (visibility and cloud cover stand in for now)
 

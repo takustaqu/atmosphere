@@ -2,6 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { resolveWeather, WEATHER_PRESETS, type WeatherId } from '../src/weather';
 import { aggregateCover, DEFAULT_CB_DISTANCE, DEFAULT_CB_SOFTNESS, defaultCloudFeatures, resolveClouds } from '../src/clouds';
 
+describe('the dappled sky', () => {
+  it('is a sheet of altocumulus with lenticular banks under it', () => {
+    const w = resolveWeather('dappled');
+    expect(w.clouds.altocumulus).toBeGreaterThanOrEqual(0.95);
+    expect(w.features.lenticular).toBeGreaterThan(0);
+  });
+
+  it('no other sky has the banks unless it asks', () => {
+    for (const id of Object.keys(WEATHER_PRESETS) as WeatherId[]) {
+      if (id !== 'dappled') expect(resolveWeather(id).features.lenticular).toBe(0);
+    }
+    expect(resolveWeather({ features: { lenticular: 0.4 } }).features.lenticular).toBe(0.4);
+  });
+
+  it('no sky left to build its own clouds reaches the sheet', () => {
+    for (const cover of [0, 0.3, 0.5, 0.6, 0.7, 0.9, 1]) {
+      expect(resolveWeather({ cloudCover: cover }).clouds.altocumulus).toBeLessThanOrEqual(0.72);
+    }
+  });
+});
+
 describe('resolveWeather precipitation', () => {
   it('rain saturates at 30mm/h and stays saturated beyond', () => {
     expect(resolveWeather({ precipitation: 30 }).rain).toBe(1);

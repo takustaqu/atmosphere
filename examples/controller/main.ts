@@ -15,7 +15,7 @@ import {
   CLOUD_GENERA, CLOUD_GENERA_IDS, CUBE_FACE_CAMERAS, DEFAULT_CB_DISTANCE, DEFAULT_CB_SOFTNESS,
   FILTER_IDS, QUALITY_IDS, WEATHER_IDS, WEATHER_PRESETS,
   cloudGenusLabel, filterLabel, weatherLabel,
-  formatTod, resolveConditions,
+  formatTod, resolveClouds, resolveConditions,
   type CloudMix, type Conditions,
   type CelestialId, type FilterId, type PolarizerId, type ToneId, type GeoLocation, type Weather, type WeatherId,
   type AtmosphereLight, type LightSample, type CumulonimbusMode, type QualityPreset,
@@ -57,7 +57,7 @@ const ui = {
   cloudMode: 'auto' as 'auto' | 'manual',
   clouds: Object.fromEntries(CLOUD_GENERA_IDS.map((g) => [g, 0])) as CloudMix,
   featureMode: 'auto' as 'auto' | 'manual',
-  features: { anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS },
+  features: { anvil: 0, velum: 0, lenticular: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS },
   filter: 'none' as FilterId,
   tone: { ...TONE_PRESETS.neutral } as { exposure: number; contrast: number; knee: number; bleach: number },
   polarizer: { ...POLARIZER_PRESETS.none } as {
@@ -134,7 +134,7 @@ function conditionsNow(): Conditions {
       // (the storm's distance and softness are not derived from anything,
       // so they are passed either way; only the forms follow the development)
       features: ui.featureMode === 'manual' ? ui.features
-        : { distance: ui.features.distance, softness: ui.features.softness },
+        : { lenticular: ui.features.lenticular, distance: ui.features.distance, softness: ui.features.softness },
     } as Weather,
     filter: ui.filter,
     celestial: ui.celestial,
@@ -287,7 +287,14 @@ syncers.push(chips(
       convection: p.convection ?? 0,
       icePlates: 0,
     };
-    ui.cloudMode = 'auto';
+    // (a preset that names its clouds, rather than a cover to build them from)
+    if (p.clouds) {
+      ui.clouds = { ...ui.clouds, ...resolveClouds(p.clouds) };
+      ui.cloudMode = 'manual';
+    } else {
+      ui.cloudMode = 'auto';
+    }
+    ui.features.lenticular = p.features?.lenticular ?? 0;
     ui.featureMode = 'auto';
   },
 ));
@@ -497,7 +504,7 @@ syncers.push(chips(
   (id) => ui.featureMode === id,
   (id) => {
     if (id === 'manual' && ui.featureMode === 'auto') {
-      ui.features = { ...sky.state.features, distance: ui.features.distance, softness: ui.features.softness };
+      ui.features = { ...sky.state.features, lenticular: ui.features.lenticular, distance: ui.features.distance, softness: ui.features.softness };
     }
     ui.featureMode = id as 'auto' | 'manual';
   },
@@ -506,6 +513,8 @@ syncers.push(slider('Anvil', 0, 1, 0.01,
   () => ui.features.anvil, (v) => { ui.features.anvil = v; ui.featureMode = 'manual'; }, (v) => v.toFixed(2)));
 syncers.push(slider('Veil', 0, 1, 0.01,
   () => ui.features.velum, (v) => { ui.features.velum = v; ui.featureMode = 'manual'; }, (v) => v.toFixed(2)));
+syncers.push(slider('Lenticular banks', 0, 1, 0.01,
+  () => ui.features.lenticular, (v) => { ui.features.lenticular = v; }, (v) => v.toFixed(2)));
 note('How far off the storm stands: near, its base high over the horizon and the '
   + 'anvil spreading overhead; far, a small tower on the horizon, washed into its haze.');
 syncers.push(slider('Distance', 0, 1, 0.01,

@@ -51,7 +51,7 @@ export interface Weather {
 }
 
 export type WeatherId =
-  | 'clear' | 'fair' | 'summer' | 'overcast' | 'fog'
+  | 'clear' | 'fair' | 'summer' | 'dappled' | 'overcast' | 'fog'
   | 'rain' | 'thunderstorm' | 'snow' | 'typhoon';
 
 export interface WeatherPreset extends Weather {
@@ -63,6 +63,7 @@ export const WEATHER_PRESETS: Record<WeatherId, WeatherPreset> = {
   clear:        { label: 'Clear',        cloudCover: 0,    windSpeed: 2,  visibility: 45 },
   fair:         { label: 'Fair',         cloudCover: 0.22, windSpeed: 3,  visibility: 35 },
   summer:       { label: 'Summer sky',   cloudCover: 0.38, windSpeed: 3,  visibility: 25, convection: 0.7 },
+  dappled:      { label: 'Dappled',      clouds: { altocumulus: 1, altostratus: 0.2 }, features: { lenticular: 0.8 }, windSpeed: 4, visibility: 25 },
   overcast:     { label: 'Overcast',     cloudCover: 0.82, windSpeed: 5,  visibility: 15 },
   fog:          { label: 'Fog',          cloudCover: 0.75, windSpeed: 1,  visibility: 0.6 },
   rain:         { label: 'Rain',         cloudCover: 0.95, windSpeed: 7,  visibility: 8,  precipitation: 8, thunder: 0.08 },
@@ -157,6 +158,7 @@ export function resolveWeather(input: WeatherInput): WeatherState {
     features: {
       anvil: clamp01(w.features?.anvil ?? auto.anvil),
       velum: clamp01(w.features?.velum ?? auto.velum),
+      lenticular: clamp01(w.features?.lenticular ?? auto.lenticular),
       distance: clamp01(w.features?.distance ?? auto.distance),
       softness: clamp01(w.features?.softness ?? auto.softness),
     },

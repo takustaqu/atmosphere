@@ -113,7 +113,7 @@ describe('defaultCloudMix', () => {
 
 describe('defaultCloudFeatures', () => {
   it('no cumulonimbus means no companion forms', () => {
-    expect(defaultCloudFeatures(0)).toEqual({ anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS });
+    expect(defaultCloudFeatures(0)).toEqual({ anvil: 0, velum: 0, lenticular: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS });
   });
 
   it('the storm stands at the middle distance however developed it is', () => {

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- **Altocumulus as a sheet, and lenticular banks: the `dappled` weather.**
+  `altocumulus` past about 0.72 now runs together into a layer over the whole sky,
+  where it used to stay separate flocks with blue between: thick in places, a plain
+  grey mass with hardly a mark on it, thin in others, where its cells show, the waves
+  of the air (undulatus) line them up in rows, and a low sun comes through pale, over
+  a strip of clear lit air along the horizon. `features.lenticular` (0..1, 0 unless
+  asked for) lays long dark lens-shaped banks low over the horizon, flat and smooth
+  against the bright sky. Every sky that doesn't reach either is the same to the pixel
+  (eight scenes, including altocumulus at 0.70 and 0.72), and carrying the code costs
+  no more than the measuring wanders. A cloudy frame of it is about what a fair one is.
+
 ### Changed
 
 - **A towering sky appears in seconds on a first visit to Windows, not tens of

@@ -31,6 +31,7 @@ export const WEATHER_LABELS: Record<Locale, Record<WeatherId, string>> = {
     clear: '快晴',
     fair: '晴れ',
     summer: '夏空',
+    dappled: 'ひつじ雲',
     overcast: '曇り',
     fog: '霧',
     rain: '雨',

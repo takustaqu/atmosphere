@@ -128,7 +128,7 @@ const UNIFORM_NAMES = [
   'u_noise', 'u_noiseQ', 'u_turrets',
   'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun', 'u_moon', 'u_moonEclipse',
   'u_cover', 'u_high', 'u_mid', 'u_low',
-  'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat',
+  'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat', 'u_lent',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift',
@@ -1920,6 +1920,7 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_wind, s.wind);
     gl.uniform1f(u.u_thunder, s.thunder);
     gl.uniform1f(u.u_haze, s.haze);
+    gl.uniform1f(u.u_lent, s.features.lenticular);
     gl.uniform4f(u.u_cbFeat, s.features.anvil, s.features.velum, s.features.distance, s.features.softness);
     gl.uniform1f(u.u_windOff, windOff);
     gl.uniform1f(u.u_evo, evo);

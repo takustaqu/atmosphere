@@ -65,6 +65,13 @@ export type CloudMix = Record<CloudGenus, number>;
  * development when omitted.
  */
 export interface CloudFeatures {
+  /**
+   * 0..1 lenticular banks: long dark lens-shaped clouds low over the horizon,
+   * smooth and flat, standing against the bright sky under a higher layer.
+   * Not one of the cumulonimbus's forms, but a species set on the sky as they
+   * are; 0 unless asked for.
+   */
+  lenticular: number;
   /** 0..1 anvil cloud (incus): the ice-crystal head spreading at the tropopause */
   anvil: number;
   /** 0..1 veil cloud (velum): a thin sheet draped like cloth over the tower's flank */
@@ -96,7 +103,7 @@ export const DEFAULT_CB_DISTANCE = 0.65;
 /** A little of the way from cauliflower toward cotton candy */
 export const DEFAULT_CB_SOFTNESS = 0.6;
 
-export const NO_FEATURES: CloudFeatures = { anvil: 0, velum: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS };
+export const NO_FEATURES: CloudFeatures = { anvil: 0, velum: 0, lenticular: 0, distance: DEFAULT_CB_DISTANCE, softness: DEFAULT_CB_SOFTNESS };
 
 /**
  * Derive the companion forms from how developed the cumulonimbus is.
@@ -108,6 +115,8 @@ export function defaultCloudFeatures(cumulonimbus: number): CloudFeatures {
   return {
     anvil: ramp(cb, 0.68, 1.0),
     velum: ramp(cb, 0.22, 0.50) * (1 - ramp(cb, 0.68, 0.95)),
+    // (nothing to do with the tower: wave clouds are the air's, and asked for)
+    lenticular: 0,
     // how developed a storm is says nothing of where it stands
     distance: DEFAULT_CB_DISTANCE,
     softness: DEFAULT_CB_SOFTNESS,
