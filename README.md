@@ -146,6 +146,9 @@ precipitation, convection, and visibility (`defaultCloudMix`). A weather API
 returns cloud cover, not genera, so that pass-through path lands here. It
 follows an ordinary sky's makeup: cotton clouds and cirrus when clouds are
 sparse, stratocumulus and altostratus as they thicken, nimbostratus once it's raining.
+A genus that would come out too thin to show (high cloud behind an overcast's
+deck, a trace of cumulus) is left out, since a layer costs its full time
+however little of it there is.
 
 ## Time and location
 
@@ -923,7 +926,9 @@ when their state is on, because a block that is never run still costs every
 frame by being there. The light from behind — the backlit and side-lit
 shading of the towers and the cumulus — is left out of a view turned away
 from the sun as well, where none of it can show: a frame of towers seen with
-the sun behind or beside you is about a tenth lighter for it. The parhelia
+the sun behind or beside you is about a tenth lighter for it. So are a thin
+cloud's colors by the sun (iridescence) out of a view that comes nowhere near
+it, for another 5 to 8% on most cloudy skies. The parhelia
 have a program of their own that redraws only the small rectangles they can
 fall in, over the frame drawn without them, so a sky with them costs a few
 percent with a parhelion in view and nothing otherwise, and isn't compiled at all
@@ -955,6 +960,8 @@ not compile — `onSettled(false)` fires along with `onReady(false)`, and
 It costs a frame nothing to speak of: a look over the variants in hand. Driving
 `AtmosphereRenderer` yourself, `renderer.isSettled(state)` answers the same
 after `renderer.prepare(state)`; under `compile: 'sync'` it is always true.
+Give `prepare` the camera as well (`renderer.prepare(state, camera)`) and it
+starts the program a frame of that view asks for ahead of the whole sky's.
 
 ## Internationalization
 

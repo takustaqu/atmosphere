@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+
+- **An overcast sky is drawn in a little over half the time.** With no `clouds`
+  given, the mix made from the cloud cover hides the high clouds behind the deck
+  and smooths the cumulus into it along ramps that end in long tails, and at the
+  `overcast` weather's cover of 0.82 the tails were still there: cirrus at 0.011,
+  cirrostratus at 0.007, cirrocumulus at 0.006 and cumulus at 0.0208, a hair over
+  the 0.02 the cumulus is drawn from. Each was a layer drawn in full, the veil
+  brought the halos' code with it and the cumulus the light from behind, and
+  between them they were 43% of the frame for a picture they moved by at most two
+  levels of 255. The mix now ends those tails at nothing: the high clouds go when
+  under a fiftieth of them would show past the deck (a cover of 0.817 and up), and
+  cumulus under 0.025, where its lumps' opacity is a thousandth, is not asked for.
+  `overcast` at 1080p on an M2 Max goes from 4.4 to 2.5 ms. Against the old
+  picture no pixel differs by more than 2 levels, and under one in ten thousand
+  by 2: an eighth of them by one level on average, a fifth at most (132 views,
+  at eleven hours of the day and night). Every other weather, and any sky with
+  `clouds` given, is the same to the pixel.
+- **A thin cloud's colors by the sun are left out of a view that comes nowhere
+  near it.** Iridescence shows within 0.30 rad of the sun's limb and is exactly
+  nothing past that, but the program carrying it was slower all over the frame.
+  A view none of whose rays come that near is now drawn without it, as a view
+  turned away from the sun already was without the light from behind: 5 to 8%
+  less GPU time on a fair, a summer, a foggy, a snowy or a stormy sky, 2% on a
+  rainy one (M2 Max, 1080p), with a view of the sun unchanged. The pictures are the same
+  but for the rounding of a recompiled program: at most 46 of a 640×360 frame's
+  691,200 bytes, by one level, in a shower with the sun out, and none at all in
+  snow, rain or a thunderstorm (288 views of each, all the way round). Such a sky
+  now has two programs where it had one (the view's, and the whole sky's for when
+  the view turns), linked one after the other, so where links are slow it is
+  `settled` later, though drawn no later.
+- **A start links the view's own program first.** `prepare()` takes the camera
+  (`renderer.prepare(state, camera)`; `Atmosphere` passes its own), and starts
+  the program a frame of that view will ask for ahead of the whole sky's. Without
+  it the whole sky's was started first and the first frame started its own beside
+  it: a fair sky seen with the sun behind had two links running at once at every
+  start, each slowing the other where links are slow.
+
 ## 0.12.1 — 2026-11-09
 
 ### Added
