@@ -147,6 +147,25 @@ export function resolveClouds(input: CloudsInput): CloudMix {
 }
 
 /**
+ * How much of the high clouds a deck has to leave in view for the default mix
+ * to keep them. The ramp that hides them is smooth, so it ends in a long tail:
+ * at the `overcast` weather's cover of 0.82 it left cirrus at 0.011,
+ * cirrostratus at 0.007 and cirrocumulus at 0.006. Each is a layer drawn in
+ * full, and the veil brings the halos' code into the program with it, for a
+ * picture no pixel of which they moved by more than two levels of 255 (at
+ * seven hours of the day, from six views).
+ */
+const ALOFT_GONE = 0.02;
+
+/**
+ * The least cumulus the default mix asks for. The layer fades in from 0.02
+ * (the shader's own gate) and its lumps' opacity starts flat: under 0.025 it
+ * is a thousandth, which moved a pixel in a thousand by one level. An overcast
+ * was left with 0.0208 of it — the heaviest layer, a quarter of the frame.
+ */
+const CUMULUS_SHOWS = 0.025;
+
+/**
  * Build a plausible cloud-genus mix from cloud cover, precipitation,
  * convection and haze when no genera were specified.
  *
@@ -164,10 +183,18 @@ export function defaultCloudMix(
   const c = clamp01(cover);
   const wet = clamp01(precipitation);
   const dry = 1 - wet;
-  // as cover increases, high clouds get hidden behind the lower deck
-  const visibleAloft = 1 - ramp(c, 0.45, 0.85);
+  // as cover increases, high clouds get hidden behind the lower deck — and
+  // are gone a little before the ramp's end: its last fiftieth left a hundredth
+  // of each behind an overcast's deck, where together they moved no pixel by
+  // more than two levels and took a fifth of the frame (see ALOFT_GONE)
+  const aloft = 1 - ramp(c, 0.45, 0.85);
+  const visibleAloft = aloft < ALOFT_GONE ? 0 : aloft;
   // as cover increases, billowing cumulus gets smoothed into a single sheet
   const stillLumpy = 1 - ramp(c, 0.50, 0.85);
+  // Cumulus covers about its amount less a fifth of the sky (0.6 → 40%,
+  // 1 → 80%), so it follows the cover rather than reaching its ceiling
+  // by 0.35 — where a sky reported a third cloudy came out nine tenths
+  const cumulus = ramp(c, 0.02, 0.10) * Math.min(1, 0.22 + c * 0.95) * stillLumpy * dry;
 
   return {
     cirrus:        ramp(c, 0.02, 0.45) * 0.70 * visibleAloft,
@@ -178,10 +205,7 @@ export function defaultCloudMix(
     nimbostratus:  wet * ramp(c, 0.50, 0.85),
     stratus:       ramp(c, 0.50, 0.90) * haze * 0.90,
     stratocumulus: ramp(c, 0.30, 0.75) * 0.85 * (1 - wet * 0.7),
-    // Cumulus covers about its amount less a fifth of the sky (0.6 → 40%,
-    // 1 → 80%), so it follows the cover rather than reaching its ceiling
-    // by 0.35 — where a sky reported a third cloudy came out nine tenths
-    cumulus:       ramp(c, 0.02, 0.10) * Math.min(1, 0.22 + c * 0.95) * stillLumpy * dry,
+    cumulus:       cumulus < CUMULUS_SHOWS ? 0 : cumulus,
     // Cap convection by cloud cover. Cumulonimbus is itself a cloud, so a
     // towering cumulonimbus in a sky reported as zero cloud cover is a
     // contradiction.

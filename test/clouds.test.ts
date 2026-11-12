@@ -105,6 +105,27 @@ describe('defaultCloudMix', () => {
     }
   });
 
+  it('leaves no layer at an amount too small to show', () => {
+    // each of these was a layer drawn in full for nothing: see ALOFT_GONE, CUMULUS_SHOWS
+    const overcast = defaultCloudMix(0.82, 0, 0, 0.027);
+    expect(overcast.cirrus).toBe(0);
+    expect(overcast.cirrostratus).toBe(0);
+    expect(overcast.cirrocumulus).toBe(0);
+    expect(overcast.cumulus).toBe(0);
+    for (let c = 0; c <= 1; c += 0.001) {
+      const mix = defaultCloudMix(c, 0, 0, 0);
+      if (mix.cumulus > 0) expect(mix.cumulus).toBeGreaterThanOrEqual(0.025);
+      if (c > 0.6 && mix.cirrus > 0) expect(mix.cirrus).toBeGreaterThan(0.012);
+    }
+  });
+
+  it('keeps the high clouds and the cumulus a deck still shows', () => {
+    const mix = defaultCloudMix(0.80, 0, 0, 0);
+    expect(mix.cirrus).toBeCloseTo(0.0301, 3);
+    expect(mix.cirrostratus).toBeCloseTo(0.0193, 3);
+    expect(mix.cumulus).toBeCloseTo(0.0543, 3);
+  });
+
   it('convection is capped by cloud cover: no thunderhead in a reported clear sky', () => {
     expect(defaultCloudMix(0, 0, 1, 0).cumulonimbus).toBe(0);
     expect(defaultCloudMix(0.5, 0, 1, 0).cumulonimbus).toBeGreaterThan(0);
