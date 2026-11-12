@@ -279,11 +279,13 @@ export class Atmosphere {
       timing: !!adaptive,
       skyCache: options.skyCache,
     });
-    // start the shader variant this sky needs linking now, not at the first frame
-    this.renderer.prepare(this.target);
     this.animator = new StateAnimator(this.target, options.animator);
 
     this.resize();
+    // start the shader variant this sky needs linking now, not at the first
+    // frame: this view's own, which goes by the frame's shape, so once the
+    // canvas has its size
+    this.renderer.prepare(this.target, this.cam);
     if (typeof ResizeObserver !== 'undefined') {
       this.observer = new ResizeObserver(() => this.resize());
       this.observer.observe(canvas);
@@ -405,7 +407,7 @@ export class Atmosphere {
   get cumulonimbus(): CumulonimbusMode { return this.renderer.cumulonimbus; }
   set cumulonimbus(v: CumulonimbusMode) {
     this.renderer.cumulonimbus = v;
-    this.renderer.prepare(this.target);
+    this.renderer.prepare(this.target, this.cam);
     this.checkSettled();
     if (this.wantRunning && !this.raf) this.draw(performance.now());
   }
@@ -559,7 +561,7 @@ export class Atmosphere {
     if (c.camera) this.cam = resolveCamera({ ...this.cam, ...c.camera });
     // a feature the new target brings in gets its variant compiling now,
     // ahead of the transition that will cross its threshold
-    this.renderer.prepare(this.target);
+    this.renderer.prepare(this.target, this.cam);
     // (and the sky is unsettled from now until it links)
     this.checkSettled();
   }

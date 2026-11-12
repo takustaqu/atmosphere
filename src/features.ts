@@ -9,6 +9,7 @@
 import { parheliaPlates } from './parhelia.js';
 import type { RendererOptions } from './renderer.js';
 import type { AtmosphereState, Camera } from './state.js';
+import { sunShape } from './sundisc.js';
 
 /**
  * The optional parts of the shader, as bits of a key. Each is a block that
@@ -231,21 +232,60 @@ export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number
     const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
     return t * t * (3 - 2 * t);
   };
-  const ce = Math.cos(s.sunElevation);
-  const sun: [number, number, number] = [ce * Math.sin(s.sunAzimuth), Math.sin(s.sunElevation), ce * Math.cos(s.sunAzimuth)];
+  const sun = sunDirection(s);
   const sunY = sun[1];
   const lowS = 1 - smooth(0.20, 0.55, sunY);
   const lift = smooth(0.15, 0.60, sunY);
   // [the tower's squash, its reach] and the cumulus's
   const gates: [number, number][] = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 1.0 + 0.3 * smooth(0.30, 0.50, sunY)]];
+  const rays = viewRays(s, camera, aspect);
+  return gates.some(([q, reach]) => leastAngle(rays, sun, q) < reach + 0.02);
+}
+
+/**
+ * Whether any ray of a view passes near enough the sun for a thin cloud to be
+ * colored by it — whether FEATURE.IRIDESCENCE can draw anything in it. Its
+ * light is the sun's carried on forward, and the shader cuts that off 0.30 rad
+ * out from the limb (g_sunFwd): past it every term is exactly nothing, and the
+ * program carrying them was 7 to 10% slower for it on a fair, a summer, an
+ * overcast or a snowy sky, 2 to 3% on a rainy one (an M2 Max, 1080p, looking
+ * away from the sun, the light from behind already left out). So keysFor
+ * leaves the feature out of such a frame, as it does that light (see
+ * {@link backlitInView}, and for how the grid is read) — the same picture,
+ * pixel for pixel.
+ */
+export function iridescenceInView(s: AtmosphereState, camera: Camera, aspect: number): boolean {
+  const limb = sunShape(s.sun.disc)[2];
+  const rays = viewRays(s, camera, aspect), sun = sunDirection(s);
+  // (the sky as it is, unsquashed: the nearest ray is the one with the greatest cosine)
+  let near = -1;
+  for (const r of rays) near = Math.max(near, r[0] * sun[0] + r[1] * sun[1] + r[2] * sun[2]);
+  return Math.acos(Math.min(near, 1)) - gridCell(rays) < 0.30 + limb + 0.02;
+}
+
+type Vec3 = [number, number, number];
+
+/** where the sun stands, as the shader's sunDir */
+function sunDirection(s: AtmosphereState): Vec3 {
+  const ce = Math.cos(s.sunElevation);
+  return [ce * Math.sin(s.sunAzimuth), Math.sin(s.sunElevation), ce * Math.cos(s.sunAzimuth)];
+}
+
+const NX = 24, NY = 16;
+
+// the last view's grid: a view is asked about every frame, by each gate, and seldom turns
+let lastGrid: { yaw: number; pitch: number; fov: number; aspect: number; span: number; rays: Vec3[]; cell: number } | null = null;
+
+/** the view's rays on a grid, as the shader's viewRay casts them: over a frame wider by what drops on the lens can bend them */
+function viewRays(s: AtmosphereState, camera: Camera, aspect: number): Vec3[] {
   const drops = s.rain > 0.05 && s.lens.droplets > 0.001;
   const span = drops ? 1.6 : 1;
-  const NX = 24, NY = 16;
+  const g = lastGrid;
+  if (g && g.yaw === camera.yaw && g.pitch === camera.pitch && g.fov === camera.fov && g.aspect === aspect && g.span === span) return g.rays;
   const t = Math.tan(camera.fov * 0.5);
   const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
   const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
-  // the view's rays on the grid, as the shader's viewRay casts them
-  const rays: [number, number, number][] = [];
+  const rays: Vec3[] = [];
   for (let j = 0; j <= NY; j++) {
     for (let i = 0; i <= NX; i++) {
       const x = (i / NX * 2 - 1) * span * aspect * t, y = (j / NY * 2 - 1) * span * t;
@@ -255,25 +295,45 @@ export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number
       rays.push([dx * cy + dz * sy, dy, -dx * sy + dz * cy]);
     }
   }
-  const squash = (v: [number, number, number], q: number): [number, number, number] => {
+  lastGrid = { yaw: camera.yaw, pitch: camera.pitch, fov: camera.fov, aspect, span, rays, cell: -1 };
+  return rays;
+}
+
+const angle = (a: Vec3, b: Vec3) => Math.acos(Math.min(Math.max(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1), 1));
+
+/** the most any cell of a grid of rays spans, corner to corner: a ray between grid points lies within that of one */
+function cellSpan(r: Vec3[]): number {
+  let cell = 0;
+  for (let j = 0; j < NY; j++) {
+    for (let i = 0; i < NX; i++) {
+      const k = j * (NX + 1) + i;
+      cell = Math.max(cell, angle(r[k], r[k + NX + 2]), angle(r[k + 1], r[k + NX + 1]));
+    }
+  }
+  return cell;
+}
+
+/** {@link cellSpan} of a view's own grid, kept with it */
+function gridCell(rays: Vec3[]): number {
+  if (lastGrid?.rays !== rays) return cellSpan(rays);
+  if (lastGrid.cell < 0) lastGrid.cell = cellSpan(rays);
+  return lastGrid.cell;
+}
+
+/**
+ * The least angle any ray of a view can make with a direction, in a sky
+ * squashed by q: the least on the grid, less the most any cell of it spans
+ */
+function leastAngle(rays: Vec3[], to: Vec3, q: number): number {
+  const squash = (v: Vec3): Vec3 => {
     const l = Math.hypot(v[0], v[1] * q, v[2]);
     return [v[0] / l, v[1] * q / l, v[2] / l];
   };
-  const ang = (a: number[], b: number[]) => Math.acos(Math.min(Math.max(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1), 1));
-  for (const [q, reach] of gates) {
-    const b = squash(sun, q);
-    const r = rays.map((v) => squash(v, q));
-    let least = Infinity, cell = 0;
-    for (let j = 0; j <= NY; j++) {
-      for (let i = 0; i <= NX; i++) {
-        const k = j * (NX + 1) + i;
-        least = Math.min(least, ang(r[k], b));
-        if (i < NX && j < NY) cell = Math.max(cell, ang(r[k], r[k + NX + 2]), ang(r[k + 1], r[k + NX + 1]));
-      }
-    }
-    if (least - cell < reach + 0.02) return true;
-  }
-  return false;
+  const b = squash(to);
+  const r = rays.map(squash);
+  let least = Infinity;
+  for (const v of r) least = Math.min(least, angle(v, b));
+  return least - cellSpan(r);
 }
 
 /**

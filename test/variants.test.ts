@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, CACHE_BUILD, CB_AUTO_BAND, FEATURE, SPLIT_KEY, backlitInView, cbVolumetricShare, featureKey, featureKeys, firstPaintKey } from '../src/features.js';
+import { ALL_FEATURES, CACHE_BUILD, CB_AUTO_BAND, FEATURE, SPLIT_KEY, backlitInView, cbVolumetricShare, featureKey, featureKeys, firstPaintKey, iridescenceInView } from '../src/features.js';
 import { parhelionAzimuth, parheliaAmounts, parheliaPlates, parheliaRects, parheliaShape } from '../src/parhelia.js';
 import { stackSignature } from '../src/skycache.js';
 import { resolveWeather } from '../src/weather.js';
@@ -531,6 +531,80 @@ describe('backlitInView', () => {
     for (let k = 0; k < 64; k++) {
       const cam = { yaw: wet.sunAzimuth + 0.6 + k * 0.05, pitch: Math.max(wet.sunElevation, 0.1), fov: 0.86 };
       const a = backlitInView(wet, cam, 16 / 9), b = backlitInView(dry, cam, 16 / 9);
+      if (a !== b) differ++;
+      if (!a) expect(b).toBe(false);
+    }
+    expect(differ).toBeGreaterThan(0);
+  });
+});
+
+describe('iridescenceInView', () => {
+  // the shader's own cutoff (g_sunFwd: nothing 0.30 rad out from the limb),
+  // over a dense sweep of a view's rays: the least margin by which any ray
+  // stays out of it, negative if one is inside
+  const margin = (s: ReturnType<typeof resolveConditions>, cam: { yaw: number; pitch: number; fov: number }, aspect: number, limb = 0.035) => {
+    const ce = Math.cos(s.sunElevation);
+    const sun = [ce * Math.sin(s.sunAzimuth), Math.sin(s.sunElevation), ce * Math.cos(s.sunAzimuth)];
+    const t = Math.tan(cam.fov / 2);
+    let least = Infinity;
+    for (let j = 0; j <= 90; j++) for (let i = 0; i <= 160; i++) {
+      const x = (i / 160 * 2 - 1) * aspect * t, y = (j / 90 * 2 - 1) * t, l = Math.hypot(x, y, 1);
+      const d0 = [x / l, y / l, 1 / l];
+      const d1 = [d0[0], d0[1] * Math.cos(cam.pitch) + d0[2] * Math.sin(cam.pitch), -d0[1] * Math.sin(cam.pitch) + d0[2] * Math.cos(cam.pitch)];
+      const rd = [d1[0] * Math.cos(cam.yaw) + d1[2] * Math.sin(cam.yaw), d1[1], -d1[0] * Math.sin(cam.yaw) + d1[2] * Math.cos(cam.yaw)];
+      const c = rd[0] * sun[0] + rd[1] * sun[1] + rd[2] * sun[2];
+      least = Math.min(least, Math.acos(Math.min(Math.max(c, -1), 1)) - limb - 0.30);
+    }
+    return least;
+  };
+
+  it('keeps the colors for a view of the sun, and leaves them out turned away', () => {
+    const s = resolveConditions({ time: 15, weather: 'snow' });
+    const toward = { yaw: s.sunAzimuth, pitch: Math.max(s.sunElevation, 0.2), fov: 0.86 };
+    expect(iridescenceInView(s, toward, 16 / 9)).toBe(true);
+    expect(iridescenceInView(s, { ...toward, yaw: s.sunAzimuth + Math.PI }, 16 / 9)).toBe(false);
+  });
+
+  it('never leaves them out of a view any ray of which they can reach', () => {
+    // as for the light from behind: kept wherever the dense sweep finds a ray
+    // within reach, and left out of a view that clears it by a third of a radian
+    // (the allowance is the grid's cell, widest in the corners of a wide view)
+    let out = 0;
+    for (const time of [6.3, 7, 9, 12, 15, 17.6]) {
+      const s = resolveConditions({ time, weather: 'fair' });
+      for (let k = 0; k < 16; k++) for (const pitch of [-0.3, 0.25, 0.8, 1.4]) for (const fov of [0.5, 1.25, 2.0]) {
+        const cam = { yaw: k / 16 * 2 * Math.PI, pitch, fov };
+        const m = margin(s, cam, 16 / 9);
+        const kept = iridescenceInView(s, cam, 16 / 9);
+        if (m < 0) expect(kept).toBe(true);
+        if (m > 0.35) expect(kept).toBe(false);
+        if (!kept) out++;
+      }
+    }
+    expect(out).toBeGreaterThan(400);
+  }, 30_000);
+
+  it('reaches further from a sun drawn larger', () => {
+    const s = resolveConditions({ time: 15, weather: 'fair' });
+    const big = resolveConditions({ time: 15, weather: 'fair', sun: { disc: 10 } });
+    let differ = 0;
+    for (let k = 0; k < 64; k++) {
+      const cam = { yaw: s.sunAzimuth + 0.9 + k * 0.01, pitch: Math.max(s.sunElevation, 0.1), fov: 0.86 };
+      const a = iridescenceInView(big, cam, 16 / 9), b = iridescenceInView(s, cam, 16 / 9);
+      if (a !== b) differ++;
+      if (!a) expect(b).toBe(false);
+      if (margin(big, cam, 16 / 9, 0.035 * 10 / 3.39) < 0) expect(a).toBe(true);
+    }
+    expect(differ).toBeGreaterThan(0);
+  });
+
+  it('widens the window under a lens with drops on it', () => {
+    const wet = resolveConditions({ time: 15, weather: { cloudCover: 0.3, precipitation: 3 }, lens: { droplets: 1 } });
+    const dry = { ...wet, lens: { ...wet.lens, droplets: 0 } };
+    let differ = 0;
+    for (let k = 0; k < 64; k++) {
+      const cam = { yaw: wet.sunAzimuth + 0.6 + k * 0.05, pitch: Math.max(wet.sunElevation, 0.1), fov: 0.86 };
+      const a = iridescenceInView(wet, cam, 16 / 9), b = iridescenceInView(dry, cam, 16 / 9);
       if (a !== b) differ++;
       if (!a) expect(b).toBe(false);
     }

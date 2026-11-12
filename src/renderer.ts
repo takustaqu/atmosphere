@@ -18,7 +18,7 @@
 import { CLOUD_GENERA_IDS, type CloudMix } from './clouds.js';
 import {
   ALL_FEATURES, CACHE_BITS, CACHE_BUILD, CACHE_COMP, CB_AUTO_BAND, FEATURE, SPLIT_KEY, firstPaintKey,
-  backlitInView, cbModeOf, featureKeys, type CumulonimbusMode,
+  backlitInView, cbModeOf, featureKeys, iridescenceInView, type CumulonimbusMode,
 } from './features.js';
 import { type ColorSpaceOption } from './gamut.js';
 import {
@@ -579,6 +579,13 @@ export class AtmosphereRenderer {
         && !backlitInView(s, camera, aspect)) {
       for (const k of ks) if (!(k.key & FEATURE.CB) || (k.key & FEATURE.CBVOL)) k.key &= ~FEATURE.BACKLIT;
     }
+    // nor a thin cloud's colors by the sun in a view that comes nowhere near
+    // it (see iridescenceInView), under either tower: they are the cloud
+    // layers' alone
+    if (camera && this.parallel && this.opts.variants !== false && (ks[0].key & FEATURE.IRIDESCENCE)
+        && !iridescenceInView(s, camera, aspect)) {
+      for (const k of ks) k.key &= ~FEATURE.IRIDESCENCE;
+    }
     return ks;
   }
 
@@ -704,10 +711,22 @@ export class AtmosphereRenderer {
    * it is linked by the time the first frame asks. `Atmosphere` calls this
    * with its target on construction and on every `set()`, well ahead of the
    * transition that crosses a feature's threshold.
+   *
+   * @param camera the view it will be drawn in, if known. A view leaves out
+   *   what cannot be seen in it (the light from behind, a thin cloud's colors
+   *   by the sun: see keysFor), and a frame of it asks for that program, not
+   *   the whole sky's. Given the view, that one is started first and the whole
+   *   sky's behind it; without, the whole sky's is, and the first frame starts
+   *   its own beside it, each link slowing the other where links are slow.
    */
-  prepare(s: AtmosphereState): void {
+  prepare(s: AtmosphereState, camera?: Camera): void {
     if (!this.gl || this.lost) return;
     const keys = this.programsFor(s);
+    if (camera) {
+      const view = this.keysFor(s, camera, this.canvas.width / Math.max(1, this.canvas.height));
+      if (view.length === 1 && this.parheliaApart(s)) view[0].key &= ~FEATURE.PARHELIA;
+      view.reverse().forEach((k) => { if (!keys.includes(k.key)) keys.unshift(k.key); });
+    }
     // (what the first frame will ask for: without the parhelia, drawn apart)
     if (this.current === null) this.wanted = keys[0];
     keys.forEach((key, i) => { if (i === 0) this.ensure(key); else this.ensureLater(key); });
@@ -1152,8 +1171,10 @@ export class AtmosphereRenderer {
     const key = this.keysFor(s)[0].key;
     if (!(key & FEATURE.PARHELIA) || (main.key & FEATURE.PARHELIA)) return;
     // (over this very sky, not a stand-in for it while its own links; the
-    // light from behind is left out of a frame only where it would draw nothing)
-    if ((main.key | FEATURE.BACKLIT | FEATURE.PARHELIA) !== (key | FEATURE.BACKLIT)) return;
+    // light from behind and the colors by the sun are left out of a frame only
+    // where they would draw nothing)
+    const byView = FEATURE.BACKLIT | FEATURE.IRIDESCENCE;
+    if ((main.key | byView | FEATURE.PARHELIA) !== (key | byView)) return;
     const w = this.canvas.width, h = this.canvas.height;
     const rects = parheliaRects(s, camera, w, h, evo);
     if (!rects.length) return;
