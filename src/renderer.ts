@@ -69,27 +69,6 @@ interface Variant {
 const TIME_WRAP_SEC = 4096;
 
 /**
- * The direction the snow falls in, for a camera: straight down, leaned toward
- * the view's own down by how far the view is tilted. The snowflakes are drawn
- * from a thin shell of a 3D lattice around the eye, so motion along the view
- * ray carries them out of it — straight down while looking up, they blinked
- * rather than fell. Leaning the fall to be square to the view keeps them in
- * the shell across the middle of the frame. Level, the lean is nothing; looking
- * straight up it fades again, and the flakes come at the camera.
- */
-export function snowFallDir(camera: Pick<Camera, 'yaw' | 'pitch'>): [number, number, number] {
-  const sp = Math.sin(camera.pitch), cp = Math.cos(camera.pitch);
-  // forward is dirFromAngles(pitch, yaw); minus Y plus forward × (forward·Y)
-  // would be exactly square to it, and 0.85 of that leaves the zenith defined
-  const lean = 0.85 * sp;
-  const x = lean * cp * Math.sin(camera.yaw);
-  const y = -1 + lean * sp;
-  const z = lean * cp * Math.cos(camera.yaw);
-  const n = Math.hypot(x, y, z);
-  return [x / n, y / n, z / n];
-}
-
-/**
  * How far the wind carries the snow sideways for each unit it falls: a
  * breath of it leans the fall a few degrees (3 m/s, some 16), a strong wind
  * past the diagonal (15 m/s, some 55) and a gale nearly flat (74 at the top).
@@ -101,20 +80,15 @@ export function snowWindRun(wind: number): number {
 }
 
 /**
- * The snow's velocity for a camera, a calm fall being 1 long: the fall of
- * {@link snowFallDir}, and the wind's run toward the west, where the clouds
- * drift, leaned out of the view's depth as the fall is and for the same
- * reason. Looking down the wind, most of its run is along the view and is
- * dropped: the flakes there come down, a little faster.
+ * The snow's velocity, a calm fall being 1 long: straight down, and the
+ * wind's run toward the west, where the clouds drift. The same for every
+ * camera: the flakes are drawn coming out of the point of the sky this comes
+ * from (the zenith in still air, low in the east in a gale) and going into
+ * the point opposite, so a view turned up into the fall sees it open out and
+ * a view along the wind sees it come on.
  */
-export function snowVelocity(camera: Pick<Camera, 'yaw' | 'pitch'>, wind: number): [number, number, number] {
-  const fall = snowFallDir(camera);
-  const cp = Math.cos(camera.pitch);
-  const f = [cp * Math.sin(camera.yaw), Math.sin(camera.pitch), cp * Math.cos(camera.yaw)];
-  const run = snowWindRun(wind);
-  // minus X, less 0.85 of its part along the view
-  const k = 0.85 * -f[0];
-  return [fall[0] + run * (-1 - k * f[0]), fall[1] + run * (-k * f[1]), fall[2] + run * (-k * f[2])];
+export function snowVelocity(wind: number): [number, number, number] {
+  return [-snowWindRun(wind), -1, 0];
 }
 
 /** a cloud scale worth splitting for: past 0.95 the split costs more than it saves */
@@ -159,7 +133,7 @@ const UNIFORM_NAMES = [
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat', 'u_lent',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
-  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift', 'u_snowVel',
+  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowRun', 'u_snowVel',
   'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset', 'u_sunLook',
   'u_cloudMode', 'u_clouds', 'u_xfade', 'u_parhelia',
   'u_map0', 'u_map1', 'u_mapStep', 'u_mapMix', 'u_clouds2',
@@ -365,9 +339,9 @@ export class AtmosphereRenderer {
   private current: Variant | null = null;
   private wanted = 0;
   private frame = 0;
-  // how far the snow has come, integrated along snowVelocity; the clock it
-  // was at; and how fast it is coming now
-  private snowDrift: [number, number, number] = [0, 0, 0];
+  // how far the snow has come along its way, integrated along snowVelocity;
+  // the clock it was at; and how fast it is coming now
+  private snowRun = 0;
   private snowAt = Number.NaN;
   private snowVel: [number, number, number] = [0, -1, 0];
   // whether the first drawable variant has been reported through onReady
@@ -1046,17 +1020,14 @@ export class AtmosphereRenderer {
    * fall over as if it had always been in this direction, so a one-off frame
    * at a given time is the same frame whatever was drawn before it
    */
-  private advanceSnow(timeSec: number, camera: Camera, wind: number): void {
+  private advanceSnow(timeSec: number, wind: number): void {
     const t = timeSec % TIME_WRAP_SEC;
-    const dir = snowVelocity(camera, wind);
-    this.snowVel = dir;
+    const v = snowVelocity(wind);
+    this.snowVel = v;
+    const speed = Math.hypot(v[0], v[1], v[2]);
     const dt = t - this.snowAt;
-    const d = this.snowDrift;
-    if (dt >= 0 && dt <= 1) {
-      d[0] += dir[0] * dt; d[1] += dir[1] * dt; d[2] += dir[2] * dt;
-    } else {
-      d[0] = dir[0] * t; d[1] = dir[1] * t; d[2] = dir[2] * t;
-    }
+    // (a clock that jumped, or wrapped, starts the fall over where it would be)
+    this.snowRun = dt >= 0 && dt <= 1 ? this.snowRun + speed * dt : speed * t;
     this.snowAt = t;
   }
 
@@ -1153,7 +1124,7 @@ export class AtmosphereRenderer {
     windOff = 0,
     evo = 0,
   ): void {
-    this.advanceSnow(timeSec, camera, s.wind);
+    this.advanceSnow(timeSec, s.wind);
     this.evoNow = evo;
     const passes = this.passes(s, camera, this.canvas.width / Math.max(1, this.canvas.height));
     if (!passes) return;
@@ -1942,7 +1913,7 @@ export class AtmosphereRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.noise);
     const u = this.u;
     gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
-    gl.uniform3f(u.u_snowDrift, this.snowDrift[0], this.snowDrift[1], this.snowDrift[2]);
+    gl.uniform1f(u.u_snowRun, this.snowRun);
     gl.uniform3f(u.u_snowVel, this.snowVel[0], this.snowVel[1], this.snowVel[2]);
     gl.uniform2f(u.u_sun, s.sunElevation, s.sunAzimuth);
     // The moon's third number is how much light it gives, not its shape: a

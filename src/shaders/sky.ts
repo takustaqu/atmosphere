@@ -98,7 +98,7 @@ uniform vec2  u_radiant;   // meteor radiant: elevation, azimuth (radians)
 uniform float u_lensDrops; // 0..1 ceiling on the raindrops that collect on the lens
 uniform vec2  u_lensFx;    // 0..1 the flare's strength, the vignette's (both 0 for the bare sky of the environment probes)
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
-uniform vec3 u_snowDrift;  // how far the snow has come, integrated on the CPU (see snowVelocity)
+uniform float u_snowRun;   // how far the snow has come along its way, integrated on the CPU (see snowVelocity)
 uniform vec3 u_snowVel;    // and how fast it is coming now: a calm fall is 1 long
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
 uniform vec2  u_sunset;    // sunset: the warmth of the band on the sun's side, the glow all round
@@ -3218,28 +3218,22 @@ vec4 cacheFetch(vec3 d) {
 
 #ifdef FEAT_SNOW
 // ── Snowflakes ──
-// One flake, as the pixel whose ray is at f in the flake's cell sees it:
-// x how much of the pixel it covers, y that times how light it is.
+// One flake, as the pixel at f in the flake's cell sees it: x how much of
+// the pixel it covers, y that times how light it is. A cell is square on the
+// sky, with the flake's way down it along y.
 //   ch     the cell's hash seed, and want how surely it holds a flake (0..1)
-//   k      x its largest radius in cells, y how deep a shell of the lattice is
-//          drawn, z how soft its edge (the inner radius over the outer), w
+//   k      x its largest radius in cells, y how much it sways and how lobed
+//          it is (the flakes near enough to see the shape of; 0 for the
+//          rest), z how soft its edge (the inner radius over the outer), w
 //          the least radius a pixel can hold
-//   along  which way it crosses the view, and drawn how far it is drawn out
-//          along that
-//   near   a flake large enough to see the shape of: it sways, turns over and has lobes
-vec2 snowFlake(vec3 f, vec2 ch, float want, vec3 rd, vec3 t1, vec3 t2,
-               vec4 k, vec2 along, float drawn, bool near) {
+//   drawn  how far it is drawn out along its way
+vec2 snowFlake(vec2 f, vec2 ch, float want, vec4 k, float drawn) {
   // one hash a flake: whether it is there, and where in its cell
   vec3 hv = hash32(ch);
   float pick = hv.z - (1.0 - want);
   if (pick < 0.0) return vec2(0.0);
   // kept in from the cell's faces, where it fades (below)
-  vec3 dv = f - (0.18 + 0.64 * vec3(hv.x, fract(hv.z * 61.7 + hv.x * 13.1), hv.y));
-  // how far the flake sits off the sphere along the ray decides whether it
-  // is drawn at all; the rest is its place across the view
-  float dr = dot(dv, rd);
-  if (abs(dr) > k.y) return vec2(0.0);
-  vec3 qv = dv - rd * dr;
+  vec2 q = f - (0.2 + 0.6 * hv.xy);
   // of every size up to the layer's largest, which is where the layer
   // before's begin; and drawn out no longer than its cell (a gale's streaks
   // are a cell long, and fade at its faces)
@@ -3247,60 +3241,58 @@ vec2 snowFlake(vec3 f, vec2 ch, float want, vec3 rd, vec3 t1, vec3 t2,
   float rad0 = min(k.x * size, 0.45 / drawn);
   float rad = max(rad0, k.w);
   // (as far as any of it can reach: its length, its lobes, its sway)
-  float reach = rad * drawn * 1.13 + (near ? 0.08 : 0.0);
-  if (dot(qv, qv) > reach * reach) return vec2(0.0);
+  float reach = rad * drawn * 1.13 + 0.08 * k.y;
+  if (dot(q, q) > reach * reach) return vec2(0.0);
   // from here on, only the pixels a flake is on or beside
   vec3 hs = hash32(ch + 5.3);
-  vec2 turn;
-  if (near) {
+  if (k.y > 0.0) {
     // it sways from side to side as it comes down, each at its own pace
     float ph = u_time * (0.9 + 1.5 * hs.x) + hs.y * 6.2832;
-    vec3 sw = vec3(sin(ph), 0.0, cos(ph * 0.73 + hs.z * 6.2832)) * 0.08;
-    qv += sw - rd * dot(sw, rd);
-    // and turns over, so its width comes and goes
-    float th = hs.z * 6.2832 + u_time * (hs.y - 0.5) * 2.6;
-    turn = vec2(cos(th), sin(th));
-  } else {
-    turn = normalize(hs.yz - 0.5 + 1e-3);
+    q += vec2(sin(ph), 0.35 * cos(ph * 0.73 + hs.z * 6.2832)) * (0.08 * k.y);
   }
-  vec2 q = vec2(dot(qv, t1), dot(qv, t2));
-  q -= along * (dot(q, along) * (1.0 - 1.0 / drawn));
+  // and turns over, so its width comes and goes
+  float th = hs.z * 6.2832 + u_time * (hs.y - 0.5) * 2.6;
+  vec2 turn = vec2(cos(th), sin(th));
+  q.y /= drawn;
   // no flake is round: each has a longer way and a shorter
   vec2 qr = vec2(turn.x * q.x + turn.y * q.y, (turn.x * q.y - turn.y * q.x) * (1.0 + 0.5 * hs.x));
   float d = length(qr);
   // the near ones are clumps of crystals, with lobes to them
-  if (near) rad *= 1.0 + 0.12 * (qr.x * qr.x * qr.x - 3.0 * qr.x * qr.y * qr.y) / (d * d * d + 1e-7);
-  float a = smoothstep(rad, rad * k.z, d) * smoothstep(k.y, k.y * 0.6, abs(dr));
-  // fainter by what it was widened to fill a pixel, and by a third of what
-  // it was drawn out; coming in softly as the fall thickens
+  float edge = rad * (1.0 + 0.12 * k.y * (qr.x * qr.x * qr.x - 3.0 * qr.x * qr.y * qr.y) / (d * d * d + 1e-7));
+  // A flake widened to fill a pixel is as soft as it was widened: a hard dot
+  // a pixel or two across is on one pixel and then between two as it comes
+  // down, and twinkles
+  float a = smoothstep(edge, edge * k.z * (rad0 / rad), d);
+  // fainter by what it was widened, and by a third of what it was drawn
+  // out; coming in softly as the fall thickens
   a *= (rad0 * rad0) / (rad * rad) * mix(1.0, 1.0 / drawn, 0.3) * smoothstep(0.0, 0.06, pick);
-  // A pixel only looks in the cell its own ray is in, so a flake lying
-  // across a cell's face is not all there. Cut off square it showed, on a
-  // round flake; these fade toward the face instead, and a flake that has
-  // lost a side to it is one more shape among shapes that are all different
-  vec3 e = min(f, 1.0 - f);
-  a *= smoothstep(0.0, 0.07, min(e.x, min(e.y, e.z)));
+  // A pixel only looks in the cell it is in, so a flake lying across a
+  // cell's face is not all there. Cut off square it showed, on a round
+  // flake; these fade toward the face instead, and a flake that has lost a
+  // side to it is one more shape among shapes that are all different
+  vec2 e = min(f, 1.0 - f);
+  a *= smoothstep(0.0, 0.07, min(e.x, e.y));
   return vec2(a, a * (0.88 + 0.26 * hs.y));
 }
 
-// A layer of them: the flakes of one distance, all of a size and a speed.
-// They live in a lattice of view directions — the ray scaled out to a sphere
-// and cut into cubic cells — rather than on the screen, so they turn with the
-// sky and there is no pole or seam anywhere to look at.
-//   g   this ray's place in the layer's lattice, fi the layer
-//   on  how many flakes a cell holds, up to two
-vec2 snowLayer(vec3 g, float fi, float on, vec3 rd, vec3 t1, vec3 t2,
-               vec4 k, vec2 along, float drawn, bool near) {
-  // shift each horizontal slab of cells. Without this the lattice shows
-  // straight through as "flakes falling at even spacing"
-  float cy = floor(g.y);
-  g.xz += hash21(cy * 1.37 + fi * 13.0) * 4.0;
-  vec3 cell = vec3(floor(g.x), cy, floor(g.z));
-  vec3 f = g - cell;
-  vec2 ch = cell.xz + cy * vec2(37.1, 91.7) + fi * 11.0;
-  vec2 c = snowFlake(f, ch, min(on, 1.0), rd, t1, t2, k, along, drawn, near);
+// A layer of them: the flakes of one distance, all of about a size and a
+// speed. Its cells are n to the turn round the axis the snow comes down, a
+// whole number, so there is no seam.
+//   g    this ray's place in the layer's lattice, kk the layer
+//   run  how far the layer has come, in cells
+//   on   how many flakes a cell holds, up to two
+vec2 snowLayer(vec2 g, float n, float run, float kk, float on, vec4 k, float drawn) {
+  float y = g.y - run;
+  float row = floor(y);
+  // shift each row of cells round the axis. Without this the lattice shows
+  // straight through as lanes the flakes come down
+  float x = g.x + hash21(row * 1.37 + kk * 13.0).x * 4.0;
+  float col = floor(x);
+  vec2 f = vec2(x - col, y - row);
+  vec2 ch = vec2(mod(col, n), row) + kk * vec2(37.1, 91.7);
+  vec2 c = snowFlake(f, ch, min(on, 1.0), k, drawn);
   // (a cell's second flake, where the fall is that thick)
-  if (on > 1.0) c += snowFlake(f, ch + vec2(19.7, 53.1), on - 1.0, rd, t1, t2, k, along, drawn, near);
+  if (on > 1.0) c += snowFlake(f, ch + vec2(19.7, 53.1), on - 1.0, k, drawn);
   return c;
 }
 #endif
@@ -7490,12 +7482,20 @@ void main() {
   // So the whitening goes on first and the flakes over it: laid on after
   // them, as it was, it took half their contrast with it.
   //
-  // The flakes are in layers by distance, each a lattice of view directions
-  // (snowLayer). Only a shell of the lattice round the eye is drawn, so a
-  // flake moving along the ray leaves it: u_snowDrift is integrated on the
-  // CPU along the fall and the wind leaned toward the view's own plane
-  // (snowVelocity), which keeps them in the shell across the middle of the
-  // frame, and turning the camera only changes where they go next.
+  // The flakes are in layers by distance, and a flake once there stays: it
+  // comes down the sky from the point the snow comes from to the point it is
+  // going to and is in view all the way. They used to live in a thin shell
+  // of a lattice round the eye, which a flake moving along the ray left: off
+  // the middle of the frame the small ones were there for a tenth of a
+  // second, and the fall flickered.
+  //
+  // Seen from inside, snow that all moves one way comes out of one point of
+  // the sky and goes into the point opposite, along the great circles
+  // between (straight lines in the frame). So each layer is a lattice in the
+  // longitude round that axis and the Mercator latitude along it, which
+  // keeps its cells square everywhere, smaller toward the two points as the
+  // snow there is further off. A flake moves down its column and nowhere
+  // else; u_snowRun is how far, integrated on the CPU (snowVelocity).
 #ifdef FEAT_SNOW
   if (u_snow > 0.001) {
     // A slow field over the whole sky, read about the zenith so that it has
@@ -7518,20 +7518,26 @@ void main() {
     disp = mix(disp, whiteout, veil);
 
     if (u_fall > 0.001) {
-      // across the view at this ray: to the side, and up
-      vec3 t1 = normalize(vec3(rd.z, 0.0, -rd.x) + vec3(1e-4, 0.0, 0.0));
-      vec3 t2 = cross(rd, t1);
-      // the air's push, across the view so that it carries no flake out of
-      // the shell: two of them, for each layer to take its own mix of, so
-      // that the near snow swings one way while the far swings another
-      vec3 air1 = t1 * airA + t2 * (0.35 * airB);
-      vec3 air2 = t1 * airB - t2 * (0.35 * airA);
-      // which way the flakes cross the view, and how fast against a calm fall:
-      // the eye draws a fast flake out along its path, a little in still air
-      // and into a streak in a gale
-      vec3 vt = u_snowVel - rd * dot(u_snowVel, rd);
-      float across = length(vt);
-      vec2 along = across > 1e-4 ? vec2(dot(vt, t1), dot(vt, t2)) / across : vec2(0.0, -1.0);
+      // where this ray is about the snow's way: how far round it, and how far
+      // along (the wind blows along X, so the axis has no Z to it)
+      float speed = length(u_snowVel);
+      vec3 vd = u_snowVel / speed;
+      float along = clamp(dot(rd, vd), -0.9998, 0.9998);
+      float off = sqrt(1.0 - along * along);
+      vec2 mp = vec2(atan(rd.x * vd.y - rd.y * vd.x, rd.z),
+                     0.5 * log((1.0 + along) / (1.0 - along))) / 6.2831853;
+      // Toward the two points every layer's flakes are further off, smaller
+      // and slower, each layer 0.66 of the one before: so that many layers
+      // further in, a nearer layer takes each one's place, and the snow looks
+      // the same whichever way one turns. lodF is how far along the change
+      // is. Four times and no more (a cell would be a wedge of the sky): in
+      // the last few degrees the flakes only dwindle into the point
+      float lod = 0.5 - 2.4067 * log(off);
+      float lodI = min(floor(lod), 4.0), lodF = lod - lodI;
+      // how fast the flakes cross the view against a calm fall: the eye draws
+      // a fast flake out along its path, a little in still air and into a
+      // streak in a gale
+      float across = speed * pow(off, 0.4);
       float drawn = 1.0 + 0.20 * across + 0.90 * max(across - 1.15, 0.0);
       // A flake is lit by the whole sky and the ground: white, a little
       // greyer from below. It is the sky behind it that changes — a flake
@@ -7545,29 +7551,45 @@ void main() {
       // three near ones are large enough to see the shape of. There are far
       // more of the far ones: two to a cell, in the heaviest falls
       vec2 acc = vec2(0.0);
-      float rA = 0.013 * mix(0.80, 1.15, u_snow);
-      float vA = 0.34;
-      float pxA = PX_ANGLE(rd);
+      float cols = 84.0 * pow(1.5152, -lodI);
+      float vA = 0.34 * pow(0.78, -lodI);
+      // a pixel, in turns of the lattice
+      float px = PX_ANGLE(rd) / (6.2831853 * off);
+      // a flake's radius is at most a fifth of its cell
+      float radius = 0.20 * mix(0.70, 1.0, u_snow);
       // how many cells hold a flake, before each layer's share
-      float fill = 0.08 + 0.90 * u_snow + u_snow * u_snow * u_snow;
+      float fill = (0.08 + 0.90 * u_snow + u_snow * u_snow * u_snow) * mix(1.30, 0.65, u_snow);
       // the air swings the near flakes further, as everything of theirs is larger
-      float swing = (0.14 + 0.08 * u_wind) / 0.34;
+      float swing = (0.14 + 0.08 * u_wind) / 6.2831853;
+      // right at the two points there is nothing to draw
+      float open = smoothstep(0.02, 0.05, off);
       for (int i = 0; i < 6; i++) {
-        float fi = float(i);
-        float far = fi * 0.2;
-        // a flake's radius is at most a fifth of its cell
-        float inv = 0.20 / rA;
-        // a per-layer offset keeps the lattices from lining up
-        vec3 g = rd * inv + fi * vec3(0.37, 0.61, 0.23) - u_snowDrift * (vA * inv)
-               + (air1 * cos(fi * 1.9) + air2 * sin(fi * 1.9)) * (swing * vA * inv);
-        // never finer than the pixels can hold: a flake under one is drawn
-        // one wide and that much fainter, where it used to flicker like grain
-        vec4 k = vec4(0.20, 0.40, mix(0.30, 0.65, far), min(0.9 * pxA * inv, 0.20));
-        float on = min(fill * mix(0.22, 1.0, sqrt(far)), i < 3 ? 1.0 : 2.0);
-        // the far ones thin and thicken with the squalls
-        float wt = mix(0.95, 0.85, far) * mix(1.0, 0.55 + 0.90 * squall, far);
-        acc += snowLayer(g, fi, on, rd, t1, t2, k, along, drawn, i < 3) * wt;
-        rA *= 0.66;
+        // which layer this is, and where it stands among the six just here
+        float kk = float(i) - lodI;
+        float at = float(i) + lodF;
+        float far = clamp((at - 0.5) * 0.2, 0.0, 1.0);
+        float n = floor(cols + 0.5);
+        float cellPx = px * n;
+        // the nearest comes in and the furthest goes as they change places;
+        // and a layer whose cells are a few pixels across is not drawn at all
+        // (a smaller frame shows fewer of the far flakes, not a shimmer of them)
+        float wt = smoothstep(0.0, 0.5, at) * smoothstep(6.0, 5.5, at) * smoothstep(0.26, 0.12, cellPx) * open;
+        if (wt > 0.0) {
+          // the air's push: each layer takes its own mix of the two, so that
+          // the near snow swings one way while the far swings another
+          float cs = cos(kk * 1.9), sn = sin(kk * 1.9);
+          vec2 g = mp * n + kk * vec2(0.37, 0.61)
+                 + vec2(airA * cs + airB * sn, 0.35 * (airB * cs - airA * sn)) * (swing * vA * n);
+          float shape = i < 3 ? 1.0 - smoothstep(2.0, 3.0, at) : 0.0;
+          // never finer than the pixels can hold: a flake under one is drawn
+          // wider and that much fainter, where it used to flicker like grain
+          vec4 k = vec4(radius, shape, mix(0.30, 0.65, far), min(1.1 * cellPx, 0.20));
+          float on = min(fill * mix(0.22, 1.0, sqrt(far)), 1.0 + smoothstep(2.5, 3.5, at));
+          // the far ones thin and thicken with the squalls
+          wt *= mix(0.95, 0.85, far) * mix(1.0, 0.55 + 0.90 * squall, far);
+          acc += snowLayer(g, n, u_snowRun * vA * n / 6.2831853, kk, on, k, drawn) * wt;
+        }
+        cols *= 1.5152;
         vA *= 0.78;
       }
       float cov = acc.x, lum = acc.y;
