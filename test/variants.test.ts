@@ -53,6 +53,21 @@ describe('featureKey', () => {
     expect(featureKey(resolveConditions({ celestial: { milkyWay: 0.5 } })) & FEATURE.DARKSKY).toBe(FEATURE.DARKSKY);
   });
 
+  it('compiles the falling snow and rain only into skies they fall in', () => {
+    const key = (c: Parameters<typeof resolveConditions>[0]) => featureKey(resolveConditions(c));
+    expect(key({ time: 14, weather: 'snow' }) & FEATURE.SNOW).toBe(FEATURE.SNOW);
+    expect(key({ time: 14, weather: 'snow' }) & FEATURE.RAIN).toBe(0);
+    expect(key({ time: 14, weather: 'rain' }) & FEATURE.RAIN).toBe(FEATURE.RAIN);
+    expect(key({ time: 14, weather: 'rain' }) & FEATURE.SNOW).toBe(0);
+    for (const weather of ['clear', 'fair', 'summer', 'overcast', 'fog'] as const) {
+      expect(key({ time: 14, weather }) & (FEATURE.SNOW | FEATURE.RAIN)).toBe(0);
+    }
+    // with the flakes and streaks switched off, their whitening and greying of the view stay
+    expect(key({ time: 14, weather: 'snow', particles: { precipitation: false } }) & FEATURE.SNOW).toBe(FEATURE.SNOW);
+    // and they are no part of how a frame is drawn
+    expect((FEATURE.SNOW | FEATURE.RAIN) & (SPLIT_KEY | CACHE_BUILD)).toBe(0);
+  });
+
   it('ALL_FEATURES covers every bit', () => {
     let all = 0;
     for (const v of Object.values(FEATURE)) all |= v;

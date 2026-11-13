@@ -89,6 +89,34 @@ export function snowFallDir(camera: Pick<Camera, 'yaw' | 'pitch'>): [number, num
   return [x / n, y / n, z / n];
 }
 
+/**
+ * How far the wind carries the snow sideways for each unit it falls: a
+ * breath of it leans the fall a few degrees (3 m/s, some 16), a strong wind
+ * past the diagonal (15 m/s, some 55) and a gale nearly flat (74 at the top).
+ * Less than the air really does with a flake that falls a metre a second, and
+ * about what a snowfall looks like it is doing.
+ */
+export function snowWindRun(wind: number): number {
+  return 3.4 * Math.pow(Math.min(Math.max(wind, 0), 1), 1.3);
+}
+
+/**
+ * The snow's velocity for a camera, a calm fall being 1 long: the fall of
+ * {@link snowFallDir}, and the wind's run toward the west, where the clouds
+ * drift, leaned out of the view's depth as the fall is and for the same
+ * reason. Looking down the wind, most of its run is along the view and is
+ * dropped: the flakes there come down, a little faster.
+ */
+export function snowVelocity(camera: Pick<Camera, 'yaw' | 'pitch'>, wind: number): [number, number, number] {
+  const fall = snowFallDir(camera);
+  const cp = Math.cos(camera.pitch);
+  const f = [cp * Math.sin(camera.yaw), Math.sin(camera.pitch), cp * Math.cos(camera.yaw)];
+  const run = snowWindRun(wind);
+  // minus X, less 0.85 of its part along the view
+  const k = 0.85 * -f[0];
+  return [fall[0] + run * (-1 - k * f[0]), fall[1] + run * (-k * f[1]), fall[2] + run * (-k * f[2])];
+}
+
 /** a cloud scale worth splitting for: past 0.95 the split costs more than it saves */
 function clampCloudScale(v: number): number {
   return Number.isFinite(v) && v < 0.95 ? Math.max(0.25, v) : 1;
@@ -131,7 +159,7 @@ const UNIFORM_NAMES = [
   'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat', 'u_lent',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
-  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift',
+  'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowDrift', 'u_snowVel',
   'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset', 'u_sunLook',
   'u_cloudMode', 'u_clouds', 'u_xfade', 'u_parhelia',
   'u_map0', 'u_map1', 'u_mapStep', 'u_mapMix', 'u_clouds2',
@@ -337,9 +365,11 @@ export class AtmosphereRenderer {
   private current: Variant | null = null;
   private wanted = 0;
   private frame = 0;
-  // the snow's fall, integrated along snowFallDir; and the clock it was at
+  // how far the snow has come, integrated along snowVelocity; the clock it
+  // was at; and how fast it is coming now
   private snowDrift: [number, number, number] = [0, 0, 0];
   private snowAt = Number.NaN;
+  private snowVel: [number, number, number] = [0, -1, 0];
   // whether the first drawable variant has been reported through onReady
   private reported = false;
   // variants asked for ahead of need, waiting for the links in flight to land
@@ -1016,9 +1046,10 @@ export class AtmosphereRenderer {
    * fall over as if it had always been in this direction, so a one-off frame
    * at a given time is the same frame whatever was drawn before it
    */
-  private advanceSnow(timeSec: number, camera: Camera): void {
+  private advanceSnow(timeSec: number, camera: Camera, wind: number): void {
     const t = timeSec % TIME_WRAP_SEC;
-    const dir = snowFallDir(camera);
+    const dir = snowVelocity(camera, wind);
+    this.snowVel = dir;
     const dt = t - this.snowAt;
     const d = this.snowDrift;
     if (dt >= 0 && dt <= 1) {
@@ -1122,7 +1153,7 @@ export class AtmosphereRenderer {
     windOff = 0,
     evo = 0,
   ): void {
-    this.advanceSnow(timeSec, camera);
+    this.advanceSnow(timeSec, camera, s.wind);
     this.evoNow = evo;
     const passes = this.passes(s, camera, this.canvas.width / Math.max(1, this.canvas.height));
     if (!passes) return;
@@ -1912,6 +1943,7 @@ export class AtmosphereRenderer {
     const u = this.u;
     gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
     gl.uniform3f(u.u_snowDrift, this.snowDrift[0], this.snowDrift[1], this.snowDrift[2]);
+    gl.uniform3f(u.u_snowVel, this.snowVel[0], this.snowVel[1], this.snowVel[2]);
     gl.uniform2f(u.u_sun, s.sunElevation, s.sunAzimuth);
     // The moon's third number is how much light it gives, not its shape: a
     // moon in the Earth's shadow lights the clouds, its halo and the sea a

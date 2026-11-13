@@ -65,6 +65,16 @@ export const FEATURE = {
    * sky with a wisp of cirrus
    */
   PARHELIA: 32768,
+  /**
+   * falling snow: its flakes and the whitening of the view behind them. A
+   * large block for what it draws, and carried by a sky with no snow in it,
+   * it made a fair sky's frame an eighth longer (an M2 Max, 1080p). (The bits
+   * between are not features of the sky but of how a frame is drawn: see
+   * {@link SPLIT_KEY} and {@link CACHE_BITS}.)
+   */
+  SNOW: 524288,
+  /** falling rain: its streaks, and the greying of the view behind them */
+  RAIN: 1048576,
 } as const;
 
 export const FEATURE_DEFINES: [number, string][] = [
@@ -84,6 +94,8 @@ export const FEATURE_DEFINES: [number, string][] = [
   [FEATURE.MOONLIT, 'FEAT_MOONLIT'],
   [FEATURE.CBVOL, 'FEAT_CBVOL'],
   [FEATURE.PARHELIA, 'FEAT_PARHELIA'],
+  [FEATURE.SNOW, 'FEAT_SNOW'],
+  [FEATURE.RAIN, 'FEAT_RAIN'],
 ];
 
 /**
@@ -92,7 +104,7 @@ export const FEATURE_DEFINES: [number, string][] = [
  * anything, so a renderer compiling everything into one program takes that
  * bit from its own cumulonimbus option, not from here)
  */
-export const ALL_FEATURES = 65535;
+export const ALL_FEATURES = 65535 | 524288 | 1048576;
 
 /** how the cumulonimbus's towers are drawn — see {@link RendererOptions.cumulonimbus} */
 export type CumulonimbusMode = 'auto' | '2d' | 'volumetric';
@@ -153,6 +165,8 @@ export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: Cumulonim
       && (evo === undefined || Math.max(...parheliaPlates(s, evo)) > 0)) {
     k |= FEATURE.PARHELIA;
   }
+  if (s.snow > 0.001) k |= FEATURE.SNOW;
+  if (s.rain > 0.001) k |= FEATURE.RAIN;
   if (s.rain > 0.01) k |= FEATURE.RAINBOW;
   if (s.thunder > 0.001) k |= FEATURE.BOLT;
   // an eased bortle only approaches 6 on its way back from a dark site, so
