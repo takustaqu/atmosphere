@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Changed
+
+- **Snow is flakes, not discs.** It was round white dots in five sizes coming
+  straight down at an even pace, under a flat whitening laid over the dots as
+  well, which took half their contrast. Now a flake has a size of its own within
+  its layer, a longer way and a shorter, and how light it is; the near ones are
+  clumps with lobes, which sway from side to side and turn over as they fall,
+  their width coming and going. The air swings the whole fall one way and then
+  the other like a curtain, the near snow against the far. Six layers by
+  distance, each two thirds the size of the one before and four fifths as fast,
+  down to flakes a pixel wide and no finer: under that they used to flicker like
+  grain. Flakes are white from the side and a little greyer from below, so they
+  show light on a dark cloud and dim on a bright gap. The whitening goes on
+  first, deeper along a low look and where a squall is passing, deeper than in
+  proportion as the fall gets heavy, and the flakes over it.
+- **Snow goes with the wind.** A breath of it leans the fall a few degrees
+  (3 m/s, some 16), a strong wind past the diagonal, and a gale lays it nearly
+  flat, the flakes drawn out into streaks: a blizzard. It was a lean of 9 degrees
+  at most. The wind's run is integrated on the CPU with the fall, so a change of
+  wind no longer shifts every flake at once.
+- **Rain can be seen, and has depth.** It was two layers of hairlines, one pixel
+  wide and all alike, at a third of a level of contrast: at 8 mm/h there was
+  next to nothing to see. Now four layers: a few long faint streaks close by,
+  coming down fast, then shorter, finer and slower ones, more and more of them,
+  each column at its own pace and each drop to one side of it or the other,
+  longer or shorter, brighter or fainter. Behind them the rain past making out
+  greys the view, deeper along a low look, in curtains that drift across. A
+  streak is lighter than a dark cloud behind it and a shade darker than a bright
+  sky. In a wind the streaks stay parallel and lean together, to some fifty
+  degrees in a typhoon, converging on the point upwind the rain comes from; they
+  used to be sheared by azimuth, which bent them into arcs round the zenith. The
+  lens droplets are as they were.
+
 ### Performance
 
 - **An overcast sky is drawn in a little over half the time.** With no `clouds`
@@ -33,6 +66,17 @@
   now has two programs where it had one (the view's, and the whole sky's for when
   the view turns), linked one after the other, so where links are slow it is
   `settled` later, though drawn no later.
+- **Snow costs half what it did, and a sky without snow or rain no longer
+  carries them.** The flakes were searched for in a block of eight lattice
+  cells so that a disc would not be cut off square at a cell's face. A flake of
+  no fixed shape can fade toward the face instead, and then each layer looks in
+  one cell: the flakes take 0.8 ms of a 1080p frame where they took 1.7 (M2 Max),
+  and a snowy frame 3.6 ms where it took 4.4. The falling snow and rain are each
+  compiled only into the skies they fall in (`FEATURE.SNOW`, `FEATURE.RAIN`):
+  the new snow carried by a fair sky made its frame an eighth longer, and with
+  neither an overcast is 7% lighter than it was. The rain, which took next to
+  nothing and showed next to nothing, takes 0.4 ms: a rainy frame 3.05 ms where
+  it took 2.67.
 - **A start links the view's own program first.** `prepare()` takes the camera
   (`renderer.prepare(state, camera)`; `Atmosphere` passes its own), and starts
   the program a frame of that view will ask for ahead of the whole sky's. Without

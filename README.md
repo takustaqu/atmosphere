@@ -478,6 +478,14 @@ but the lens, they are laid out along the view ray, so they turn with the sky
 when the camera moves; looking up, the rain converges on the zenith and the
 snow falls toward you. They are on by default.
 
+Snow is flakes of every size, from clumps close by that sway and turn over as
+they fall to the last that can be told apart, over a whitening of the view
+that deepens toward the horizon; the air swings the fall about, and a wind
+leans it, into the streaks of a blizzard in a gale. Rain is a few long faint
+streaks close by and more and more short fine ones behind them, over curtains
+of it that grey the view; in a wind the streaks lean together, toward the
+west as the clouds drift.
+
 Switching them off takes away only what falls: the weather stays. A rain cloud
 is as dark and heavy snow whites out the view just the same — useful for a snowy
 day behind text that flakes should not cross.
