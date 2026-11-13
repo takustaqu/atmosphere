@@ -7,7 +7,10 @@ import { CLOUD_GENERA_IDS } from './clouds.js';
 import type { AtmosphereState } from './state.js';
 
 export interface AnimatorOptions {
-  /** time constant of the following, in seconds. Larger = weather changes arrive more slowly */
+  /**
+   * time constant of the following, in seconds. Larger = weather changes arrive
+   * more slowly. (Rain and snow stop in a quarter of it: see `FALL_STOP`.)
+   */
   tau?: number;
   /** wind's base speed, and its acceleration from strong wind */
   windBase?: number;
@@ -32,6 +35,9 @@ const DEFAULTS: Required<AnimatorOptions> = {
 };
 
 const TAU_2PI = Math.PI * 2;
+
+/** how much of the time constant rain or snow takes to stop (it starts at the whole of it) */
+const FALL_STOP = 0.25;
 
 /**
  * Deep-copy the state's nested parts (including `filter.tint`, which is an
@@ -117,8 +123,14 @@ export class StateAnimator {
     // a storm drawing nearer or receding, not one jumping across the miles
     c.features.distance += (target.features.distance - c.features.distance) * k;
     c.features.softness += (target.features.softness - c.features.softness) * k;
-    c.rain += (target.rain - c.rain) * k;
-    c.snow += (target.snow - c.snow) * k;
+    // what is falling stops ahead of the sky that clears after it. At the
+    // sky's own pace an amount is an exponential's long tail, and the flakes
+    // and the streaks are drawn until it is next to nothing: the last flakes
+    // were still crossing the next sky eight seconds after a cut, and a
+    // storm's rain was still coming down two scenes later
+    const kStop = 1 - Math.exp(-dt / (o.tau * FALL_STOP));
+    c.rain += (target.rain - c.rain) * (target.rain < c.rain ? kStop : k);
+    c.snow += (target.snow - c.snow) * (target.snow < c.snow ? kStop : k);
     c.wind += (target.wind - c.wind) * k;
     c.thunder += (target.thunder - c.thunder) * k;
     c.haze += (target.haze - c.haze) * k;

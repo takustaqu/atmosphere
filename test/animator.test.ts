@@ -147,3 +147,45 @@ describe('StateAnimator storm distance', () => {
     expect(far.features.distance).toBe(1);
   });
 });
+
+describe('StateAnimator rain and snow', () => {
+  const SNOW = resolveConditions({ time: 15, weather: 'snow' });
+  const FAIR = resolveConditions({ time: 15, weather: 'fair' });
+
+  it('a snowfall stops sooner than it starts', () => {
+    const starting = new StateAnimator(FAIR);
+    const stopping = new StateAnimator(SNOW);
+    for (let i = 0; i < 120; i++) { starting.step(SNOW, 1 / 60); stopping.step(FAIR, 1 / 60); }
+    // two seconds in: the fall coming on is short of its amount by more than
+    // the fall going off still has of it
+    expect(SNOW.snow - starting.current.snow).toBeGreaterThan(2 * stopping.current.snow);
+    expect(stopping.current.snow).toBeGreaterThan(0);
+  });
+
+  it('and is all but over when the clouds are still on their way out', () => {
+    const a = new StateAnimator(SNOW);
+    for (let i = 0; i < 150; i++) a.step(FAIR, 1 / 60);
+    // two and a half seconds: under the amount at which a flake is still
+    // drawn at all, with a third of the overcast yet to clear
+    expect(a.current.snow).toBeLessThan(0.01);
+    expect(a.current.cloudCover - FAIR.cloudCover).toBeGreaterThan(0.1);
+  });
+
+  it('and so does rain, gone before it could show against the next sky', () => {
+    const RAIN = resolveConditions({ time: 15, weather: 'rain' });
+    const starting = new StateAnimator(FAIR);
+    const stopping = new StateAnimator(RAIN);
+    for (let i = 0; i < 180; i++) { starting.step(RAIN, 1 / 60); stopping.step(FAIR, 1 / 60); }
+    // three seconds: a quarter of the way still to come, and next to none left
+    expect(RAIN.rain - starting.current.rain).toBeGreaterThan(0.2 * RAIN.rain);
+    expect(stopping.current.rain).toBeLessThan(0.005);
+    expect(stopping.current.rain).toBeGreaterThan(0);
+  });
+
+  it('whatever the frame rate', () => {
+    const fine = new StateAnimator(SNOW), coarse = new StateAnimator(SNOW);
+    for (let i = 0; i < 120; i++) fine.step(FAIR, 1 / 60);
+    for (let i = 0; i < 20; i++) coarse.step(FAIR, 1 / 10);
+    expect(coarse.current.snow).toBeCloseTo(fine.current.snow, 10);
+  });
+});

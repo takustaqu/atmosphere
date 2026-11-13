@@ -7463,10 +7463,12 @@ void main() {
         colsV *= 1.9; dropsV *= 1.6; speed *= 1.28; len *= 0.85; wide *= 0.78;
       }
       // A drop shows the sky above it: lighter than a dark cloud behind it,
-      // a glint at night — and against a sky brighter than itself, a shade darker
+      // a glint at night — and against a sky brighter than itself, a shade darker.
+      // (The last of a rain that is stopping fades: there is a tenth of the
+      // streaks at any amount, and they would go out between two frames)
       vec3 glint = mix(vec3(0.26, 0.29, 0.36), vec3(0.80, 0.84, 0.90), dayF);
       float over = smoothstep(-0.06, 0.06, dot(disp - glint, vec3(0.30, 0.59, 0.11)));
-      disp = mix(disp, mix(max(glint, disp), disp * 0.84, over), clamp(rain, 0.0, 1.0) * (0.28 + 0.32 * u_rain) * u_fall);
+      disp = mix(disp, mix(max(glint, disp), disp * 0.84, over), clamp(rain, 0.0, 1.0) * (0.28 + 0.32 * u_rain) * smoothstep(0.0, 0.02, u_rain) * u_fall);
     }
   }
 #endif
