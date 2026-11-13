@@ -199,7 +199,8 @@ labelIndex();
 // ── the camera's own motion ───────────────────────────────
 // Left alone, the view turns slowly along the horizon; at each new scene it
 // turns to whatever lights that scene — the sun, or the moon when the sun is
-// down — and frames it a little off centre, where the copy is not. Both are
+// down — and frames it a little off centre, where the copy is not (or to what
+// the scene is about, where that is not its light: a rainbow). Both are
 // a target the camera eases after on a critically damped spring, so a turn
 // starts gently and settles without overshoot; the drift moves the target,
 // not the camera, so it never jerks against a turn still in progress.
@@ -231,7 +232,21 @@ function aimAt(scene: Scene, cut = false): void {
     : s.moonElevation > 0.04 ? { az: s.moonAzimuth, el: s.moonElevation }
     : null;
   let yawTo: number, pitchTo: number;
-  if (lit) {
+  if (scene.look === 'rainbow') {
+    // the bow is 42° round the point opposite the sun, which is as far under
+    // the horizon as the sun is over it: its top is at 42° less the sun's
+    // height, and a foot stands this far to either side
+    const R = 0.733;
+    const foot = Math.acos(Math.min(1, Math.cos(R) / Math.cos(s.sunElevation)));
+    // a wide frame holds the whole arch, and starts a little to one side of
+    // it; a narrow one cannot, so it takes one foot and the bow rising from it
+    side = -side;
+    yawTo = s.sunAzimuth + Math.PI + side * Math.max(0.075, foot - 0.75 * halfWidth());
+    // the horizon low in the frame and the top of the arch inside it
+    pitchTo = Math.min(0.5, Math.max(0.24, (R - s.sunElevation) * 0.6));
+    // and the view turns on toward the middle of the arch
+    drift = -Math.abs(drift) * side;
+  } else if (lit) {
     // off to one side, alternately, so the light is not behind the copy
     side = -side;
     yawTo = lit.az + side * halfWidth() * 0.55;

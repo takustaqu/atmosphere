@@ -16,6 +16,12 @@ export interface Scene {
   ja: string;
   en: string;
   conditions: Conditions;
+  /**
+   * What the camera turns to. Left out, the light of the scene: the sun, or
+   * the moon when the sun is down. `'rainbow'` is the other way, the point
+   * opposite the sun that a rainbow stands round.
+   */
+  look?: 'rainbow';
 }
 
 export const SCENES: readonly Scene[] = [
@@ -24,6 +30,18 @@ export const SCENES: readonly Scene[] = [
     en: 'When the noise and the light frightened you',
     // late afternoon, the storm already overhead
     conditions: { time: 17.2, weather: 'thunderstorm' },
+  },
+  {
+    ja: 'あの橋の先を思い描いたあの時',
+    en: 'When you pictured what lay beyond that bridge',
+    // the storm gone over and still raining out of a sky that has opened: the
+    // late sun behind the camera, 15° up, and the bow across the shower, its
+    // top 27° high. It follows the thunderstorm because that is when it comes
+    conditions: {
+      time: 16.6,
+      weather: { cloudCover: 0.25, precipitation: 6, visibility: 25 },
+    },
+    look: 'rainbow',
   },
   {
     ja: '空に手を伸ばして、受け止めようとした時',
@@ -45,18 +63,10 @@ export const SCENES: readonly Scene[] = [
   {
     ja: 'ほんの一瞬、世界が輝く時',
     en: 'When the world shines, just for a moment',
-    // magic hour: the sun a few degrees up, everything amber
-    conditions: { time: 17.8, weather: 'fair' },
-  },
-  {
-    ja: '海に沈む夕日を見送った時',
-    en: 'When you watched the sun go down into the sea',
-    // the sun nearly down, the water below the horizon giving back the sky
-    conditions: {
-      time: 17.65,
-      weather: { cloudCover: 0.22, windSpeed: 4, visibility: 35 },
-      ground: 'sea',
-    },
+    // magic hour: the sun a few degrees up, everything amber, and the water
+    // below the horizon giving it back. The one sunset of the rotation: the
+    // sea is part of this sky, not a second scene of the same hour
+    conditions: { time: 17.8, weather: 'fair', ground: 'sea' },
   },
   {
     ja: '世界が灰色に染まる時',
