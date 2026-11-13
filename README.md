@@ -475,8 +475,9 @@ whatever these say; `renderCubeFaces` draws its faces as a frame, so pass it
 
 The rain streaks and snowflakes drawn falling through the air. Like everything
 but the lens, they are laid out along the view ray, so they turn with the sky
-when the camera moves; looking up, the rain converges on the zenith and the
-snow falls toward you. They are on by default.
+when the camera moves; looking up, the rain and the snow open out from the
+zenith, and looking into a gale the snow comes on from the point upwind. They
+are on by default.
 
 Snow is flakes of every size, from clumps close by that sway and turn over as
 they fall to the last that can be told apart, over a whitening of the view

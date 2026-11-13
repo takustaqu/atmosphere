@@ -20,8 +20,36 @@
 - **Snow goes with the wind.** A breath of it leans the fall a few degrees
   (3 m/s, some 16), a strong wind past the diagonal, and a gale lays it nearly
   flat, the flakes drawn out into streaks: a blizzard. It was a lean of 9 degrees
-  at most. The wind's run is integrated on the CPU with the fall, so a change of
-  wind no longer shifts every flake at once.
+  at most.
+- **A flake stays until it has left the view.** The flakes lived in a thin shell
+  of a lattice round the eye, and one moving along its ray left the shell: away
+  from the middle of the frame a near flake was there for half a second and a
+  far one for a tenth, so the fall flickered, and the fall was leaned toward the
+  view's own plane to spare the middle. Now each layer is a lattice round the
+  axis the snow comes down, in the longitude about it and the Mercator latitude
+  along it (square cells everywhere), and a flake only moves down its column:
+  out of the point of the sky the snow comes from, the zenith in still air and
+  low in the east in a gale, along a straight line in the frame and into the
+  point opposite. The fall is the same for every camera; a view turned up into
+  it sees it open out, and a view into the wind sees it come on. Toward the two
+  points a nearer layer takes each one's place, so there are flakes of every
+  size whichever way one looks. A flake widened to fill a pixel is drawn that
+  much softer, and a layer whose cells are a few pixels across is not drawn: a
+  small frame shows fewer of the far flakes rather than a shimmer of them. A
+  change of wind swings the whole fall round to its new lean.
+- **Rain and snow are over soon after the weather has changed.** Their amounts
+  followed the new weather at the pace of everything else, 2.2 s to fall to a
+  third, and the flakes and the streaks are drawn until an amount is next to
+  nothing: cut from the `snow` preset to a summer sky and a quarter of the
+  flakes were still crossing the blue five seconds on, and some at eight; cut
+  from `rain` to `fair` and a sixth of the streaks were there at six seconds
+  and stayed until thirteen, so a storm's rain was still coming down two
+  scenes later. Now an amount comes down in a quarter of the time constant (it
+  goes up in the whole of it, as before): a quarter of the flakes are left at
+  one second and none at two and a half, no streak at three, with the overcast
+  still breaking up behind them. The veil of the snow, the gloom under the
+  rain and the drops on the lens go at that pace too. And the last streaks
+  fade (under an amount of 0.02) where they went out between two frames.
 - **Rain can be seen, and has depth.** It was two layers of hairlines, one pixel
   wide and all alike, at a third of a level of contrast: at 8 mm/h there was
   next to nothing to see. Now four layers: a few long faint streaks close by,
