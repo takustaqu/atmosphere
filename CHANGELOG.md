@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+
+- **A towering sky is drawn 3–12% faster.** Everything the cumulonimbus asks of
+  the storm's thrust between its turrets — where a tower stands, the two rings
+  that erode a needle down to its shoulders, where it stood a moment ago, which
+  way its face turns, where the rain shafts hang — is one function of the
+  azimuth, and the shader read it per pixel, up to eleven four-octave noise reads
+  each. It is now read on the CPU once a frame on 1024 azimuths and looked up
+  between two of them. And the anvil's plate, which looked for a feeding turret
+  near every pixel above the towers, is skipped in a frame where no tower is tall
+  enough to feed one: that alone was some twentieth of the frame. M2 Max, 1080p,
+  `cloudScale: 0.5`: 3–12% under the 2D tower, up to 9% under the volumetric
+  one; no pixel moves by 8 levels in 255. The CPU takes 0.07 ms more a frame
+  while a tower stands.
+
 ## 0.13.0 — 2026-11-14
 
 ### Changed
