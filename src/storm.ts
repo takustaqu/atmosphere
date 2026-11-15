@@ -30,10 +30,8 @@
 // look it up by id): its height, its center and its two hashes, worked out
 // here once a frame in the shader's own arithmetic.
 
-import { NOISE_SIZE, hash12, noiseLattice } from './noise.js';
+import { hash12, noiseLattice } from './noise.js';
 
-/** rows of the table (see turretTable) */
-export const TURRET_ROWS = 4;
 
 /**
  * Slots per row of the table: room for every turret round the sky at the
@@ -41,6 +39,22 @@ export const TURRET_ROWS = 4;
  * distance of 1, and past 512 the far turrets wrap onto the near ones' slots.
  */
 export const TURRET_SLOTS = 512;
+
+/**
+ * Samples of the storm's thrust round the whole sky (see stormProfile): some
+ * twenty-three to a lattice cell of its finest octave at the middle
+ * distance, six or seven at the nearest a storm stands. Taken between two
+ * of them, no pixel of a towering sky moved by more than 19 levels in 255
+ * against the thrust read per pixel, and none by 8 at 1080p (2048 samples:
+ * 6 levels, at twice the CPU's time)
+ */
+export const PROFILE_SAMPLES = 1024;
+
+/** the table's first row of the profile: two blocks of PROFILE_SAMPLES / TURRET_SLOTS rows each */
+export const PROFILE_ROW = 4;
+
+/** rows of the table (see turretTable) */
+export const TURRET_ROWS = PROFILE_ROW + 2 * (PROFILE_SAMPLES / TURRET_SLOTS);
 
 /** turrets round the whole sky at the middle distance: the tower's row, and the congestus skirt's */
 export const TOWER_TURRETS = 40;
@@ -59,20 +73,40 @@ export function cbClock(evo: number): number {
   return evo * 0.12;
 }
 
+// the lattice as numbers 0..1, as the shader reads its bytes (memoized)
+let lattice: Float64Array | null = null;
+
 /** vnoiseHQ: the lattice's four corners round p, smoothstepped and blended in full precision */
 function vnoise(x: number, y: number): number {
-  const l = noiseLattice();
-  const n = NOISE_SIZE;
+  let l = lattice;
+  if (!l) {
+    const b = noiseLattice();
+    l = lattice = new Float64Array(b.length);
+    for (let i = 0; i < b.length; i++) l[i] = b[i] / 255;
+  }
   const ix = Math.floor(x), iy = Math.floor(y);
   let fx = x - ix, fy = y - iy;
   fx = fx * fx * (3 - 2 * fx);
   fy = fy * fy * (3 - 2 * fy);
-  const x0 = ((ix % n) + n) % n, y0 = ((iy % n) + n) % n;
-  const x1 = (x0 + 1) % n, y1 = (y0 + 1) % n;
-  const a = l[y0 * n + x0] / 255, b = l[y0 * n + x1] / 255;
-  const c = l[y1 * n + x0] / 255, d = l[y1 * n + x1] / 255;
+  // (the lattice is NOISE_SIZE = 256 square: a mask wraps it, negatives too)
+  const x0 = ix & 255, x1 = (ix + 1) & 255;
+  const y0 = (iy & 255) << 8, y1 = ((iy + 1) & 255) << 8;
+  const a = l[y0 + x0], b = l[y0 + x1];
+  const c = l[y1 + x0], d = l[y1 + x1];
   const lo = a + (b - a) * fx, hi = c + (d - c) * fx;
   return lo + (hi - lo) * fy;
+}
+
+/** fbm4HQ: four octaves of vnoiseHQ, each 2.03 times as fine and moved on */
+function fbm4(x: number, y: number): number {
+  let s = 0, w = 0.5;
+  for (let o = 0; o < 4; o++) {
+    s += w * vnoise(x, y);
+    x = x * 2.03 + 17.3;
+    y = y * 2.03 + 9.1;
+    w *= 0.5;
+  }
+  return s;
 }
 
 /**
@@ -141,6 +175,9 @@ function put(out: Uint8Array, o: number, v: number): void {
  * turret's two hashes, for its breadth and its depth: rg the tower's, ba the
  * skirt's.
  *
+ * The rows from PROFILE_ROW on are the storm's thrust round the whole sky
+ * (stormProfile).
+ *
  * @param distance the storm's distance (features.distance)
  * @param evo      shape evolution's integrated offset (u_evo)
  * @param amount   how big a storm (stormAmount)
@@ -196,5 +233,107 @@ export function turretTable(distance: number, evo: number, amount = 0.3,
       out[oh + 1] = Math.round(h5 * 255);
     }
   });
+  stormProfile(sc, clock, out);
   return out;
+}
+
+const PROFILE_NOW = new Float64Array(PROFILE_SAMPLES);
+// each sample's direction round the sky: sin, cos
+const PROFILE_DIR = new Float64Array(PROFILE_SAMPLES * 2);
+for (let i = 0; i < PROFILE_SAMPLES; i++) {
+  const a = i * 2 * Math.PI / PROFILE_SAMPLES;
+  PROFILE_DIR[i * 2] = Math.sin(a);
+  PROFILE_DIR[i * 2 + 1] = Math.cos(a);
+}
+
+/** put()'s two bytes, for a value known to lie in 0..1 */
+function put01(out: Uint8Array, o: number, v: number): void {
+  const q = Math.round(v * 65025);
+  const hi = (q / 255) | 0;
+  out[o] = hi;
+  out[o + 1] = q - hi * 255;
+}
+
+/**
+ * The storm's thrust round the whole sky, into the table's rows from
+ * PROFILE_ROW. Everything the shader asks of the thrust between the turrets
+ * is the one function of the azimuth — fbm4HQ round a circle, on the
+ * storm's clock — and it asked it per pixel: where the tower stands (and
+ * that again a ring either side, twice, to erode a needle down to its
+ * shoulders), where it stood CB_LAG ago, either side again for which way its
+ * face turns, under the rain shafts, at the edge of the volumetric tower's
+ * crossfade. Up to eleven four-octave reads a pixel, each landing where its
+ * neighbours' had.
+ *
+ * So it is read here once a frame, on PROFILE_SAMPLES azimuths at even
+ * steps (sample i at i / PROFILE_SAMPLES of a turn, the shader's azw), and
+ * the shader takes it between the two samples either side. The first block
+ * holds the thrust (rg) and its past (ba); the second the thrust eroded as
+ * the tower erodes it (rg). The past is only read where the thrust stands
+ * over 0.40, so it is only worked out by such samples (elsewhere 0). The
+ * erosion reads its rings off the samples, as the shader reads the thrust.
+ *
+ * @param sc    the storm's scale (cbScale of its distance)
+ * @param clock the storm's clock (cbClock)
+ */
+export function stormProfile(sc: number, clock: number, out: Uint8Array): void {
+  const n = PROFILE_SAMPLES, r = 0.85 * sc, dir = PROFILE_DIR;
+  const m = PROFILE_NOW;
+  for (let i = 0; i < n; i++) m[i] = fbm4(dir[i * 2] * r, dir[i * 2 + 1] * r + clock);
+  // the thrust at an azimuth so many samples from sample i, as the shader
+  // takes it between two samples
+  const at = (i: number, ds: number): number => {
+    const u = i + ds;
+    const j = Math.floor(u), f = u - j;
+    const j0 = j & (n - 1);
+    return m[j0] + (m[(j0 + 1) & (n - 1)] - m[j0]) * f;
+  };
+  const per = n / (2 * Math.PI);
+  const e1 = 0.08 / sc * per, e2 = 0.13 / sc * per;
+  const rowA = PROFILE_ROW * TURRET_SLOTS, rowB = rowA + n;
+  for (let i = 0; i < n; i++) {
+    const now = m[i];
+    let past = 0;
+    if (now > 0.39 || m[(i + n - 1) & (n - 1)] > 0.39 || m[(i + 1) & (n - 1)] > 0.39) {
+      past = fbm4(dir[i * 2] * r, dir[i * 2 + 1] * r + clock - CB_LAG);
+    }
+    // the shader's two erosion rings, in its order
+    let eroded = now;
+    if (eroded > 0.42) {
+      const l = at(i, -e1);
+      if (l < eroded) eroded = Math.min(eroded, Math.max(l, at(i, e1)));
+    }
+    if (eroded > 0.42) {
+      const l = at(i, -e2);
+      if (l + 0.06 < eroded) eroded = Math.min(eroded, Math.max(l, at(i, e2)) + 0.06);
+    }
+    // (an fbm4 of the lattice lies in 0..0.9375, as do these)
+    put01(out, (rowA + i) * 4, now);
+    put01(out, (rowA + i) * 4 + 2, past);
+    put01(out, (rowB + i) * 4, eroded);
+  }
+}
+
+/**
+ * Whether any turret of the tower's row feeds an anvil, or fed one CB_LAG
+ * ago and has let it go — whether the anvil's plate (anvilPlate) can draw
+ * anything this frame. Read off the table as the plate reads it: a turret's
+ * thrust raised by the storm's gain past the 1.7 its feed starts at. The
+ * plate looks for a feeding turret near every pixel above the towers, and
+ * a sky whose towers are none of them so tall paid some twentieth of its
+ * frame to find none (an M2 Max, 1080p)
+ */
+export function feedsAnvil(table: Uint8Array, distance: number, amount: number): boolean {
+  const n = TOWER_TURRETS * cbScale(distance);
+  const count = Math.min(Math.ceil(n) + 1, TURRET_SLOTS);
+  const gain = 1.05 + 1.35 * amount;
+  const rise = (v: number) => Math.pow(Math.max(v - 0.42, 0) * 4.6, 1.5) * gain;
+  for (let id = 0; id < count; id++) {
+    const o = id * 4;
+    const now = table[o] / 255 + table[o + 1] / 65025;
+    const past = table[o + 2] / 255 + table[o + 3] / 65025;
+    // (a hair early: the GPU's own arithmetic may land a little past it)
+    if (Math.max(rise(now), rise(past)) > 1.69) return true;
+  }
+  return false;
 }

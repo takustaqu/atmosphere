@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { TURRET_ROWS, TURRET_SLOTS, cbReach, cbScale, cbShape, stormAmount, turretTable } from '../src/storm.js';
+import {
+  PROFILE_ROW, PROFILE_SAMPLES, TOWER_TURRETS, TURRET_ROWS, TURRET_SLOTS,
+  cbReach, cbScale, cbShape, feedsAnvil, stormAmount, turretTable,
+} from '../src/storm.js';
 
 // what the shader's turretThrust and rowTurret read back from two bytes
 const read = (t: Uint8Array, row: number, id: number, hi: number) => {
@@ -89,5 +92,80 @@ describe('turretTable', () => {
       if (height(hi, 1, id) > height(lo, 1, id) + 0.01) taller++;
     }
     expect(taller).toBeGreaterThan(3);
+  });
+});
+
+// sample i of a profile block, as the shader's cbProfileTexel reads it
+const profile = (t: Uint8Array, block: number, i: number, hi: number) =>
+  read(t, PROFILE_ROW + block * (PROFILE_SAMPLES / TURRET_SLOTS) + Math.floor(i / TURRET_SLOTS), i % TURRET_SLOTS, hi);
+
+describe('stormProfile', () => {
+  it('reads the thrust at a turret\'s center as the turret does', () => {
+    // turret 0 of the middle distance's forty stands near azimuth 0 + its
+    // jitter; between the samples either side of it, the profile's thrust
+    // is the table's own thrust for it, to a little more than the lerp's error
+    const t = turretTable(0.65, 7.3);
+    const step = 2 * Math.PI / PROFILE_SAMPLES;
+    let worst = 0;
+    for (let id = 0; id < TOWER_TURRETS; id++) {
+      // (where in its cell the tower's turret stands: table row 1, ba)
+      const centre = read(t, 1, id, 2) + id;
+      const u = centre * 2 * Math.PI / TOWER_TURRETS / step;
+      const i = Math.floor(u), f = u - i;
+      const m = profile(t, 0, i, 0) * (1 - f) + profile(t, 0, (i + 1) % PROFILE_SAMPLES, 0) * f;
+      worst = Math.max(worst, Math.abs(m - read(t, 0, id, 0)));
+    }
+    expect(worst).toBeLessThan(0.002);
+  });
+
+  it('erodes only downward, and reads the past only where a tower can stand', () => {
+    const t = turretTable(0.4, 23, 0.6);
+    let eroded = 0, pasts = 0;
+    for (let i = 0; i < PROFILE_SAMPLES; i++) {
+      const now = profile(t, 0, i, 0), past = profile(t, 0, i, 2), e = profile(t, 1, i, 0);
+      expect(now).toBeLessThan(0.9375 + 1e-4);
+      expect(e).toBeLessThanOrEqual(now + 1e-6);
+      if (e < now - 1e-3) eroded++;
+      if (past > 0) pasts++;
+      // a sample well clear of any tower carries no past
+      const near = [i - 1, i, i + 1].map((j) => profile(t, 0, (j + PROFILE_SAMPLES) % PROFILE_SAMPLES, 0));
+      if (Math.max(...near) < 0.385) expect(past).toBe(0);
+    }
+    // a storm's needles do get shaved, and its towers do have a past
+    expect(eroded).toBeGreaterThan(0);
+    expect(pasts).toBeGreaterThan(0);
+  });
+
+  it('moves smoothly with the storm\'s clock, a frame at a time', () => {
+    const dEvo = 0.07 / 30;
+    let worst = 0;
+    let prev = turretTable(0.65, 11);
+    for (let f = 1; f <= 30; f++) {
+      const cur = turretTable(0.65, 11 + f * dEvo);
+      for (let i = 0; i < PROFILE_SAMPLES; i += 7) worst = Math.max(worst, Math.abs(profile(cur, 0, i, 0) - profile(prev, 0, i, 0)));
+      prev = cur;
+    }
+    expect(worst).toBeLessThan(0.002);
+  });
+});
+
+describe('feedsAnvil', () => {
+  it('finds a feeding turret only where one stands tall enough', () => {
+    // a storm's gain takes its tallest turrets past the feed; a weak one's
+    // gain leaves the same thrust short of it
+    let fed = 0, weak = 0;
+    for (let k = 0; k < 40; k++) {
+      const evo = 3 + k * 1.7;
+      if (feedsAnvil(turretTable(0.65, evo, 1), 0.65, 1)) fed++;
+      // (with no gain at all nothing can rise: a thrust of 0.9375 carries 1.32)
+      const t = turretTable(0.65, evo, 0.3);
+      let tallest = 0;
+      for (let id = 0; id <= TOWER_TURRETS; id++) tallest = Math.max(tallest, read(t, 0, id, 0), read(t, 0, id, 2));
+      const rise = Math.pow(Math.max(tallest - 0.42, 0) * 4.6, 1.5) * (1.05 + 1.35 * 0.3);
+      expect(feedsAnvil(t, 0.65, 0.3)).toBe(rise > 1.69);
+      if (!feedsAnvil(t, 0.65, 0.3)) weak++;
+    }
+    expect(fed).toBeGreaterThan(0);
+    expect(weak).toBeGreaterThan(0);
   });
 });

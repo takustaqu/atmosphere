@@ -31,7 +31,7 @@ import { SOFT_SLOT, SkyCacheScheduler, stackSignature, stateAhead, type CacheBui
 import { MORPH_FRAG } from './shaders/morph.js';
 import { fragSource } from './shaders/variants.js';
 import { VERT } from './shaders/vert.js';
-import { TURRET_ROWS, TURRET_SLOTS, stormAmount, turretTable } from './storm.js';
+import { TURRET_ROWS, TURRET_SLOTS, feedsAnvil, stormAmount, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 import { sunShape } from './sundisc.js';
 
@@ -130,7 +130,7 @@ const UNIFORM_NAMES = [
   'u_noise', 'u_noiseQ', 'u_turrets',
   'u_frame', 'u_aspect', 'u_time', 'u_cam', 'u_sun', 'u_moon', 'u_moonEclipse',
   'u_cover', 'u_high', 'u_mid', 'u_low',
-  'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat', 'u_lent',
+  'u_rain', 'u_snow', 'u_wind', 'u_thunder', 'u_haze', 'u_cbFeat', 'u_anvilFed', 'u_lent',
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowRun', 'u_snowVel',
@@ -367,6 +367,8 @@ export class AtmosphereRenderer {
   // or distance moves; turretKey is what it was last filled for
   private turrets: WebGLTexture | null = null;
   private turretData = new Uint8Array(TURRET_SLOTS * TURRET_ROWS * 4);
+  // whether a turret of the table feeds an anvil (feedsAnvil)
+  private anvilFed = true;
   private turretKey = '';
   // the light probe's offscreen target, made on first use and resized to the layout
   private probeFbo: WebGLFramebuffer | null = null;
@@ -1010,6 +1012,7 @@ export class AtmosphereRenderer {
     if (key === this.turretKey) return;
     this.turretKey = key;
     turretTable(s.features.distance, evo, amount, this.turretData);
+    this.anvilFed = feedsAnvil(this.turretData, s.features.distance, amount);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, TURRET_SLOTS, TURRET_ROWS, gl.RGBA, gl.UNSIGNED_BYTE, this.turretData);
   }
@@ -1946,6 +1949,7 @@ export class AtmosphereRenderer {
     gl.uniform1f(u.u_haze, s.haze);
     gl.uniform1f(u.u_lent, s.features.lenticular);
     gl.uniform4f(u.u_cbFeat, s.features.anvil, s.features.velum, s.features.distance, s.features.softness);
+    gl.uniform1f(u.u_anvilFed, this.anvilFed ? 1 : 0);
     gl.uniform1f(u.u_windOff, windOff);
     gl.uniform1f(u.u_evo, evo);
     gl.uniform1f(u.u_filtAmt, s.filter.amount);

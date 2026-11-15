@@ -13,7 +13,7 @@
 
 import { SRGB_TO_DISPLAY_P3, glslMat3 } from '../gamut.js';
 import { NOISE_SIZE } from '../noise.js';
-import { SKIRT_TURRETS, TOWER_TURRETS, TURRET_ROWS, TURRET_SLOTS } from '../storm.js';
+import { PROFILE_ROW, PROFILE_SAMPLES, SKIRT_TURRETS, TOWER_TURRETS, TURRET_ROWS, TURRET_SLOTS } from '../storm.js';
 
 /**
  * How far the marked light sources reach past sRGB. 0 disables the widening,
@@ -83,6 +83,7 @@ uniform float u_thunder;   // 0..1 thunder
 uniform float u_haze;      // 0..1 haze
 uniform float u_lent;      // 0..1 lenticular banks low over the horizon (features.lenticular)
 uniform vec4  u_cbFeat;    // cumulonimbus companion forms: anvil, veil; the storm's distance; its softness
+uniform float u_anvilFed;  // 1 when a turret feeds an anvil this frame, or has just let one go (feedsAnvil); 0, no plate anywhere
 uniform float u_windOff;   // wind's integrated offset (speed×dt accumulated on the CPU side)
 uniform float u_evo;       // shape evolution's integrated offset (same idea)
 uniform float u_filtAmt;   // color filter: strength
@@ -1406,14 +1407,6 @@ float lobeShadow(vec2 p, float radius, float h0, vec3 L) {
   return sh;
 }
 
-float fbm4HQ(vec2 p) {
-  vec2 p1 = p * 2.03 + vec2(17.3, 9.1);
-  vec2 p2 = p1 * 2.03 + vec2(17.3, 9.1);
-  vec2 p3 = p2 * 2.03 + vec2(17.3, 9.1);
-  return 0.5 * vnoiseHQ(p) + 0.25 * vnoiseHQ(p1)
-       + 0.125 * vnoiseHQ(p2) + 0.0625 * vnoiseHQ(p3);
-}
-
 #endif
 
 // How much of the sky a cumulonimbus takes up, from how far off it stands
@@ -1565,9 +1558,30 @@ bool cbCanStand(vec3 rd, float cbS, float ceilN) {
 // its center; y the thrust as it stood CB_LAG ago (the coarse pair then,
 // the fine pair now)
 vec2 turretThrust(float id) {
-  vec4 t = TURRET_FETCH(vec2((id + 0.5) * ${(1 / TURRET_SLOTS).toFixed(10)}, ${(0.5 / TURRET_ROWS).toFixed(4)}));
+  vec4 t = TURRET_FETCH(vec2((id + 0.5) * ${(1 / TURRET_SLOTS).toFixed(10)}, ${(0.5 / TURRET_ROWS).toFixed(10)}));
   return vec2(t.x + t.y * (1.0 / 255.0), t.z + t.w * (1.0 / 255.0));
 }
+// The storm's thrust round the sky as the CPU read it this frame (u_turrets
+// from PROFILE_ROW, see stormProfile): the fbm4HQ round a circle that every
+// read of the thrust between the turrets used to take per pixel, on
+// PROFILE_SAMPLES azimuths, taken between the two either side of azw. Block 0
+// holds the thrust (x) and its past (y), block 1 the thrust eroded (x). The
+// bytes are mixed before they are put together, which is the same as mixing
+// the numbers
+vec4 cbProfileTexel(float i, float block) {
+  float r = floor(i * ${(1 / TURRET_SLOTS).toFixed(10)});
+  float x = i - r * ${TURRET_SLOTS.toFixed(1)};
+  float row = ${PROFILE_ROW.toFixed(1)} + block * ${(PROFILE_SAMPLES / TURRET_SLOTS).toFixed(1)} + r;
+  return TURRET_FETCH(vec2((x + 0.5) * ${(1 / TURRET_SLOTS).toFixed(10)}, (row + 0.5) * ${(1 / TURRET_ROWS).toFixed(10)}));
+}
+vec2 cbProfile(float azw, float block) {
+  float u = fract(azw * 0.1591549431) * ${PROFILE_SAMPLES.toFixed(1)};
+  float i = min(floor(u), ${(PROFILE_SAMPLES - 1).toFixed(1)});
+  vec4 t = mix(cbProfileTexel(i, block), cbProfileTexel(i < ${(PROFILE_SAMPLES - 1.5).toFixed(1)} ? i + 1.0 : 0.0, block), u - i);
+  return vec2(t.x + t.y * (1.0 / 255.0), t.z + t.w * (1.0 / 255.0));
+}
+// the storm's thrust at an azimuth (with the wind's offset, azw)
+float cbMass(float azw) { return cbProfile(azw, 0.0).x; }
 // Turret k of a row of n round the sky (k a whole number, counted on from
 // cell 0 any number of times round — rowCell's count), as the CPU laid it
 // out this frame: x its id, y its center in the row's own count (on k's side
@@ -1581,8 +1595,8 @@ vec4 rowTurret(float k, float n, float row, out vec2 aux) {
   float wrap = floor((k + 0.5) / m);
   float id = k - wrap * m;
   float u = (id + 0.5) * ${(1 / TURRET_SLOTS).toFixed(10)};
-  vec4 t = TURRET_FETCH(vec2(u, (row + 0.5) * ${(1 / TURRET_ROWS).toFixed(4)}));
-  vec4 h = TURRET_FETCH(vec2(u, ${((TURRET_ROWS - 0.5) / TURRET_ROWS).toFixed(4)}));
+  vec4 t = TURRET_FETCH(vec2(u, (row + 0.5) * ${(1 / TURRET_ROWS).toFixed(10)}));
+  vec4 h = TURRET_FETCH(vec2(u, ${(3.5 / TURRET_ROWS).toFixed(10)}));
   aux = row < 1.5 ? h.xy : h.zw;
   return vec4(id, wrap * n + id + t.z + t.w * (1.0 / 255.0), (t.x + t.y * (1.0 / 255.0)) * 2.0, aux.x);
 }
@@ -2225,7 +2239,7 @@ bool cbXfadeSkip(vec3 rd, float gloom) {
   if (cbPlateReach(rd, cbS, ceilN)) return false;
   if (!cbCanStand(rd, cbS, ceilN)) return true;
   float azw = atan(rd.x, rd.z) + u_windOff * 0.15;
-  return fbm4HQ(vec2(sin(azw), cos(azw)) * (0.85 * cbS) + vec2(0.0, cbClock())) < 0.195;
+  return cbMass(azw) < 0.195;
 }
 #endif
 
@@ -4321,39 +4335,16 @@ void main() {
     // growth/decay rides on the integrated offset u_evo, not u_time —
     // that lets growth speed be set externally (via StateAnimator's evo
     // speed), and keeps the phase from jumping when the weather changes
-    float mass = fbm4HQ(acir + vec2(0.0, cbClock()));
+    float mass = cbMass(azw);
     // fbm maxima are sometimes knife-ridges crossing the azimuth circle at a
     // steep angle. Raised to a height they become tall needle towers — the
     // most common failure shape. Erode narrow peaks morphologically: clamp
     // to the taller of the two neighbors, which shaves any peak thinner
     // than ~2×0.08 rad and leaves broad mountains untouched
     //
-    // Erosion only ever lowers massE, and nothing downstream can tell apart two
-    // values at or under 0.42 — the thrust is zero for both, and the veil's
-    // spread only starts at 0.50 — so a ring is only sampled while the mass is
-    // still standing above that line.
-    float massE = mass;
-    if (massE > 0.42) {
-      float e1 = 0.08 / cbS;
-      float massL = fbm4HQ(vec2(sin(azw - e1), cos(azw - e1)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-      // (a neighbor standing as high on one side leaves the peak standing
-      // whatever the other does, so that one is only read when it can tell)
-      if (massL < massE) {
-        float massR = fbm4HQ(vec2(sin(azw + e1), cos(azw + e1)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-        massE = min(massE, max(massL, massR));
-      }
-    }
-    // a second, wider erosion ring: a knife-ridge longer than the first
-    // ring slips through it and still stands as a needle. The small
-    // allowance lets a broad dome rise a little above its shoulders
-    if (massE > 0.42) {
-      float e2 = 0.13 / cbS;
-      float massL2 = fbm4HQ(vec2(sin(azw - e2), cos(azw - e2)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-      if (massL2 + 0.06 < massE) {
-        float massR2 = fbm4HQ(vec2(sin(azw + e2), cos(azw + e2)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-        massE = min(massE, max(massL2, massR2) + 0.06);
-      }
-    }
+    // The rings are read on the CPU, once a frame round the whole sky, and
+    // the eroded thrust is looked up beside the thrust itself (stormProfile)
+    float massE = cbProfile(azw, 1.0).x;
     // the tower's thrust. Whether this is peaked or not decides how boxy it looks.
     // left as a gentle hill, a wide range of azimuths reach the same height
     // and the top becomes a flat slab.
@@ -4565,7 +4556,7 @@ void main() {
     // (whether the plate was laid on here at all: see the crossfade, below)
     float anvSeen = 0.0;
 #endif
-    if (u_cbFeat.x > 0.001 && rd.y > 0.0) {
+    if (u_cbFeat.x > 0.001 && u_anvilFed > 0.5 && rd.y > 0.0) {
       float hor = length(rd.xz);
       float tE = rd.y / max(hor, 1e-4);
       // The plate is measured in the towers' own size, so it stays theirs
@@ -4832,7 +4823,7 @@ void main() {
       float envL = headY + 0.6 * headY * headY - hgt;
       if (mass > 0.40 && envL > -0.15) {
         float gain0 = 1.05 + 1.35 * cbAmt;
-        float massP = fbm4HQ(acir + vec2(0.0, cbClock() - CB_LAG));
+        float massP = cbProfile(azw, 0.0).y;
         float riseN = pow(max(mass - 0.42, 0.0) * 4.6, 1.5) * gain0;
         float riseP = pow(max(massP - 0.42, 0.0) * 4.6, 1.5) * gain0;
         float here = smoothstep(0.40, 0.46, mass) * smoothstep(-0.15, -0.10, envL);
@@ -5650,7 +5641,7 @@ void main() {
       // tower itself: nothing outside it has a use for it
       if (mass > 0.40 && envT > -0.15) {
         float gain0 = 1.05 + 1.35 * cbAmt;
-        float massP = fbm4HQ(acir + vec2(0.0, cbClock() - CB_LAG));
+        float massP = cbProfile(azw, 0.0).y;
         float riseN = pow(max(mass - 0.42, 0.0) * 4.6, 1.5) * gain0;
         float riseP = pow(max(massP - 0.42, 0.0) * 4.6, 1.5) * gain0;
         float here = smoothstep(0.40, 0.46, mass) * smoothstep(-0.15, -0.10, envT);
@@ -6035,8 +6026,8 @@ void main() {
           float dA = 0.22;
           float gainR = 1.05 + 1.35 * cbAmt;
           float dAs = dA / cbS;
-          float massW = fbm4HQ(vec2(sin(azw - dAs), cos(azw - dAs)) * (0.85 * cbS) + vec2(0.0, cbClock()));
-          float massS = fbm4HQ(vec2(sin(azw + dAs), cos(azw + dAs)) * (0.85 * cbS) + vec2(0.0, cbClock()));
+          float massW = cbMass(azw - dAs);
+          float massS = cbMass(azw + dAs);
           // (clamped at the silhouette: past it the ratios below would read
           // empty sky as a flank)
           //
@@ -6904,7 +6895,7 @@ void main() {
     if (u_low.w > 0.001) {
       float cbAmtS = max(u_low.w, 0.30) * (1.0 - gloom * 0.6);
       float azT = azw - lean * max(sin(0.1304 / cbSS) - rd.y, 0.0);
-      float massS = fbm4HQ(vec2(sin(azT), cos(azT)) * (0.85 * cbSS) + vec2(0.0, cbClock()));
+      float massS = cbMass(azT);
       float riseS = pow(max(massS - 0.42, 0.0) * 4.6, 1.5) * (1.05 + 1.35 * cbAmtS);
       // only a grown tower rains, and only from its core: the flanks of the
       // footprint, where the mass is thin, stay dry
