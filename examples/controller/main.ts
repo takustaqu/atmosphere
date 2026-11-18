@@ -83,6 +83,9 @@ const figure = new Figure(figureEl);
 // lightProbe measures the sky ten times a second; onLight hands each result over
 const sky = new Atmosphere(canvas, {
   time: ui.timeOfDay, weather: ui.weather, camera: cam,
+  // This controller visits many weather combinations in quick succession,
+  // including transient ones while the settings ease between two presets.
+  variants: false,
   lightProbe: true,
   // the sky is the content here, not interface motion, so it keeps moving
   // under prefers-reduced-motion (Windows sets that whenever "Animation
