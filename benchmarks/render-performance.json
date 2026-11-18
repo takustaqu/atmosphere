@@ -1,0 +1,2295 @@
+{
+  "revision": "d2839e4d0d786783a689d6d829db157dfb449001",
+  "candidateBundleSha256": "9ed2ce48734b356c3f02759f61aa76d0be79b4f2151f4c7c8fdf10eacc2d0d1a",
+  "control": false,
+  "config": {
+    "width": 1280,
+    "height": 720,
+    "frames": 30,
+    "rounds": 2,
+    "compile": "auto"
+  },
+  "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+  "scenes": [
+    {
+      "name": "clear",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 40.700000047683716,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "clear-40-before.png",
+            "clear-40-after.png",
+            "clear-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "clear-75-before.png",
+            "clear-75-after.png",
+            "clear-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "clear-110-before.png",
+            "clear-110-after.png",
+            "clear-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 0.824916,
+            "gpuP95": 0.831375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.475041,
+            "gpuP95": 0.478,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 0.826208,
+            "gpuP95": 0.832249,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.474708,
+            "gpuP95": 0.477875,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "fair",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 65.59999990463257,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "fair-40-before.png",
+            "fair-40-after.png",
+            "fair-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "fair-75-before.png",
+            "fair-75-after.png",
+            "fair-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "fair-110-before.png",
+            "fair-110-after.png",
+            "fair-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 3.8155,
+            "gpuP95": 4.482041,
+            "cpuMedian": 0.2999999523162842,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 4.383124,
+            "gpuP95": 4.673208,
+            "cpuMedian": 0.19999992847442627,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 2.976291,
+            "gpuP95": 4.399333,
+            "cpuMedian": 0.19999992847442627,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 3.98425,
+            "gpuP95": 4.673416,
+            "cpuMedian": 0.19999992847442627,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "summer",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 105.70000004768372,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "summer-40-before.png",
+            "summer-40-after.png",
+            "summer-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "summer-75-before.png",
+            "summer-75-after.png",
+            "summer-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "summer-110-before.png",
+            "summer-110-after.png",
+            "summer-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 7.781874,
+            "gpuP95": 11.47625,
+            "cpuMedian": 0.2999999523162842,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 6.756749,
+            "gpuP95": 10.278833,
+            "cpuMedian": 0.20000004768371582,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 8.161125,
+            "gpuP95": 10.635416,
+            "cpuMedian": 0.2999999523162842,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 7.369541,
+            "gpuP95": 8.336249,
+            "cpuMedian": 0.19999992847442627,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "overcast",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 36.60000002384186,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "overcast-40-before.png",
+            "overcast-40-after.png",
+            "overcast-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "overcast-75-before.png",
+            "overcast-75-after.png",
+            "overcast-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "overcast-110-before.png",
+            "overcast-110-after.png",
+            "overcast-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.843291,
+            "gpuP95": 2.964125,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.8115,
+            "gpuP95": 2.3435,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 2.174625,
+            "gpuP95": 3.108958,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.217791,
+            "gpuP95": 2.505791,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "fog",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 81.20000004768372,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "fog-40-before.png",
+            "fog-40-after.png",
+            "fog-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "fog-75-before.png",
+            "fog-75-after.png",
+            "fog-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "fog-110-before.png",
+            "fog-110-after.png",
+            "fog-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 4.702624,
+            "gpuP95": 6.41825,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 4.034625,
+            "gpuP95": 6.340624,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 5.182124,
+            "gpuP95": 6.58225,
+            "cpuMedian": 0.19999992847442627,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 5.249375,
+            "gpuP95": 6.732375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "rain",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 61.200000047683716,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "rain-40-before.png",
+            "rain-40-after.png",
+            "rain-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "rain-75-before.png",
+            "rain-75-after.png",
+            "rain-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "rain-110-before.png",
+            "rain-110-after.png",
+            "rain-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 2.402749,
+            "gpuP95": 4.093249,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.860541,
+            "gpuP95": 3.152958,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 2.470375,
+            "gpuP95": 4.234833,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 2.182666,
+            "gpuP95": 3.45025,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "thunderstorm",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 98.69999992847443,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "thunderstorm-40-before.png",
+            "thunderstorm-40-after.png",
+            "thunderstorm-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "thunderstorm-75-before.png",
+            "thunderstorm-75-after.png",
+            "thunderstorm-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "thunderstorm-110-before.png",
+            "thunderstorm-110-after.png",
+            "thunderstorm-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 6.282625,
+            "gpuP95": 7.740125,
+            "cpuMedian": 0.20000004768371582,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 6.951874,
+            "gpuP95": 7.86675,
+            "cpuMedian": 0.20000004768371582,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 5.568791,
+            "gpuP95": 9.703708,
+            "cpuMedian": 0.20000004768371582,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 6.360249,
+            "gpuP95": 8.497249,
+            "cpuMedian": 0.19999992847442627,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "snow",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 67.39999997615814,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "snow-40-before.png",
+            "snow-40-after.png",
+            "snow-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "snow-75-before.png",
+            "snow-75-after.png",
+            "snow-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "snow-110-before.png",
+            "snow-110-after.png",
+            "snow-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 3.140999,
+            "gpuP95": 5.010624,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 3.981125,
+            "gpuP95": 4.35675,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 3.677374,
+            "gpuP95": 5.524208,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 3.901166,
+            "gpuP95": 4.618333,
+            "cpuMedian": 0,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "typhoon",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 75.5,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "typhoon-40-before.png",
+            "typhoon-40-after.png",
+            "typhoon-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "typhoon-75-before.png",
+            "typhoon-75-after.png",
+            "typhoon-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "typhoon-110-before.png",
+            "typhoon-110-after.png",
+            "typhoon-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 3.497666,
+            "gpuP95": 3.926041,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 2.428958,
+            "gpuP95": 3.086999,
+            "cpuMedian": 0,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 3.499874,
+            "gpuP95": 3.909875,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 2.750833,
+            "gpuP95": 3.537375,
+            "cpuMedian": 0,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "night",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 54,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "night-40-before.png",
+            "night-40-after.png",
+            "night-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "night-75-before.png",
+            "night-75-after.png",
+            "night-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "night-110-before.png",
+            "night-110-after.png",
+            "night-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 2.47425,
+            "gpuP95": 2.664249,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.538416,
+            "gpuP95": 2.288375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 2.468999,
+            "gpuP95": 2.515541,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.530041,
+            "gpuP95": 1.648625,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "aurora",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 55.5,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "aurora-40-before.png",
+            "aurora-40-after.png",
+            "aurora-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "aurora-75-before.png",
+            "aurora-75-after.png",
+            "aurora-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "aurora-110-before.png",
+            "aurora-110-after.png",
+            "aurora-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 4.064541,
+            "gpuP95": 4.541458,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 2.715333,
+            "gpuP95": 2.881499,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 2.957124,
+            "gpuP95": 4.123125,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 2.406416,
+            "gpuP95": 2.7415,
+            "cpuMedian": 0,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "sunset",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 55.199999928474426,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "sunset-40-before.png",
+            "sunset-40-after.png",
+            "sunset-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "sunset-75-before.png",
+            "sunset-75-after.png",
+            "sunset-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "sunset-110-before.png",
+            "sunset-110-after.png",
+            "sunset-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 3.606416,
+            "gpuP95": 4.33,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 2.674875,
+            "gpuP95": 3.872375,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 3.518333,
+            "gpuP95": 4.734375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 3.069874,
+            "gpuP95": 3.810416,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "halos",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 66,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "halos-40-before.png",
+            "halos-40-after.png",
+            "halos-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "halos-75-before.png",
+            "halos-75-after.png",
+            "halos-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "halos-110-before.png",
+            "halos-110-after.png",
+            "halos-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.19175,
+            "gpuP95": 1.574125,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.092458,
+            "gpuP95": 1.890875,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 1.5305,
+            "gpuP95": 2.235374,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.270874,
+            "gpuP95": 1.836708,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "sea",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 73,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "sea-40-before.png",
+            "sea-40-after.png",
+            "sea-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "sea-75-before.png",
+            "sea-75-after.png",
+            "sea-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "sea-110-before.png",
+            "sea-110-after.png",
+            "sea-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 4.725249,
+            "gpuP95": 5.86675,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 4.663833,
+            "gpuP95": 6.435833,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 3.522458,
+            "gpuP95": 5.170375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 5.083124,
+            "gpuP95": 6.158166,
+            "cpuMedian": 0,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "tower-near",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 76.70000004768372,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "tower-near-40-before.png",
+            "tower-near-40-after.png",
+            "tower-near-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "tower-near-75-before.png",
+            "tower-near-75-after.png",
+            "tower-near-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "tower-near-110-before.png",
+            "tower-near-110-after.png",
+            "tower-near-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 7.475208,
+            "gpuP95": 8.948416,
+            "cpuMedian": 0.3999999761581421,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 8.194083,
+            "gpuP95": 9.3115,
+            "cpuMedian": 0.30000007152557373,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 8.171916,
+            "gpuP95": 8.854166,
+            "cpuMedian": 0.3999999761581421,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 7.125374,
+            "gpuP95": 8.940874,
+            "cpuMedian": 0.30000007152557373,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "tower-crossfade",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 178,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "tower-crossfade-40-before.png",
+            "tower-crossfade-40-after.png",
+            "tower-crossfade-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "tower-crossfade-75-before.png",
+            "tower-crossfade-75-after.png",
+            "tower-crossfade-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "tower-crossfade-110-before.png",
+            "tower-crossfade-110-after.png",
+            "tower-crossfade-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 10.358208,
+            "gpuP95": 12.028791,
+            "cpuMedian": 0.3999999761581421,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 10.205458,
+            "gpuP95": 11.234666,
+            "cpuMedian": 0.2999999523162842,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 9.88225,
+            "gpuP95": 11.55475,
+            "cpuMedian": 0.3999999761581421,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 10.526333,
+            "gpuP95": 12.185624,
+            "cpuMedian": 0.30000007152557373,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "split",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 115.60000002384186,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "split-40-before.png",
+            "split-40-after.png",
+            "split-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "split-75-before.png",
+            "split-75-after.png",
+            "split-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "split-110-before.png",
+            "split-110-after.png",
+            "split-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 6.361874,
+            "gpuP95": 9.314625,
+            "cpuMedian": 0.5,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 6.541249,
+            "gpuP95": 8.975416,
+            "cpuMedian": 0.3999999761581421,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 6.314374,
+            "gpuP95": 7.410875,
+            "cpuMedian": 0.5,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 6.268125,
+            "gpuP95": 7.332999,
+            "cpuMedian": 0.3999999761581421,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "rays",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 59.39999997615814,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "rays-40-before.png",
+            "rays-40-after.png",
+            "rays-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "rays-75-before.png",
+            "rays-75-after.png",
+            "rays-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "rays-110-before.png",
+            "rays-110-after.png",
+            "rays-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 3.513374,
+            "gpuP95": 5.094124,
+            "cpuMedian": 0.20000004768371582,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 3.263333,
+            "gpuP95": 5.81325,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 5.658749,
+            "gpuP95": 6.622958,
+            "cpuMedian": 0.20000004768371582,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 5.837749,
+            "gpuP95": 6.801875,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "cache",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 209.79999995231628,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "cache-40-before.png",
+            "cache-40-after.png",
+            "cache-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "cache-75-before.png",
+            "cache-75-after.png",
+            "cache-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "cache-110-before.png",
+            "cache-110-after.png",
+            "cache-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.913666,
+            "gpuP95": 4.450874,
+            "cpuMedian": 0.8999999761581421,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 3.058916,
+            "gpuP95": 4.461291,
+            "cpuMedian": 0.8000000715255737,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 4.212374,
+            "gpuP95": 5.365583,
+            "cpuMedian": 0.8999999761581421,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 3.989499,
+            "gpuP95": 5.054708,
+            "cpuMedian": 0.7999999523162842,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-cirrus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 370.7999999523163,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrus-40-before.png",
+            "genus-cirrus-40-after.png",
+            "genus-cirrus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrus-75-before.png",
+            "genus-cirrus-75-after.png",
+            "genus-cirrus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrus-110-before.png",
+            "genus-cirrus-110-after.png",
+            "genus-cirrus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.133749,
+            "gpuP95": 1.288749,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.025374,
+            "gpuP95": 1.062541,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 1.264374,
+            "gpuP95": 1.289249,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.028666,
+            "gpuP95": 1.036374,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-cirrostratus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 53,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrostratus-40-before.png",
+            "genus-cirrostratus-40-after.png",
+            "genus-cirrostratus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrostratus-75-before.png",
+            "genus-cirrostratus-75-after.png",
+            "genus-cirrostratus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrostratus-110-before.png",
+            "genus-cirrostratus-110-after.png",
+            "genus-cirrostratus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.233666,
+            "gpuP95": 1.341583,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.988624,
+            "gpuP95": 1.001374,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 1.234124,
+            "gpuP95": 1.378874,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.723625,
+            "gpuP95": 0.999041,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-cirrocumulus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 53.299999952316284,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrocumulus-40-before.png",
+            "genus-cirrocumulus-40-after.png",
+            "genus-cirrocumulus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrocumulus-75-before.png",
+            "genus-cirrocumulus-75-after.png",
+            "genus-cirrocumulus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cirrocumulus-110-before.png",
+            "genus-cirrocumulus-110-after.png",
+            "genus-cirrocumulus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.160791,
+            "gpuP95": 1.17775,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.930541,
+            "gpuP95": 1.215375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 1.050291,
+            "gpuP95": 1.178291,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.820499,
+            "gpuP95": 0.938416,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-altostratus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 55.799999952316284,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-altostratus-40-before.png",
+            "genus-altostratus-40-after.png",
+            "genus-altostratus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-altostratus-75-before.png",
+            "genus-altostratus-75-after.png",
+            "genus-altostratus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-altostratus-110-before.png",
+            "genus-altostratus-110-after.png",
+            "genus-altostratus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.082749,
+            "gpuP95": 1.421625,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.063499,
+            "gpuP95": 1.570708,
+            "cpuMedian": 0.09999990463256836,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 1.300916,
+            "gpuP95": 1.438124,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.062208,
+            "gpuP95": 1.068916,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-altocumulus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 76.29999995231628,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0.000011574074074074073,
+          "max": 1,
+          "changed": 22,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-altocumulus-40-before.png",
+            "genus-altocumulus-40-after.png",
+            "genus-altocumulus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0.000014467592592592593,
+          "max": 2,
+          "changed": 26,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-altocumulus-75-before.png",
+            "genus-altocumulus-75-after.png",
+            "genus-altocumulus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0.000004340277777777778,
+          "max": 1,
+          "changed": 8,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-altocumulus-110-before.png",
+            "genus-altocumulus-110-after.png",
+            "genus-altocumulus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.49675,
+            "gpuP95": 1.680791,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.115666,
+            "gpuP95": 1.135291,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 1.488375,
+            "gpuP95": 1.662124,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.115874,
+            "gpuP95": 1.138124,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-nimbostratus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 52.60000002384186,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-nimbostratus-40-before.png",
+            "genus-nimbostratus-40-after.png",
+            "genus-nimbostratus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-nimbostratus-75-before.png",
+            "genus-nimbostratus-75-after.png",
+            "genus-nimbostratus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-nimbostratus-110-before.png",
+            "genus-nimbostratus-110-after.png",
+            "genus-nimbostratus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 0.834125,
+            "gpuP95": 1.703916,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.991833,
+            "gpuP95": 1.212166,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 0.840916,
+            "gpuP95": 1.526374,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.66525,
+            "gpuP95": 1.198874,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-stratus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 57,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-stratus-40-before.png",
+            "genus-stratus-40-after.png",
+            "genus-stratus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-stratus-75-before.png",
+            "genus-stratus-75-after.png",
+            "genus-stratus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-stratus-110-before.png",
+            "genus-stratus-110-after.png",
+            "genus-stratus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 1.327624,
+            "gpuP95": 1.596208,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.791749,
+            "gpuP95": 1.098625,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 0.740499,
+            "gpuP95": 1.473,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.614333,
+            "gpuP95": 1.096458,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-stratocumulus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 83,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-stratocumulus-40-before.png",
+            "genus-stratocumulus-40-after.png",
+            "genus-stratocumulus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-stratocumulus-75-before.png",
+            "genus-stratocumulus-75-after.png",
+            "genus-stratocumulus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-stratocumulus-110-before.png",
+            "genus-stratocumulus-110-after.png",
+            "genus-stratocumulus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 0.769041,
+            "gpuP95": 1.387375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.786249,
+            "gpuP95": 1.081374,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 1.267041,
+            "gpuP95": 1.686916,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.779625,
+            "gpuP95": 1.09375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-cumulus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 62.60000002384186,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 3.616898148148148e-7,
+          "max": 1,
+          "changed": 1,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cumulus-40-before.png",
+            "genus-cumulus-40-after.png",
+            "genus-cumulus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cumulus-75-before.png",
+            "genus-cumulus-75-after.png",
+            "genus-cumulus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cumulus-110-before.png",
+            "genus-cumulus-110-after.png",
+            "genus-cumulus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 2.376625,
+            "gpuP95": 3.740541,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.4285,
+            "gpuP95": 2.349791,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 2.128666,
+            "gpuP95": 3.256583,
+            "cpuMedian": 0.20000004768371582,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 1.610875,
+            "gpuP95": 2.57175,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "genus-cumulonimbus",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 73.79999995231628,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0.0000014467592592592592,
+          "max": 1,
+          "changed": 4,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cumulonimbus-40-before.png",
+            "genus-cumulonimbus-40-after.png",
+            "genus-cumulonimbus-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0.000003978587962962963,
+          "max": 1,
+          "changed": 10,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cumulonimbus-75-before.png",
+            "genus-cumulonimbus-75-after.png",
+            "genus-cumulonimbus-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "genus-cumulonimbus-110-before.png",
+            "genus-cumulonimbus-110-after.png",
+            "genus-cumulonimbus-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 6.370583,
+            "gpuP95": 7.818375,
+            "cpuMedian": 0.5,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 6.217708,
+            "gpuP95": 7.373708,
+            "cpuMedian": 0.3999999761581421,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 6.596124,
+            "gpuP95": 7.412625,
+            "cpuMedian": 0.5,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 5.766,
+            "gpuP95": 7.509624,
+            "cpuMedian": 0.3999999761581421,
+            "samples": 30
+          }
+        ]
+      ]
+    },
+    {
+      "name": "lenticular",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Max, Unspecified Version)",
+      "settleMs": 83.5,
+      "pictures": [
+        {
+          "moment": 40,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "lenticular-40-before.png",
+            "lenticular-40-after.png",
+            "lenticular-40-diff.png"
+          ]
+        },
+        {
+          "moment": 75,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "lenticular-75-before.png",
+            "lenticular-75-after.png",
+            "lenticular-75-diff.png"
+          ]
+        },
+        {
+          "moment": 110,
+          "mean": 0,
+          "max": 0,
+          "changed": 0,
+          "over2": 0,
+          "over8": 0,
+          "files": [
+            "lenticular-110-before.png",
+            "lenticular-110-after.png",
+            "lenticular-110-diff.png"
+          ]
+        }
+      ],
+      "timings": [
+        [
+          {
+            "gpuMedian": 0.651666,
+            "gpuP95": 1.204625,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.961999,
+            "gpuP95": 0.986375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ],
+        [
+          {
+            "gpuMedian": 1.5155,
+            "gpuP95": 1.796375,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          },
+          {
+            "gpuMedian": 0.74825,
+            "gpuP95": 1.624875,
+            "cpuMedian": 0.10000002384185791,
+            "samples": 30
+          }
+        ]
+      ]
+    }
+  ]
+}

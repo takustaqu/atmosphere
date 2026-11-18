@@ -75,6 +75,10 @@ export const FEATURE = {
   SNOW: 524288,
   /** falling rain: its streaks, and the greying of the view behind them */
   RAIN: 1048576,
+  /** the cumulus slab and its fringes; absent below the layer's own gate */
+  CUMULUS: 2097152,
+  /** the other plane layers and lenticular banks, grouped to bound variants */
+  CLOUD_LAYERS: 4194304,
 } as const;
 
 export const FEATURE_DEFINES: [number, string][] = [
@@ -96,6 +100,8 @@ export const FEATURE_DEFINES: [number, string][] = [
   [FEATURE.PARHELIA, 'FEAT_PARHELIA'],
   [FEATURE.SNOW, 'FEAT_SNOW'],
   [FEATURE.RAIN, 'FEAT_RAIN'],
+  [FEATURE.CUMULUS, 'FEAT_CUMULUS'],
+  [FEATURE.CLOUD_LAYERS, 'FEAT_CLOUD_LAYERS'],
 ];
 
 /**
@@ -104,7 +110,8 @@ export const FEATURE_DEFINES: [number, string][] = [
  * anything, so a renderer compiling everything into one program takes that
  * bit from its own cumulonimbus option, not from here)
  */
-export const ALL_FEATURES = 65535 | 524288 | 1048576;
+export const CLOUD_FEATURES = FEATURE.CUMULUS | FEATURE.CLOUD_LAYERS;
+export const ALL_FEATURES = 65535 | 524288 | 1048576 | CLOUD_FEATURES;
 
 /** how the cumulonimbus's towers are drawn — see {@link RendererOptions.cumulonimbus} */
 export type CumulonimbusMode = 'auto' | '2d' | 'volumetric';
@@ -177,6 +184,10 @@ export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: Cumulonim
   if (s.rain > 0.01 || (s.clouds.cumulonimbus > 0.05 && s.thunder > 0.001)) k |= FEATURE.SHAFTS;
   // the tower's own gate is this amount, less the gloom's share of it
   const c = s.clouds;
+  if (c.cumulus > 0.02) k |= FEATURE.CUMULUS;
+  if (c.cirrus > 0.001 || c.cirrostratus > 0.001 || c.cirrocumulus > 0.001
+      || c.altostratus > 0.001 || c.altocumulus > 0.001 || c.nimbostratus > 0.001
+      || c.stratus > 0.001 || c.stratocumulus > 0.001 || s.features.lenticular > 0.001) k |= FEATURE.CLOUD_LAYERS;
   if (c.cumulonimbus > 0.001) k |= FEATURE.CB;
   // (the volumetric tower only while there is a tower to march: a sky
   // without one shares the 2D variant rather than compiling a second program
@@ -242,6 +253,10 @@ export function featureKeys(s: AtmosphereState, rays = 0, cumulonimbus: Cumuloni
  * frame, so the window is widened by that much then.
  */
 export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number): boolean {
+  const rays = viewRays(s, camera, aspect);
+  const grid = lastGrid!;
+  const cached = grid.backlit;
+  if (cached && cached.elevation === s.sunElevation && cached.azimuth === s.sunAzimuth) return cached.value;
   const smooth = (a: number, b: number, x: number) => {
     const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
     return t * t * (3 - 2 * t);
@@ -252,8 +267,9 @@ export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number
   const lift = smooth(0.15, 0.60, sunY);
   // [the tower's squash, its reach] and the cumulus's
   const gates: [number, number][] = [[0.35 + 0.65 * lift, 0.60 + 1.05 * lowS], [0.5 + 0.5 * lift, 1.0 + 0.3 * smooth(0.30, 0.50, sunY)]];
-  const rays = viewRays(s, camera, aspect);
-  return gates.some(([q, reach]) => leastAngle(rays, sun, q) < reach + 0.02);
+  const value = gates.some(([q, reach]) => leastAngle(rays, sun, q) < reach + 0.02);
+  grid.backlit = { elevation: s.sunElevation, azimuth: s.sunAzimuth, value };
+  return value;
 }
 
 /**
@@ -269,12 +285,18 @@ export function backlitInView(s: AtmosphereState, camera: Camera, aspect: number
  * pixel for pixel.
  */
 export function iridescenceInView(s: AtmosphereState, camera: Camera, aspect: number): boolean {
-  const limb = sunShape(s.sun.disc)[2];
-  const rays = viewRays(s, camera, aspect), sun = sunDirection(s);
+  const rays = viewRays(s, camera, aspect);
+  const grid = lastGrid!;
+  const cached = grid.iridescence;
+  if (cached && cached.elevation === s.sunElevation && cached.azimuth === s.sunAzimuth
+      && cached.disc === s.sun.disc) return cached.value;
+  const limb = sunShape(s.sun.disc)[2], sun = sunDirection(s);
   // (the sky as it is, unsquashed: the nearest ray is the one with the greatest cosine)
   let near = -1;
   for (const r of rays) near = Math.max(near, r[0] * sun[0] + r[1] * sun[1] + r[2] * sun[2]);
-  return Math.acos(Math.min(near, 1)) - gridCell(rays) < 0.30 + limb + 0.02;
+  const value = Math.acos(Math.min(near, 1)) - gridCell(rays) < 0.30 + limb + 0.02;
+  grid.iridescence = { elevation: s.sunElevation, azimuth: s.sunAzimuth, disc: s.sun.disc, value };
+  return value;
 }
 
 type Vec3 = [number, number, number];
@@ -288,7 +310,16 @@ function sunDirection(s: AtmosphereState): Vec3 {
 const NX = 24, NY = 16;
 
 // the last view's grid: a view is asked about every frame, by each gate, and seldom turns
-let lastGrid: { yaw: number; pitch: number; fov: number; aspect: number; span: number; rays: Vec3[]; cell: number } | null = null;
+interface ViewGrid {
+  yaw: number; pitch: number; fov: number; aspect: number; span: number;
+  rays: Vec3[]; cell: number;
+  // The view and sun usually hold while only the clouds move. The two
+  // visibility tests need not traverse (and squash) 425 rays every frame.
+  // Store values, not state references: StateAnimator mutates in place.
+  backlit?: { elevation: number; azimuth: number; value: boolean };
+  iridescence?: { elevation: number; azimuth: number; disc: number; value: boolean };
+}
+let lastGrid: ViewGrid | null = null;
 
 /** the view's rays on a grid, as the shader's viewRay casts them: over a frame wider by what drops on the lens can bend them */
 function viewRays(s: AtmosphereState, camera: Camera, aspect: number): Vec3[] {
@@ -389,5 +420,5 @@ export const CACHE_BITS = CACHE_BUILD | CACHE_COMP;
  */
 export function firstPaintKey(key: number): number {
   if (!(key & FEATURE.CB) || (key & CACHE_BITS)) return key;
-  return key & (FEATURE.SEA | FEATURE.AURORA | FEATURE.DARKSKY | FEATURE.POLARIZER | SPLIT_KEY);
+  return key & (FEATURE.SEA | FEATURE.AURORA | FEATURE.DARKSKY | FEATURE.POLARIZER | CLOUD_FEATURES | SPLIT_KEY);
 }

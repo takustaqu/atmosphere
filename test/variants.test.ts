@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_FEATURES, CACHE_BUILD, CB_AUTO_BAND, FEATURE, SPLIT_KEY, backlitInView, cbVolumetricShare, featureKey, featureKeys, firstPaintKey, iridescenceInView } from '../src/features.js';
+import { ALL_FEATURES, CACHE_BUILD, CB_AUTO_BAND, CLOUD_FEATURES, FEATURE, SPLIT_KEY, backlitInView, cbVolumetricShare, featureKey, featureKeys, firstPaintKey, iridescenceInView } from '../src/features.js';
 import { parhelionAzimuth, parheliaAmounts, parheliaPlates, parheliaRects, parheliaShape } from '../src/parhelia.js';
 import { stackSignature } from '../src/skycache.js';
 import { resolveWeather } from '../src/weather.js';
@@ -10,7 +10,7 @@ describe('firstPaintKey', () => {
   it('takes the tower and its dressing out of a towering sky', () => {
     const key = featureKey(resolveConditions({ time: 14, weather: 'summer' }), 0, 'volumetric');
     expect(key & FEATURE.CBVOL).toBe(FEATURE.CBVOL);
-    expect(firstPaintKey(key)).toBe(0);
+    expect(firstPaintKey(key)).toBe(key & CLOUD_FEATURES);
   });
 
   it('keeps what changes the whole picture, and how the frame is drawn', () => {
@@ -41,7 +41,7 @@ describe('featureKey', () => {
     expect(featureKey(resolveConditions({ celestial: 'aurora' }))).toBe(FEATURE.AURORA | FEATURE.DARKSKY);
     expect(featureKey(resolveConditions({ particles: { contrails: 1 } }))).toBe(FEATURE.CONTRAILS);
     expect(featureKey(resolveConditions({}), 1)).toBe(FEATURE.RAYS);
-    expect(featureKey(resolveConditions({ weather: { clouds: { cirrostratus: 0.5 } } }))).toBe(FEATURE.HALOS);
+    expect(featureKey(resolveConditions({ weather: { clouds: { cirrostratus: 0.5 } } }))).toBe(FEATURE.HALOS | FEATURE.CLOUD_LAYERS);
     expect(featureKey(resolveConditions({ weather: 'thunderstorm' })) & FEATURE.BOLT).toBe(FEATURE.BOLT);
     expect(featureKey(resolveConditions({ weather: 'thunderstorm' })) & FEATURE.RAINBOW).toBe(FEATURE.RAINBOW);
     expect(featureKey(resolveConditions({ celestial: 'dark-sky' }))).toBe(FEATURE.DARKSKY);

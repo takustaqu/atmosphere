@@ -156,6 +156,43 @@ function put(out: Uint8Array, o: number, v: number): void {
   out[o + 1] = q - hi * 255;
 }
 
+interface TurretCell {
+  x: number; y: number;
+  center: number; weight: number;
+  rate: number; phase: number;
+  breadth: number; depth: number;
+}
+
+// Only the distance changes a row's placement and hashes. Hold one layout,
+// shared by renderers, rather than repeat their trig/hashes on every frame.
+// A changing distance replaces it; there is no growing cache of transitions.
+let lastLayout: { scale: number; rows: TurretCell[][] } | null = null;
+
+function turretLayout(sc: number): TurretCell[][] {
+  if (lastLayout?.scale === sc) return lastLayout.rows;
+  const rows = [[TOWER_TURRETS, 0], [SKIRT_TURRETS, 17]].map(([n0, seed]) => {
+    const n = n0 * sc, nI = Math.floor(n), nf = n - nI;
+    const s2 = Math.fround(seed + 3.1), s3 = Math.fround(seed + 7.7), s5 = Math.fround(seed + 5.3);
+    const cells: TurretCell[] = [];
+    const count = Math.min(Math.ceil(n) + 1, TURRET_SLOTS);
+    for (let id = 0; id < count; id++) {
+      const ak = rowCenter(id, n, seed) * 2 * Math.PI / n;
+      const h2 = hash12(id, s2), h3 = hash12(id, s3), h5 = hash12(id, s5);
+      const part = id > nI - 0.5, jit = (hash12(id, seed) - 0.5) * 0.4;
+      cells.push({
+        x: Math.sin(ak) * 0.85 * sc, y: Math.cos(ak) * 0.85 * sc,
+        center: part ? nf * (0.5 + jit) : 0.5 + jit,
+        weight: part ? smoothstep(0, 0.6, nf) : 1,
+        rate: 0.7 + 0.6 * h2, phase: h3 * 6.2831853,
+        breadth: Math.round(h2 * 255), depth: Math.round(h5 * 255),
+      });
+    }
+    return cells;
+  });
+  lastLayout = { scale: sc, rows };
+  return rows;
+}
+
 /**
  * The table for one frame: TURRET_SLOTS × TURRET_ROWS RGBA texels.
  *
@@ -189,19 +226,16 @@ export function turretTable(distance: number, evo: number, amount = 0.3,
   const ox = 17.3, oy = 9.1;
   const gain = 1.05 + 1.35 * amount, ceil = 0.44 + 0.11 * amount;
   const skGain = 0.20 * (0.6 + 0.4 * amount) * smoothstep(0.02, 0.20, amount);
-  const rows: [number, number][] = [[TOWER_TURRETS, 0], [SKIRT_TURRETS, 17]];
-  rows.forEach(([n0, seed], row) => {
-    const n = n0 * sc;
-    const nI = Math.floor(n), nf = n - nI;
+  const rows = turretLayout(sc);
+  for (let row = 0; row < rows.length; row++) {
+    const cells = rows[row];
     // (the clock each turret grows and slumps to: turretRow's live)
     const live = evo * 0.35 * (row === 0 ? 1 : 1.3);
-    const s2 = Math.fround(seed + 3.1), s3 = Math.fround(seed + 7.7), s5 = Math.fround(seed + 5.3);
     // every cell the shader can ask for, and the one past the last: a
     // division that rounds the wrong way can name it
-    const count = Math.min(Math.ceil(n) + 1, TURRET_SLOTS);
-    for (let id = 0; id < count; id++) {
-      const ak = rowCenter(id, n, seed) * 2 * Math.PI / n;
-      const qx = Math.sin(ak) * 0.85 * sc, qy = Math.cos(ak) * 0.85 * sc + clock;
+    for (let id = 0; id < cells.length; id++) {
+      const cell = cells[id];
+      const qx = cell.x, qy = cell.y + clock;
       const x1 = qx * 2.03 + ox, y1 = qy * 2.03 + oy;
       const coarse = 0.5 * vnoise(qx, qy) + 0.25 * vnoise(x1, y1);
       let top: number;
@@ -220,19 +254,15 @@ export function turretTable(distance: number, evo: number, amount = 0.3,
       }
       // the turret: its hashes, the narrow cell's share of a turret, and
       // where in its cell it stands (rowCell)
-      const h2 = hash12(id, s2), h3 = hash12(id, s3), h5 = hash12(id, s5);
-      const part = id > nI - 0.5;
-      const jit = (hash12(id, seed) - 0.5) * 0.4;
-      const yk = top * (0.74 + 0.26 * (0.5 + 0.5 * Math.sin(live * (0.7 + 0.6 * h2) + h3 * 6.2831853)))
-        * (part ? smoothstep(0, 0.6, nf) : 1);
+      const yk = top * (0.74 + 0.26 * (0.5 + 0.5 * Math.sin(live * cell.rate + cell.phase))) * cell.weight;
       const o = ((row + 1) * TURRET_SLOTS + id) * 4;
       put(out, o, yk * 0.5);
-      put(out, o + 2, part ? nf * (0.5 + jit) : 0.5 + jit);
+      put(out, o + 2, cell.center);
       const oh = (3 * TURRET_SLOTS + id) * 4 + row * 2;
-      out[oh] = Math.round(h2 * 255);
-      out[oh + 1] = Math.round(h5 * 255);
+      out[oh] = cell.breadth;
+      out[oh + 1] = cell.depth;
     }
-  });
+  }
   stormProfile(sc, clock, out);
   return out;
 }

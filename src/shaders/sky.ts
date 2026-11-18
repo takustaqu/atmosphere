@@ -4048,6 +4048,7 @@ void main() {
 
   // ── High layer, 5000–13000m ─────────────────────────
   // Cirrus Ci (mare's tail) — the first to blush pink at magic hour
+#ifdef FEAT_CLOUD_LAYERS
   if (u_high.x > 0.001 && above && stack) {
     // the extra x-crawl rides u_windOff too (see cloudField): 0.14 matches
     // the old u_time × 0.004 at light wind, and speeds up when it blows
@@ -4056,6 +4057,7 @@ void main() {
     col = mix(vec3(0.25, 0.30, 0.45), col, max(dayF, sunsetF));
     OVERM(col, f * u_high.x * 0.72 * horizonFade * (1.0 - gloom * 0.8), vec2(0.44, 0.045) / ALT_HIGH);
   }
+#endif
 #ifdef FEAT_CONTRAILS
   // ── Contrails ──
   // A jet's trail: a line drawn across the high sky from a point, lengthening
@@ -4097,6 +4099,7 @@ void main() {
   }
 #endif
   // Cirrostratus Cs (veil cloud) — a thin veil across the whole sky. Haloes the sun
+#ifdef FEAT_CLOUD_LAYERS
   if (u_high.y > 0.001 && stack) {
     // the halo below is sky-side and still shows under the horizon; the veil does not
     if (above) {
@@ -4134,12 +4137,15 @@ void main() {
     if (haloAmt > 0.0) disp = encodeSrgb(L(disp) + halo);
 #endif
   }
+#endif
   // Cirrocumulus Cc (mackerel sky) — fine grains packed densely up high
+#ifdef FEAT_CLOUD_LAYERS
   if (u_high.z > 0.001 && above && stack) {
     vec4 g = flocks(planeUV(rd, rdY, ALT_HIGH * 5.5, u_windOff * 0.3), 3.6, 1.0, 0.16, u_high.z, 3.0, ldir, false, planeFoot(rd, rdY, ALT_HIGH * 5.5));
     vec3 col = cloudColor(g.w, g.y, 0.12, dayF, nightM, sunsetF, flash, gloom, 0.5, cloudSun, 1.0);
     OVERM(col, g.x * horizonFade, MV_PLANE(ALT_HIGH * 5.5, 0.3));
   }
+#endif
 #ifdef FEAT_PARHELIA
   // The parhelia, once all the ice is down and with every water cloud still to
   // come, which hide them. The composite has no such place: see below
@@ -4165,6 +4171,7 @@ void main() {
   // Not one uniform film but "torn membranes overlapping in patches", with
   // the sun showing through broadly, outline-less, as if through frosted
   // glass. These two things are altostratus's face.
+#ifdef FEAT_CLOUD_LAYERS
   if (u_mid.x > 0.001 && above && stack) {
     vec2 uv = planeUV(rd, rdY, ALT_MID * 0.55, u_windOff * 0.6);
     vec2 s = stratiform(uv, 0.50, 0.35);
@@ -4187,16 +4194,20 @@ void main() {
 
     OVERM(col, s.x * u_mid.x * 0.95 * horizonFade, MV_STRAT(ALT_MID * 0.55, 0.6));
   }
+#endif
   // Altocumulus Ac (sheep cloud) — larger than cirrocumulus, with grains shaded individually
   // (and under a sheet of it lights the strip of clear air along the horizon:
   // down to where the ground takes over, so no line of blue is left between)
 #define ACLOW (dayF * (1.0 - smoothstep(0.12, 0.55, sunEl)))
 #define ACSUN mix(vec3(1.0, 0.93, 0.76), cloudSun, sunsetF * 0.35)
+#ifdef FEAT_CLOUD_LAYERS
   if (u_mid.y > 0.72 && stack && rd.y > -0.06) {
     float strip = (1.0 - smoothstep(0.02, 0.26, rd.y)) * mix(0.42, 1.0, exp(-sunAng * 0.75))
                 * ACLOW * smoothstep(0.72, 0.95, u_mid.y);
     if (strip > 0.0) OVER(ACSUN, strip * 0.9);
   }
+#endif
+#ifdef FEAT_CLOUD_LAYERS
   if (u_mid.y > 0.001 && above && stack) {
     vec2 acUV = planeUV(rd, rdY, ALT_MID * 2.2, u_windOff * 0.6), acFw = planeFoot(rd, rdY, ALT_MID * 2.2);
     // (past the most a sky of its own makes of it, the layer runs together
@@ -4222,10 +4233,12 @@ void main() {
     }
     OVERM(col, acA, MV_PLANE(ALT_MID * 2.2, 0.6));
   }
+#endif
   // Lenticular banks — long smooth lenses low over the horizon, each a dark
   // flat shape against the bright sky, sharp along the top and soft beneath.
   // Laid out round the sky rather than on a plane, where they'd crowd into
   // the horizon's vanishing point instead of lying along it
+#ifdef FEAT_CLOUD_LAYERS
   if (u_lent > 0.001 && above && stack && rd.y < 0.42) {
     float lentA = 0.0;
     vec2 ld = vec2(sin(az + u_windOff * 0.02), cos(az + u_windOff * 0.02));
@@ -4248,7 +4261,9 @@ void main() {
       OVER(lc, lentA * smoothstep(0.0, 0.25, u_lent) * 0.95);
     }
   }
+#endif
   // Nimbostratus Ns (rain cloud) — the rain-bearing cloud. Its undulating base's thickness variation becomes the light/dark directly
+#ifdef FEAT_CLOUD_LAYERS
   if (u_mid.z > 0.001 && above && stack) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_MID * 0.30, u_windOff * 0.6), 0.10, 1.0);
     // no direct sunlight reaches it at all, so color can be one-dimensional: "thickness → shade".
@@ -4261,6 +4276,7 @@ void main() {
     col += flash * vec3(0.75, 0.80, 1.0) * 0.6;
     OVERM(col, s.x * u_mid.z * 0.99 * horizonFade, MV_STRAT(ALT_MID * 0.30, 0.6));
   }
+#endif
 
   // ── Cumulonimbus Cb (thunderhead) ──
   //
@@ -6438,6 +6454,7 @@ void main() {
 
   // ── Low layer, under 2000m ──────────────────────────
   // Stratocumulus Sc (roll cloud) — large mottled masses, arranged as rolls
+#ifdef FEAT_CLOUD_LAYERS
   if (u_low.y > 0.001 && above && stack) {
     vec2 g = granular(planeUV(rd, rdY, ALT_LOW * 1.9, u_windOff * 1.2), 1.22, 0.5, 0.78, ldir);
     vec3 col = cloudColor(g.x, g.y, 0.48, dayF, nightM, sunsetF, flash, gloom, 1.05, cloudSun, 0.0);
@@ -6458,7 +6475,9 @@ void main() {
 #endif
     OVERM(col, scA, MV_PLANE(ALT_LOW * 1.9, 1.2));
   }
+#endif
   // Cumulus Cu (cotton cloud) — dome-shaped billowing lumps. The heaviest layer, so skip it at tiny amounts
+#ifdef FEAT_CUMULUS
   if (u_low.z > 0.02 && above && stack) {
     // ── Cumulus as a slab: a base and the climb above it ──
     // A cumulus is a column standing on a flat base, all its lumps on the
@@ -6840,7 +6859,9 @@ void main() {
       }
     }
   }
+#endif
   // Stratus St (fog cloud) — hangs low. Denser toward the horizon
+#ifdef FEAT_CLOUD_LAYERS
   if (u_low.x > 0.001 && above && stack) {
     vec2 s = stratiform(planeUV(rd, rdY, ALT_LOW * 0.5, u_windOff * 1.2), 0.45, 0.45);
     vec3 col = cloudColor(0.95, -0.25, 0.60,
@@ -6848,6 +6869,7 @@ void main() {
     float lowBias = mix(1.0, 0.40, smoothstep(0.05, 0.55, rd.y));
     OVERM(col, s.x * u_low.x * lowBias * 0.95 * horizonFade, MV_STRAT(ALT_LOW * 0.5, 1.2));
   }
+#endif
 
   // ── Light leaking in under the cloud base ──
   // Even under a thick deck covering the whole sky, right along the horizon

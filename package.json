@@ -60,6 +60,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "bench:render": "node scripts/bench-render.mjs",
     "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
     "build:site": "node scripts/build-site.mjs",
     "prepack": "pnpm run build",

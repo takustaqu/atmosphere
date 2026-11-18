@@ -4,7 +4,7 @@
 // in front of FRAG. Nothing else in the text differs from one variant to the
 // next.
 
-import { CACHE_BITS, CACHE_BUILD, FEATURE_DEFINES } from '../features.js';
+import { CACHE_BITS, CACHE_BUILD, FEATURE, FEATURE_DEFINES } from '../features.js';
 import { FRAG } from './sky.js';
 
 /**
@@ -25,7 +25,14 @@ import { FRAG } from './sky.js';
  */
 export function fragSource(explicitLod: boolean, split: boolean, key: number, motion = false): string {
   let defines = '';
-  for (const [bit, name] of FEATURE_DEFINES) if (key & bit) defines += `#define ${name}\n`;
+  // Keep the established program layout for a tower behind other layers.
+  // Removing only the unused cumulus block there regressed thunderstorm GPU
+  // time on Metal. A bare tower still drops both plane-cloud blocks, and a
+  // sky without a tower specializes them independently. Their runtime gates
+  // stay in place, so this changes neither the clouds nor their thresholds.
+  const compiledKey = (key & FEATURE.CB) && (key & FEATURE.CLOUD_LAYERS)
+    ? key | FEATURE.CUMULUS : key;
+  for (const [bit, name] of FEATURE_DEFINES) if (compiledKey & bit) defines += `#define ${name}\n`;
   // an #extension directive has to precede every non-preprocessor token
   return (explicitLod
     ? '#extension GL_EXT_shader_texture_lod : enable\n'

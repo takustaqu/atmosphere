@@ -34,6 +34,7 @@ import { VERT } from './shaders/vert.js';
 import { TURRET_ROWS, TURRET_SLOTS, feedsAnvil, stormAmount, turretTable } from './storm.js';
 import { CUBE_FACE_CAMERAS, DEFAULT_CAMERA, type AtmosphereState, type Camera } from './state.js';
 import { sunShape } from './sundisc.js';
+import { uniformSlot, uniform1f, uniform2f, uniform3f, uniform4f, type Uniforms } from './uniforms.js';
 
 /** how many variants to keep linked at once; the least recently drawn goes first */
 const MAX_VARIANTS = 8;
@@ -123,8 +124,6 @@ const FIRST_PAINT_AFTER_MS = 400;
 const FIRST_PAINT_FADE_MS = 1200;
 /** a frame this soon after the last is part of a running loop, not a still frame */
 const FIRST_PAINT_FADE_GAP_MS = 250;
-
-type Uniforms = Record<string, WebGLUniformLocation | null>;
 
 const UNIFORM_NAMES = [
   'u_noise', 'u_noiseQ', 'u_turrets',
@@ -1046,17 +1045,17 @@ export class AtmosphereRenderer {
       return;
     }
     gl.useProgram(v.program);
-    for (const name of UNIFORM_NAMES) v.u[name] = gl.getUniformLocation(v.program, name);
+    for (const name of UNIFORM_NAMES) v.u[name] = uniformSlot(gl.getUniformLocation(v.program, name));
     // the sampler bindings live in the program, so once per program; which
     // texture each unit holds is context state, and render() re-establishes that
-    gl.uniform1i(v.u.u_noise, 0);
-    gl.uniform1i(v.u.u_clouds, 1);
-    gl.uniform1i(v.u.u_noiseQ, 2);
-    gl.uniform1i(v.u.u_turrets, 3);
-    gl.uniform1i(v.u.u_clouds2, 4);
-    gl.uniform1i(v.u.u_flow, 5);
-    gl.uniform1i(v.u.u_flow2, 6);
-    gl.uniform1i(v.u.u_morph, 7);
+    gl.uniform1i(v.u.u_noise?.location ?? null, 0);
+    gl.uniform1i(v.u.u_clouds?.location ?? null, 1);
+    gl.uniform1i(v.u.u_noiseQ?.location ?? null, 2);
+    gl.uniform1i(v.u.u_turrets?.location ?? null, 3);
+    gl.uniform1i(v.u.u_clouds2?.location ?? null, 4);
+    gl.uniform1i(v.u.u_flow?.location ?? null, 5);
+    gl.uniform1i(v.u.u_flow2?.location ?? null, 6);
+    gl.uniform1i(v.u.u_morph?.location ?? null, 7);
     v.linked = true;
     if (!this.reported && (v.key === this.wanted || v.key === this.firstPaint)) {
       this.reported = true;
@@ -1306,29 +1305,29 @@ export class AtmosphereRenderer {
     // (nothing to go along from the soft map, whose reads then all come back zero)
     gl.bindTexture(gl.TEXTURE_2D, a.slot === SOFT_SLOT ? null : this.skyMorph[b.slot]);
     gl.activeTexture(gl.TEXTURE0);
-    gl.uniform4f(u.u_map0, a.rect.azC, a.rect.el0, a.rect.azSpan, a.rect.elSpan);
-    gl.uniform4f(u.u_map1, b.rect.azC, b.rect.el0, b.rect.azSpan, b.rect.elSpan);
-    gl.uniform1f(u.u_mapMix, mix);
+    uniform4f(gl, u.u_map0, a.rect.azC, a.rect.el0, a.rect.azSpan, a.rect.elSpan);
+    uniform4f(gl, u.u_map1, b.rect.azC, b.rect.el0, b.rect.azSpan, b.rect.elSpan);
+    uniform1f(gl, u.u_mapMix, mix);
     // the wind run since the first keyframe's moment and still to run to the
     // second's: the frame's own wind against each one's
-    gl.uniform2f(u.u_mapWind, windOff - a.clocks.wind, b.clocks.wind - windOff);
+    uniform2f(gl, u.u_mapWind, windOff - a.clocks.wind, b.clocks.wind - windOff);
     // the texels each holds, as directions, a texel and a half in from its
     // edge: the moved reads are held inside, with room for the cubic's reach
-    gl.uniform4f(u.u_mapTexels, a.size[0], a.size[1], b.size[0], b.size[1]);
+    uniform4f(gl, u.u_mapTexels, a.size[0], a.size[1], b.size[0], b.size[1]);
     const box = (k: typeof a): [number, number, number, number] => {
       const c = k.cover, f = (x: number) => Math.max(-1e4, Math.min(1e4, x));
       const iAz = 1.5 * k.rect.azSpan / k.size[0], iEl = 1.5 * k.rect.elSpan / k.size[1];
       return [f(c.azLo + iAz), f(c.azHi - iAz), f(c.elLo + iEl), f(c.elHi - iEl)];
     };
-    gl.uniform4f(u.u_box0, ...box(a));
-    gl.uniform4f(u.u_box1, ...box(b));
-    gl.uniform1f(u.u_xfade, 0);
-    gl.uniform1f(u.u_aspect, w / Math.max(1, h));
-    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
-    gl.uniform4f(u.u_frame, 0, 0, w, h);
-    gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
-    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.uniform2f(u.u_lensFx, s.lens.flare, s.lens.vignette);
+    uniform4f(gl, u.u_box0, ...box(a));
+    uniform4f(gl, u.u_box1, ...box(b));
+    uniform1f(gl, u.u_xfade, 0);
+    uniform1f(gl, u.u_aspect, w / Math.max(1, h));
+    uniform3f(gl, u.u_cam, camera.yaw, camera.pitch, camera.fov);
+    uniform4f(gl, u.u_frame, 0, 0, w, h);
+    uniform1f(gl, u.u_p3, this.p3 ? 1 : 0);
+    uniform1f(gl, u.u_lensDrops, s.lens.droplets);
+    uniform2f(gl, u.u_lensFx, s.lens.flare, s.lens.vignette);
     if (rects) this.drawRects(gl, rects);
     else gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
@@ -1350,18 +1349,18 @@ export class AtmosphereRenderer {
     }
     gl.activeTexture(gl.TEXTURE0);
     // (the sheets' crawl with evolution, in units of wind: see MV_STRAT)
-    gl.uniform1f(u.u_evoPerWind, build.evoPerWind);
+    uniform1f(gl, u.u_evoPerWind, build.evoPerWind);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.skyFbo[key.slot]);
     gl.viewport(0, 0, W, H);
     gl.enable(gl.SCISSOR_TEST);
     gl.scissor(c0, key.box.r0, c1 - c0, key.box.r1 - key.box.r0);
-    gl.uniform4f(u.u_frame, 0, 0, W, H);
-    gl.uniform4f(u.u_map0, key.rect.azC, key.rect.el0, key.rect.azSpan, key.rect.elSpan);
-    gl.uniform3f(u.u_mapStep, step[0], step[1], key.viewPx);
-    gl.uniform1f(u.u_xfade, 0);
-    gl.uniform1f(u.u_aspect, 1);
-    gl.uniform1f(u.u_lensDrops, 0);
-    gl.uniform1f(u.u_p3, 0);
+    uniform4f(gl, u.u_frame, 0, 0, W, H);
+    uniform4f(gl, u.u_map0, key.rect.azC, key.rect.el0, key.rect.azSpan, key.rect.elSpan);
+    uniform3f(gl, u.u_mapStep, step[0], step[1], key.viewPx);
+    uniform1f(gl, u.u_xfade, 0);
+    uniform1f(gl, u.u_aspect, 1);
+    uniform1f(gl, u.u_lensDrops, 0);
+    uniform1f(gl, u.u_p3, 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.disable(gl.SCISSOR_TEST);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1409,17 +1408,17 @@ export class AtmosphereRenderer {
       for (const [unit, tex] of units) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, tex); }
       gl.activeTexture(gl.TEXTURE0);
       const r = (k: CacheKeyframe): [number, number, number, number] => [k.rect.azC, k.rect.el0, k.rect.azSpan, k.rect.elSpan];
-      gl.uniform4f(u.u_mapA, ...r(prev));
-      gl.uniform4f(u.u_mapB, ...r(key));
+      uniform4f(gl, u.u_mapA, ...r(prev));
+      uniform4f(gl, u.u_mapB, ...r(key));
       // the earlier's reads held inside the texels it holds (as the
       // composite's are), the later's inside its own, as texel coordinates
       const c = prev.cover, f = (x: number) => Math.max(-1e4, Math.min(1e4, x));
       const iAz = 1.5 * prev.rect.azSpan / W, iEl = 1.5 * prev.rect.elSpan / H;
-      gl.uniform4f(u.u_boxA, f(c.azLo + iAz), f(c.azHi - iAz), f(c.elLo + iEl), f(c.elHi - iEl));
-      gl.uniform4f(u.u_boxB, (key.box.c0 + 0.5) / W, (key.box.c1 - 0.5) / W, (key.box.r0 + 0.5) / H, (key.box.r1 - 0.5) / H);
-      gl.uniform2f(u.u_texels, W, H);
-      gl.uniform2f(u.u_out, w, h);
-      gl.uniform1f(u.u_dw, key.clocks.wind - prev.clocks.wind);
+      uniform4f(gl, u.u_boxA, f(c.azLo + iAz), f(c.azHi - iAz), f(c.elLo + iEl), f(c.elHi - iEl));
+      uniform4f(gl, u.u_boxB, (key.box.c0 + 0.5) / W, (key.box.c1 - 0.5) / W, (key.box.r0 + 0.5) / H, (key.box.r1 - 0.5) / H);
+      uniform2f(gl, u.u_texels, W, H);
+      uniform2f(gl, u.u_out, w, h);
+      uniform1f(gl, u.u_dw, key.clocks.wind - prev.clocks.wind);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       for (const [unit] of units) { gl.activeTexture(unit); gl.bindTexture(gl.TEXTURE_2D, null); }
       // (the next draw binds its own program again: see bind)
@@ -1466,11 +1465,11 @@ export class AtmosphereRenderer {
     }
     gl.useProgram(program);
     const u: Uniforms = {};
-    for (const n of ['u_ka', 'u_kb', 'u_fa', 'u_fb', 'u_mapA', 'u_mapB', 'u_boxA', 'u_boxB', 'u_texels', 'u_out', 'u_dw']) u[n] = gl.getUniformLocation(program, n);
-    gl.uniform1i(u.u_ka, 1);
-    gl.uniform1i(u.u_kb, 4);
-    gl.uniform1i(u.u_fa, 5);
-    gl.uniform1i(u.u_fb, 6);
+    for (const n of ['u_ka', 'u_kb', 'u_fa', 'u_fb', 'u_mapA', 'u_mapB', 'u_boxA', 'u_boxB', 'u_texels', 'u_out', 'u_dw']) u[n] = uniformSlot(gl.getUniformLocation(program, n));
+    gl.uniform1i(u.u_ka?.location ?? null, 1);
+    gl.uniform1i(u.u_kb?.location ?? null, 4);
+    gl.uniform1i(u.u_fa?.location ?? null, 5);
+    gl.uniform1i(u.u_fb?.location ?? null, 6);
     this.morph = { program, u };
     return this.morph;
   }
@@ -1650,9 +1649,9 @@ export class AtmosphereRenderer {
     const w = this.canvas.width, h = this.canvas.height;
     // (the crossfade's second draw leaves alone whatever it would only
     // repeat of the first: see cbXfadeSkip in the shader)
-    gl.uniform1f(u.u_xfade, share < 1 ? share : 0);
-    gl.uniform1f(u.u_aspect, w / Math.max(1, h));
-    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
+    uniform1f(gl, u.u_xfade, share < 1 ? share : 0);
+    uniform1f(gl, u.u_aspect, w / Math.max(1, h));
+    uniform3f(gl, u.u_cam, camera.yaw, camera.pitch, camera.fov);
 
     // the cloud stack on its own, at its own resolution (mode 1), then the
     // frame with that stack laid in (mode 2) — or the frame in one pass (mode
@@ -1673,12 +1672,12 @@ export class AtmosphereRenderer {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.cloudFbo);
         gl.viewport(0, 0, cw, ch);
-        gl.uniform4f(u.u_frame, 0, 0, cw, ch);
-        gl.uniform1f(u.u_cloudMode, 1);
+        uniform4f(gl, u.u_frame, 0, 0, cw, ch);
+        uniform1f(gl, u.u_cloudMode, 1);
         // the stack is drawn for the undistorted rays; the composite reads it
         // back wherever a droplet has bent each pixel's ray
-        gl.uniform1f(u.u_lensDrops, 0);
-        gl.uniform1f(u.u_p3, 0);
+        uniform1f(gl, u.u_lensDrops, 0);
+        uniform1f(gl, u.u_p3, 0);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, w, h);
@@ -1689,11 +1688,11 @@ export class AtmosphereRenderer {
       }
     }
 
-    gl.uniform4f(u.u_frame, 0, 0, w, h);
-    gl.uniform1f(u.u_cloudMode, mode);
-    gl.uniform1f(u.u_p3, this.p3 ? 1 : 0);
-    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.uniform2f(u.u_lensFx, s.lens.flare, s.lens.vignette);
+    uniform4f(gl, u.u_frame, 0, 0, w, h);
+    uniform1f(gl, u.u_cloudMode, mode);
+    uniform1f(gl, u.u_p3, this.p3 ? 1 : 0);
+    uniform1f(gl, u.u_lensDrops, s.lens.droplets);
+    uniform2f(gl, u.u_lensFx, s.lens.flare, s.lens.vignette);
     // (only the frame itself is laid over the last: the cloud stack's own
     // pass above replaces its target's contents, as it always does)
     if (share < 1) this.blendOver(gl);
@@ -1868,30 +1867,30 @@ export class AtmosphereRenderer {
   ): void {
     this.bind(v, timeSec, s, windOff, evo);
     const u = this.u;
-    gl.uniform1f(u.u_xfade, xfade);
+    uniform1f(gl, u.u_xfade, xfade);
     // sRGB regardless of the canvas: these numbers leave the GPU for someone
     // else's pipeline, and sRGB is the one every consumer assumes
-    gl.uniform1f(u.u_p3, 0);
+    uniform1f(gl, u.u_p3, 0);
 
     const fw = layout.cols * PROBE_SUB, fh = layout.frameHeight;
     gl.viewport(0, 0, fw, fh);
-    gl.uniform4f(u.u_frame, 0, 0, fw, fh);
-    gl.uniform1f(u.u_aspect, this.canvas.width / Math.max(1, this.canvas.height));
-    gl.uniform3f(u.u_cam, camera.yaw, camera.pitch, camera.fov);
-    gl.uniform1f(u.u_lensDrops, s.lens.droplets);
-    gl.uniform2f(u.u_lensFx, s.lens.flare, s.lens.vignette);
+    uniform4f(gl, u.u_frame, 0, 0, fw, fh);
+    uniform1f(gl, u.u_aspect, this.canvas.width / Math.max(1, this.canvas.height));
+    uniform3f(gl, u.u_cam, camera.yaw, camera.pitch, camera.fov);
+    uniform1f(gl, u.u_lensDrops, s.lens.droplets);
+    uniform2f(gl, u.u_lensFx, s.lens.flare, s.lens.vignette);
     // one pass: at a few dozen pixels there is nothing to save by splitting
-    gl.uniform1f(u.u_cloudMode, 0);
+    uniform1f(gl, u.u_cloudMode, 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     if (layout.environment) {
-      gl.uniform1f(u.u_aspect, 1);
-      gl.uniform1f(u.u_lensDrops, 0);
-      gl.uniform2f(u.u_lensFx, 0, 0);
+      uniform1f(gl, u.u_aspect, 1);
+      uniform1f(gl, u.u_lensDrops, 0);
+      uniform2f(gl, u.u_lensFx, 0, 0);
       CUBE_FACE_CAMERAS.forEach((face, i) => {
         gl.viewport(i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);
-        gl.uniform4f(u.u_frame, i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);
-        gl.uniform3f(u.u_cam, face.yaw, face.pitch, face.fov);
+        uniform4f(gl, u.u_frame, i * PROBE_FACE, fh, PROBE_FACE, PROBE_FACE);
+        uniform3f(gl, u.u_cam, face.yaw, face.pitch, face.fov);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
       });
     }
@@ -1909,64 +1908,66 @@ export class AtmosphereRenderer {
     // bind every frame rather than only at init: another renderer sharing this
     // canvas (or anything else touching the context) may have swapped programs
     gl.useProgram(v.program);
-    this.updateTurrets(gl, s, evo);
-    gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, this.noiseQ);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.noise);
     const u = this.u;
-    gl.uniform1f(u.u_time, timeSec % TIME_WRAP_SEC);
-    gl.uniform1f(u.u_snowRun, this.snowRun);
-    gl.uniform3f(u.u_snowVel, this.snowVel[0], this.snowVel[1], this.snowVel[2]);
-    gl.uniform2f(u.u_sun, s.sunElevation, s.sunAzimuth);
+    if (u.u_turrets) this.updateTurrets(gl, s, evo);
+    if (u.u_noiseQ) {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.noiseQ);
+    }
+    gl.activeTexture(gl.TEXTURE0);
+    if (u.u_noise) gl.bindTexture(gl.TEXTURE_2D, this.noise);
+    uniform1f(gl, u.u_time, timeSec % TIME_WRAP_SEC);
+    uniform1f(gl, u.u_snowRun, this.snowRun);
+    uniform3f(gl, u.u_snowVel, this.snowVel[0], this.snowVel[1], this.snowVel[2]);
+    uniform2f(gl, u.u_sun, s.sunElevation, s.sunAzimuth);
     // The moon's third number is how much light it gives, not its shape: a
     // moon in the Earth's shadow lights the clouds, its halo and the sea a
     // tenth as much as the same moon outside it. Everything that is lit by
     // the moon reads it from here; the disc itself takes its phase back out
     const eclipse = Math.min(Math.max(s.moonEclipse ?? 0, 0), 1);
-    gl.uniform3f(u.u_moon, s.moonElevation, s.moonAzimuth, s.moonPhase * (1 - 0.9 * eclipse));
-    gl.uniform1f(u.u_moonEclipse, eclipse);
+    uniform3f(gl, u.u_moon, s.moonElevation, s.moonAzimuth, s.moonPhase * (1 - 0.9 * eclipse));
+    uniform1f(gl, u.u_moonEclipse, eclipse);
     const c = s.clouds;
-    gl.uniform1f(u.u_cover, s.cloudCover);
-    gl.uniform3f(u.u_high, c.cirrus, c.cirrostratus, c.cirrocumulus);
-    {
+    uniform1f(gl, u.u_cover, s.cloudCover);
+    uniform3f(gl, u.u_high, c.cirrus, c.cirrostratus, c.cirrocumulus);
+    if (u.u_parhelia) {
       const [red, width] = parheliaShape(s.sunElevation), [lesser, greater] = parheliaAmounts(s, evo);
-      gl.uniform4f(u.u_parhelia, red, width, lesser, greater);
+      uniform4f(gl, u.u_parhelia, red, width, lesser, greater);
     }
-    gl.uniform3f(u.u_mid, c.altostratus, c.altocumulus, c.nimbostratus);
-    gl.uniform4f(u.u_low, c.stratus, c.stratocumulus, c.cumulus, c.cumulonimbus);
-    gl.uniform1f(u.u_rain, s.rain);
-    gl.uniform1f(u.u_snow, s.snow);
-    gl.uniform1f(u.u_fall, s.particles.precipitation);
-    gl.uniform2f(u.u_sea, s.ground.sea, s.ground.swell);
-    gl.uniform2f(u.u_sunset, s.sunset.warmth, s.sunset.glow);
+    uniform3f(gl, u.u_mid, c.altostratus, c.altocumulus, c.nimbostratus);
+    uniform4f(gl, u.u_low, c.stratus, c.stratocumulus, c.cumulus, c.cumulonimbus);
+    uniform1f(gl, u.u_rain, s.rain);
+    uniform1f(gl, u.u_snow, s.snow);
+    uniform1f(gl, u.u_fall, s.particles.precipitation);
+    uniform2f(gl, u.u_sea, s.ground.sea, s.ground.swell);
+    uniform2f(gl, u.u_sunset, s.sunset.warmth, s.sunset.glow);
     {
       const [sky, sea, limb] = sunShape(s.sun.disc);
-      gl.uniform4f(u.u_sunLook, sky, sea, s.sun.glare, limb);
+      uniform4f(gl, u.u_sunLook, sky, sea, s.sun.glare, limb);
     }
-    gl.uniform1f(u.u_wind, s.wind);
-    gl.uniform1f(u.u_thunder, s.thunder);
-    gl.uniform1f(u.u_haze, s.haze);
-    gl.uniform1f(u.u_lent, s.features.lenticular);
-    gl.uniform4f(u.u_cbFeat, s.features.anvil, s.features.velum, s.features.distance, s.features.softness);
-    gl.uniform1f(u.u_anvilFed, this.anvilFed ? 1 : 0);
-    gl.uniform1f(u.u_windOff, windOff);
-    gl.uniform1f(u.u_evo, evo);
-    gl.uniform1f(u.u_filtAmt, s.filter.amount);
-    gl.uniform3f(u.u_filtTint, s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]);
-    gl.uniform1f(u.u_filtSat, s.filter.saturation);
-    gl.uniform1f(u.u_filtLift, s.filter.lift);
-    gl.uniform1f(u.u_headroom, Math.max(1, this.opts.headroom ?? 1));
+    uniform1f(gl, u.u_wind, s.wind);
+    uniform1f(gl, u.u_thunder, s.thunder);
+    uniform1f(gl, u.u_haze, s.haze);
+    uniform1f(gl, u.u_lent, s.features.lenticular);
+    uniform4f(gl, u.u_cbFeat, s.features.anvil, s.features.velum, s.features.distance, s.features.softness);
+    uniform1f(gl, u.u_anvilFed, this.anvilFed ? 1 : 0);
+    uniform1f(gl, u.u_windOff, windOff);
+    uniform1f(gl, u.u_evo, evo);
+    uniform1f(gl, u.u_filtAmt, s.filter.amount);
+    uniform3f(gl, u.u_filtTint, s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]);
+    uniform1f(gl, u.u_filtSat, s.filter.saturation);
+    uniform1f(gl, u.u_filtLift, s.filter.lift);
+    uniform1f(gl, u.u_headroom, Math.max(1, this.opts.headroom ?? 1));
     const t = s.tone;
-    gl.uniform4f(u.u_tone, t.exposure, t.contrast, t.knee, t.bleach);
+    uniform4f(gl, u.u_tone, t.exposure, t.contrast, t.knee, t.bleach);
     const pz = s.polarizer;
-    gl.uniform4f(u.u_pol, pz.strength, pz.angle, pz.saturation, pz.stopLoss);
+    uniform4f(gl, u.u_pol, pz.strength, pz.angle, pz.saturation, pz.stopLoss);
     const ce = s.celestial;
-    gl.uniform4f(u.u_sky, ce.bortle, ce.milkyWay, ce.meteors, ce.radiant ? 1 : 0);
-    gl.uniform2f(u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
-    gl.uniform1f(u.u_aurora, ce.aurora);
-    gl.uniform1f(u.u_contrails, s.particles.contrails);
-    gl.uniform1f(u.u_rays, this.rays);
+    uniform4f(gl, u.u_sky, ce.bortle, ce.milkyWay, ce.meteors, ce.radiant ? 1 : 0);
+    uniform2f(gl, u.u_radiant, ce.radiant?.[0] ?? 0, ce.radiant?.[1] ?? 0);
+    uniform1f(gl, u.u_aurora, ce.aurora);
+    uniform1f(gl, u.u_contrails, s.particles.contrails);
+    uniform1f(gl, u.u_rays, this.rays);
   }
 
   /** the probe's framebuffer, (re)made to fit the layout. false if the driver refuses it */

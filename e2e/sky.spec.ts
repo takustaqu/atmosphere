@@ -381,3 +381,94 @@ test.describe('settling', () => {
     expect(r).toEqual({ ready: [false], said: [false], settled: false, when: false });
   });
 });
+
+test.describe('render state reuse', () => {
+  test('uploads no unchanged uniforms, and restores the frame after a light probe', async ({ page }) => {
+    await open(page, 'no-preference');
+    const result = await page.evaluate(() => {
+      const canvas = document.querySelector('canvas')!;
+      const r = new window.AtmosphereRenderer(canvas, { compile: 'sync', cloudScale: 0.5 });
+      r.resize(320, 200);
+      const gl = canvas.getContext('webgl')!;
+      const s = window.resolveConditions({ time: 14, weather: 'fair' });
+      const camera = { yaw: Math.PI, pitch: 0.45, fov: 0.86 };
+      const read = () => {
+        const data = new Uint8Array(canvas.width * canvas.height * 4);
+        gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+        return data;
+      };
+      const draw = () => r.render(100, s, camera, 41.7, 7.3);
+      draw();
+      const before = read();
+      const measured = r.probe(100, s, camera, 41.7, 7.3);
+      draw();
+      const after = read();
+      let max = 0;
+      before.forEach((v, i) => { max = Math.max(max, Math.abs(v - after[i])); });
+      const error = gl.getError();
+      r.dispose();
+
+      // The single-pass renderer should not resend a constant sky's inputs.
+      // (A split frame intentionally changes its viewport/mode twice.)
+      const still = new window.AtmosphereRenderer(canvas, { compile: 'sync' });
+      let calls = 0;
+      for (const name of ['uniform1f', 'uniform2f', 'uniform3f', 'uniform4f'] as const) {
+        const original = gl[name].bind(gl);
+        Object.defineProperty(gl, name, { configurable: true, value: (...args: unknown[]) => { calls++; Reflect.apply(original, gl, args); } });
+      }
+      still.render(100, s, camera, 41.7, 7.3);
+      const first = calls;
+      calls = 0;
+      still.render(100, s, camera, 41.7, 7.3);
+      const repeated = calls;
+      still.render(100.1, s, camera, 41.8, 7.4);
+      const advancing = calls;
+      still.dispose({ loseContext: true });
+      return { max, measured: measured !== null, error, first, repeated, advancing };
+    });
+    expect(result.measured).toBe(true);
+    expect(result.error).toBe(0);
+    expect(result.max).toBe(0);
+    expect(result.first).toBeGreaterThan(10);
+    expect(result.repeated).toBe(0);
+    expect(result.advancing).toBeGreaterThan(0);
+    expect(result.advancing).toBeLessThan(8);
+  });
+
+  test('restores uniform values after a WebGL context loss', async ({ page }) => {
+    await open(page, 'no-preference');
+    const result = await page.evaluate(async () => {
+      const canvas = document.querySelector('canvas')!;
+      const r = new window.AtmosphereRenderer(canvas, { compile: 'sync' });
+      r.resize(320, 200);
+      const gl = canvas.getContext('webgl')!;
+      const ext = gl.getExtension('WEBGL_lose_context');
+      if (!ext) { r.dispose(); return null; }
+      const s = window.resolveConditions({ time: 14, weather: 'fair' });
+      const draw = () => {
+        r.render(100, s, undefined, 41.7, 7.3);
+        const data = new Uint8Array(320 * 200 * 4);
+        gl.readPixels(0, 0, 320, 200, gl.RGBA, gl.UNSIGNED_BYTE, data);
+        return data;
+      };
+      const before = draw();
+      const lost = new Promise<void>(done => canvas.addEventListener('webglcontextlost', () => done(), { once: true }));
+      ext.loseContext();
+      await lost;
+      // Restoration is allowed after dispatch of the lost event completes;
+      // its promise continuation can still be inside that dispatch.
+      await new Promise(done => setTimeout(done, 0));
+      const restored = new Promise<void>(done => canvas.addEventListener('webglcontextrestored', () => done(), { once: true }));
+      ext.restoreContext();
+      await restored;
+      const after = draw();
+      let max = 0;
+      before.forEach((v, i) => { max = Math.max(max, Math.abs(v - after[i])); });
+      const error = gl.getError();
+      r.dispose({ loseContext: true });
+      return { max, error };
+    });
+    test.skip(result === null, 'WEBGL_lose_context unavailable');
+    expect(result).toEqual({ max: 0, error: 0 });
+  });
+});
