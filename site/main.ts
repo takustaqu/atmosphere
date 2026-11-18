@@ -45,6 +45,9 @@ let at = Math.floor(Math.random() * SCENES.length);
 
 const sky = new Atmosphere(canvas, {
   ...SCENES[at].conditions,
+  // The rotation crosses several intermediate weather combinations. Share
+  // one shader so the numbered buttons and automatic transitions stay smooth.
+  variants: false,
   // the hero fills the viewport, and fbm is the expensive part — render a
   // little smaller than the default and let CSS scale it up. The sky is soft
   // enough that the resample doesn't show
