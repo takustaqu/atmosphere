@@ -17,7 +17,7 @@
 
 import { CLOUD_GENERA_IDS, type CloudMix } from './clouds.js';
 import {
-  ALL_FEATURES, CACHE_BITS, CACHE_BUILD, CACHE_COMP, CB_AUTO_BAND, FEATURE, SPLIT_KEY, firstPaintKey,
+  ALL_FEATURES, NO_ANVIL_OR_LENTICULAR, CACHE_BITS, CACHE_BUILD, CACHE_COMP, CB_AUTO_BAND, FEATURE, SPLIT_KEY, firstPaintKey,
   backlitInView, cbModeOf, featureKeys, iridescenceInView, type CumulonimbusMode,
 } from './features.js';
 import { type ColorSpaceOption } from './gamut.js';
@@ -241,8 +241,11 @@ export interface RendererOptions {
    * the one program is what the renderer used to be, and it is slower on
    * every frame for the features it is not drawing — kept as a switch for
    * measuring that, and for a driver that chokes on a second compile.
+   * 'shared' keeps the weather in one program too, specializing only the
+   * independent optional effects. A rotation that leaves these off never
+   * links another shader as its clouds, precipitation or time change.
    */
-  variants?: boolean;
+  variants?: boolean | 'shared';
   /**
    * How the cumulonimbus's towers are drawn: `'volumetric'`, their lobes a
    * 3D density ray-marched and lit by its own self-shadowing; `'2d'`, the
@@ -553,6 +556,10 @@ export class AtmosphereRenderer {
   get cumulonimbus(): CumulonimbusMode { return this.cbMode; }
   set cumulonimbus(v: CumulonimbusMode) { this.cbMode = cbModeOf(v); }
 
+  private get usesSharedProgram(): boolean {
+    return this.opts.variants === false || this.opts.variants === 'shared';
+  }
+
   /**
    * the variants a state is drawn with and each one's share (see
    * featureKeys; null: the one that draws anything — under 'auto' the
@@ -561,16 +568,26 @@ export class AtmosphereRenderer {
   private keysFor(s: AtmosphereState | null, camera?: Camera, aspect = 1): { key: number; share: number }[] {
     // (the split program only for a frame that splits: see SPLIT_KEY)
     const sp = this.cloudScale < 1 || this.rays > 0 ? SPLIT_KEY : 0;
-    const all = (ALL_FEATURES & ~FEATURE.CBVOL) | (this.cbMode !== '2d' ? FEATURE.CBVOL : 0) | sp;
+    let features = ALL_FEATURES;
+    if (s && this.opts.variants === 'shared') {
+      // These independent controls stay off through interpolation if both endpoints
+      // are off. Keep all interacting cloud, solar and lunar effects together.
+      if (s.celestial.aurora === 0) features &= ~FEATURE.AURORA;
+      if (s.particles.contrails === 0) features &= ~FEATURE.CONTRAILS;
+      if (s.polarizer.strength === 0) features &= ~FEATURE.POLARIZER;
+      if (this.rays === 0) features &= ~FEATURE.RAYS;
+      if (s.features.anvil === 0 && s.features.lenticular === 0) features |= NO_ANVIL_OR_LENTICULAR;
+    }
+    const all = (features & ~FEATURE.CBVOL) | (this.cbMode !== '2d' ? FEATURE.CBVOL : 0) | sp;
     if (s === null) return [{ key: all, share: 1 }];
     const ks = featureKeys(s, this.rays, this.cbMode, this.evoNow);
-    if (this.opts.variants === false) {
+    if (this.usesSharedProgram) {
       // everything in one program — the one above for a sky without a tower,
       // which either tower's program draws alike (asked for by its own key,
       // a fair tile in a gallery drawn with the volumetric program waited on
       // a second compile and came out blank); with one, the key's own tower
       if (!(ks[0].key & FEATURE.CB)) return [{ key: all, share: 1 }];
-      for (const k of ks) k.key = (ALL_FEATURES & ~FEATURE.CBVOL) | (k.key & FEATURE.CBVOL);
+      for (const k of ks) k.key = (features & ~FEATURE.CBVOL) | (k.key & FEATURE.CBVOL);
     }
     for (const k of ks) k.key |= sp;
     // and the light from behind only in a view it can be seen in (see
@@ -580,14 +597,14 @@ export class AtmosphereRenderer {
     // spot: a view turning away from the sun would stop the page for a
     // compile, and a bake's faces looking away from it would compile a
     // second program for the sake of a frame or two
-    if (camera && this.parallel && this.opts.variants !== false && (ks[0].key & FEATURE.BACKLIT)
+    if (camera && this.parallel && !this.usesSharedProgram && (ks[0].key & FEATURE.BACKLIT)
         && !backlitInView(s, camera, aspect)) {
       for (const k of ks) if (!(k.key & FEATURE.CB) || (k.key & FEATURE.CBVOL)) k.key &= ~FEATURE.BACKLIT;
     }
     // nor a thin cloud's colors by the sun in a view that comes nowhere near
     // it (see iridescenceInView), under either tower: they are the cloud
     // layers' alone
-    if (camera && this.parallel && this.opts.variants !== false && (ks[0].key & FEATURE.IRIDESCENCE)
+    if (camera && this.parallel && !this.usesSharedProgram && (ks[0].key & FEATURE.IRIDESCENCE)
         && !iridescenceInView(s, camera, aspect)) {
       for (const k of ks) k.key &= ~FEATURE.IRIDESCENCE;
     }
@@ -858,7 +875,7 @@ export class AtmosphereRenderer {
    * and on any later visit, the moment passes first and this never happens.
    */
   private startFirstPaint(): void {
-    if (this.reported || this.firstPaint >= 0 || this.opts.variants === false) return;
+    if (this.reported || this.firstPaint >= 0 || this.usesSharedProgram) return;
     if (performance.now() - this.linkBegan < FIRST_PAINT_AFTER_MS) return;
     const key = firstPaintKey(this.wanted);
     if (key === this.wanted) return;
@@ -877,6 +894,7 @@ export class AtmosphereRenderer {
     let best: Variant | null = null;
     for (const v of this.variants.values()) {
       if (!v.linked || (v.key & key) !== key) continue;
+      if ((v.key & NO_ANVIL_OR_LENTICULAR) && !(key & NO_ANVIL_OR_LENTICULAR)) continue;
       if ((key & FEATURE.CB) && ((v.key ^ key) & FEATURE.CBVOL)) continue;
       // (the sky cache's programs draw half a frame each: never in another's place)
       if ((v.key ^ key) & CACHE_BITS) continue;
@@ -1149,7 +1167,7 @@ export class AtmosphereRenderer {
    * neither alone is the picture to lay them over.)
    */
   private parheliaApart(s: AtmosphereState): boolean {
-    return this.opts.variants !== false && !(s.rain > 0.05 && s.lens.droplets > 0.001);
+    return !this.usesSharedProgram && !(s.rain > 0.05 && s.lens.droplets > 0.001);
   }
 
   /**

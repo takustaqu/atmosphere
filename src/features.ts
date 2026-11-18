@@ -422,3 +422,6 @@ export function firstPaintKey(key: number): number {
   if (!(key & FEATURE.CB) || (key & CACHE_BITS)) return key;
   return key & (FEATURE.SEA | FEATURE.AURORA | FEATURE.DARKSKY | FEATURE.POLARIZER | CLOUD_FEATURES | SPLIT_KEY);
 }
+
+// In shared programs these two controls can stay exactly zero across a whole rotation.
+export const NO_ANVIL_OR_LENTICULAR = 1 << 23;

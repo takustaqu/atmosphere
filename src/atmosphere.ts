@@ -132,9 +132,9 @@ export interface AtmosphereOptions extends Conditions {
   rays?: boolean | number;
   /**
    * Compile the shader per combination of features in use (the default), or
-   * everything into one program (`false`) — see {@link RendererOptions.variants}.
+   * share one weather program (`'shared'`) or include all effects (`false`) — see {@link RendererOptions.variants}.
    */
-  variants?: boolean;
+  variants?: boolean | 'shared';
   /**
    * How the cumulonimbus's towers are drawn: `'auto'` (the default) — the
    * volumetric tower, and the 2D one for a storm standing close overhead —
@@ -647,13 +647,8 @@ export class Atmosphere {
     // next tick to come back on. (A canvas outside the document never intersects
     // anything, and whoever made it means to read it)
     if (this.raf && !this.inView && this.canvas.isConnected) { this.checkSettled(true); return; }
-    this.renderer.render(
-      (t - this.startedAt) / 1000,
-      this.animator.current,
-      this.cam,
-      this.animator.wind,
-      this.animator.evolution,
-    );
+    // Resizing clears the drawing buffer. Apply the previous frames' GPU
+    // measurements before drawing so the new buffer is filled before paint.
     if (this.governor) {
       // results trail the frames that made them by a frame or two; the
       // governor reads them per pixel, so a resize in between is no matter
@@ -664,6 +659,13 @@ export class Atmosphere {
         if (this.governor.update(times, w * h, t) !== before) this.applySize();
       }
     }
+    this.renderer.render(
+      (t - this.startedAt) / 1000,
+      this.animator.current,
+      this.cam,
+      this.animator.wind,
+      this.animator.evolution,
+    );
     // (a look over the variants in hand while nothing is linking)
     this.checkSettled(true);
   }

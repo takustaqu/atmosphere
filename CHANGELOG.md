@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.0 — 2026-11-18
+
+- Added `variants: 'shared'` for scenes that frequently change the weather or time. The landing page now reuses one program throughout its eight-scene rotation.
+- Reduced redundant GPU uniform uploads, visibility checks, and storm layout calculations. The default renderer also omits inactive cloud layers from its shader.
+- Fixed a black frame when adaptive resolution changes. The renderer fills the resized buffer before the browser presents it.
+
 ## 0.13.1 — 2026-11-15
 
 ### Performance

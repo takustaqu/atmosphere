@@ -84,6 +84,13 @@ uniform float u_haze;      // 0..1 haze
 uniform float u_lent;      // 0..1 lenticular banks low over the horizon (features.lenticular)
 uniform vec4  u_cbFeat;    // cumulonimbus companion forms: anvil, veil; the storm's distance; its softness
 uniform float u_anvilFed;  // 1 when a turret feeds an anvil this frame, or has just let one go (feedsAnvil); 0, no plate anywhere
+#ifdef NO_ANVIL_OR_LENTICULAR
+#define ANVIL_AMOUNT 0.0
+#define LENT_AMOUNT 0.0
+#else
+#define ANVIL_AMOUNT u_cbFeat.x
+#define LENT_AMOUNT u_lent
+#endif
 uniform float u_windOff;   // wind's integrated offset (speed×dt accumulated on the CPU side)
 uniform float u_evo;       // shape evolution's integrated offset (same idea)
 uniform float u_filtAmt;   // color filter: strength
@@ -1498,13 +1505,13 @@ float cbUnshape(float h, float ceil) {
 // a gate that then fails: in a framed shot the ground and the band of sky
 // over the horizon, under the towers, are a third or more of the frame
 bool cbPlateReach(vec3 rd, float cbS, float ceilN) {
-  if (u_cbFeat.x <= 0.001 || rd.y <= 0.0) return false;
+  if (ANVIL_AMOUNT <= 0.001 || rd.y <= 0.0) return false;
   float tE = rd.y / max(length(rd.xz), 1e-4);
   float D0 = sqrt(1.0 - ceilN * ceilN) / ceilN;
   float elC = asin(ceilN) / cbS;
   float pS = cos(elC) / (sin(elC) * cbS * D0);
   float D = D0 * cbS;
-  float L = D0 * (0.50 + 0.75 * u_cbFeat.x);
+  float L = D0 * (0.50 + 0.75 * ANVIL_AMOUNT);
   return tE * pS * (D + 0.25 * (1.5 * L + 0.3 + 0.45 * D)) > 0.80;
 }
 bool cbCanStand(vec3 rd, float cbS, float ceilN) {
@@ -4239,7 +4246,7 @@ void main() {
   // Laid out round the sky rather than on a plane, where they'd crowd into
   // the horizon's vanishing point instead of lying along it
 #ifdef FEAT_CLOUD_LAYERS
-  if (u_lent > 0.001 && above && stack && rd.y < 0.42) {
+  if (LENT_AMOUNT > 0.001 && above && stack && rd.y < 0.42) {
     float lentA = 0.0;
     vec2 ld = vec2(sin(az + u_windOff * 0.02), cos(az + u_windOff * 0.02));
     for (int k = 0; k < 3; k++) {
@@ -4247,7 +4254,7 @@ void main() {
       float base = 0.055 + fk * 0.052 + (vnoise(ld * 1.1 + 70.0 + fk * 9.0) - 0.5) * 0.05;
       float n = vnoise(ld * (1.7 + fk * 0.7) + vec2(13.0 + fk * 7.0, u_evo * 0.03)) * 0.72
               + vnoise(ld * (6.0 + fk * 1.7) + vec2(fk * 3.0, 31.0)) * 0.28;
-      float h = smoothstep(mix(0.60, 0.42, u_lent), 0.82, n) * (0.042 - fk * 0.008);
+      float h = smoothstep(mix(0.60, 0.42, LENT_AMOUNT), 0.82, n) * (0.042 - fk * 0.008);
       if (h <= 0.0) continue;
       float ragged = (vnoise(ld * 42.0 + fk) - 0.5) * 0.006;
       float y = rd.y - base + ragged;
@@ -4258,7 +4265,7 @@ void main() {
     if (lentA > 0.0) {
       vec3 lc = cloudColor(lentA, 0.0, 1.0, dayF, nightM, sunsetF, flash, gloom, 1.4, cloudSun, 0.3);
       lc = mix(lc, vec3(dot(lc, vec3(0.3333))), 0.5) * 0.92;
-      OVER(lc, lentA * smoothstep(0.0, 0.25, u_lent) * 0.95);
+      OVER(lc, lentA * smoothstep(0.0, 0.25, LENT_AMOUNT) * 0.95);
     }
   }
 #endif
@@ -4398,7 +4405,7 @@ void main() {
     // plate's top — one level, not the tropopause's undulation, or the
     // column's flat top stood proud of the plate in places and sank under
     // it in others
-    float feed = smoothstep(1.7, 2.3, rise) * u_cbFeat.x;
+    float feed = smoothstep(1.7, 2.3, rise) * ANVIL_AMOUNT;
     anvilTop = mix(anvilTop, ceilN, feed);
     // ── The tower's life ──
     // Where the thrust stood a while ago (CB_LAG) against where it stands
@@ -4572,7 +4579,7 @@ void main() {
     // (whether the plate was laid on here at all: see the crossfade, below)
     float anvSeen = 0.0;
 #endif
-    if (u_cbFeat.x > 0.001 && u_anvilFed > 0.5 && rd.y > 0.0) {
+    if (ANVIL_AMOUNT > 0.001 && u_anvilFed > 0.5 && rd.y > 0.0) {
       float hor = length(rd.xz);
       float tE = rd.y / max(hor, 1e-4);
       // The plate is measured in the towers' own size, so it stays theirs
@@ -4587,7 +4594,7 @@ void main() {
       float th0 = 0.16;
       // how far downwind it reaches: about the ring's radius when mature,
       // which carries a plate from a tower upwind out over the eye
-      float L = D0 * (0.50 + 0.75 * u_cbFeat.x);
+      float L = D0 * (0.50 + 0.75 * ANVIL_AMOUNT);
       // (nothing of it lies lower in the sky than its far end, read four
       // times as deep: see below)
       if (tE * pS * (D + 0.25 * (1.5 * L + 0.3 + 0.45 * D)) > 0.85) {
@@ -4728,7 +4735,7 @@ void main() {
           // the gaps between them were what showed — isolated, and dark: a
           // field of spots, not of bulges
           // (a plate cut loose has no sinking air left under it to hang them)
-          float mam = smoothstep(0.55, 0.85, u_cbFeat.x) * (1.0 - orphan)
+          float mam = smoothstep(0.55, 0.85, ANVIL_AMOUNT) * (1.0 - orphan)
                     * smoothstep(0.12, 0.35, sP / L) * (1.0 - smoothstep(0.75, 1.0, sP / L))
                     * smoothstep(0.15, 0.40, thick) * under;
           if (mam > 0.001) {

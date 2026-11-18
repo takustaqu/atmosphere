@@ -21,7 +21,7 @@ const { made, FakeRenderer, atStart } = vi.hoisted(() => {
     // what isSettled answers: flipped by the tests as variants start and land
     linked = atStart.linked;
     isSettled = vi.fn(() => this.available && this.linked);
-    takeGpuTimes = () => [];
+    takeGpuTimes = (): { ms: number; pixels: number }[] => [];
     readonly canvas: HTMLCanvasElement;
     readonly opts: { onReady?: (available: boolean) => void; onLinked?: () => void };
     constructor(canvas: HTMLCanvasElement, opts: FakeRenderer['opts']) {
@@ -63,6 +63,17 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('paints the sunset into the new buffer on the frame that changes resolution', () => {
+  const { sky, canvas, renderer } = mount({ adaptiveResolution: true });
+  const pixels = canvas.width * canvas.height;
+  renderer.takeGpuTimes = () => Array.from({ length: 12 }, () => ({ ms: 100, pixels }));
+  let paintedPixels = 0;
+  renderer.render.mockImplementation(() => { paintedPixels = canvas.width * canvas.height; });
+  sky.jump({ time: 17.8, weather: 'fair', ground: 'sea' });
+  expect(canvas.width * canvas.height).toBeLessThan(pixels);
+  expect(paintedPixels).toBe(canvas.width * canvas.height);
+});
 
 describe('a still frame under reduced motion', () => {
   beforeEach(() => reduceMotion(true));

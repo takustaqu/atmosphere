@@ -948,6 +948,8 @@ rather than the picture blanking. `set()` starts that compile ahead of the
 transition. Pass `variants: false` to compile everything into one program
 instead; `examples/bench/` measures the two against each other.
 
+For a rotation of weather presets, `variants: 'shared'` shares the cloud, rain, snow and lighting code. The landing page uses it to switch its eight scenes without linking new programs. Changing optional effects such as aurora or contrails can still require a new program.
+
 `ready` turns true as soon as anything can draw, a stand-in included. To know
 when the sky is drawn by its own variants, with every feature it was asked for
 — before baking a cubemap from it, or taking a screenshot — there is

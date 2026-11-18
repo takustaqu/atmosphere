@@ -4,7 +4,7 @@
 // in front of FRAG. Nothing else in the text differs from one variant to the
 // next.
 
-import { CACHE_BITS, CACHE_BUILD, FEATURE, FEATURE_DEFINES } from '../features.js';
+import { CACHE_BITS, CACHE_BUILD, NO_ANVIL_OR_LENTICULAR, FEATURE, FEATURE_DEFINES } from '../features.js';
 import { FRAG } from './sky.js';
 
 /**
@@ -24,7 +24,7 @@ import { FRAG } from './sky.js';
  * the arithmetic hash this replaced.
  */
 export function fragSource(explicitLod: boolean, split: boolean, key: number, motion = false): string {
-  let defines = '';
+  let defines = key & NO_ANVIL_OR_LENTICULAR ? '#define NO_ANVIL_OR_LENTICULAR\n' : '';
   // Keep the established program layout for a tower behind other layers.
   // Removing only the unused cumulus block there regressed thunderstorm GPU
   // time on Metal. A bare tower still drops both plane-cloud blocks, and a

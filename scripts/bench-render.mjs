@@ -20,6 +20,7 @@ const { values } = parseArgs({ options: {
   scenes: { type: 'string' },
   compile: { type: 'string', default: 'auto' },
   control: { type: 'boolean', default: false },
+  hero: { type: 'boolean', default: false },
 } });
 const root = fileURLToPath(new URL('..', import.meta.url));
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
@@ -28,7 +29,7 @@ const out = resolve(root, values.out);
 await mkdir(out, { recursive: true });
 const config = {
   width: Number(values.width), height: Number(values.height),
-  frames: Number(values.frames), rounds: Number(values.rounds), compile: values.compile,
+  frames: Number(values.frames), rounds: Number(values.rounds), compile: values.compile, hero: values.hero, control: values.control,
 };
 for (const k of ['width', 'height', 'frames', 'rounds']) {
   if (!Number.isInteger(config[k]) || config[k] <= 0) throw new Error(`Invalid ${k}`);
@@ -66,7 +67,16 @@ const scenes = [
     .map(genus => ({ name: `genus-${genus}`, conditions: { time: 14, weather: { clouds: { [genus]: 0.7 } } } })),
   { name: 'lenticular', conditions: { time: 17, weather: { clouds: {}, features: { lenticular: 1 } } }, camera: { pitch: 0.1 } },
 ];
-const chosen = values.scenes ? scenes.filter(s => values.scenes.split(',').includes(s.name)) : scenes;
+// Compare the original full program to the shared weather program on the
+// actual site presets, including the real date used for the night sky.
+let suite = scenes;
+if (values.hero) {
+  const result = await build({ entryPoints: [resolve(root, 'site/scenes.ts')],
+    bundle: true, format: 'esm', write: false });
+  const { SCENES } = await import('data:text/javascript;base64,' + Buffer.from(result.outputFiles[0].contents).toString('base64'));
+  suite = SCENES.map((scene, i) => ({ name: 'hero' + (i + 1), conditions: scene.conditions, look: scene.look }));
+}
+const chosen = values.scenes ? suite.filter(s => values.scenes.split(',').includes(s.name)) : suite;
 if (!chosen.length) throw new Error('No scenes selected');
 
 const browser = await chromium.launch({ channel: 'chrome', args: [
@@ -97,13 +107,26 @@ try {
       canvas.style.cssText = 'width:480px;height:270px;display:block';
       const make = lib => {
         const r = new lib.AtmosphereRenderer(canvas, {
-          compile: config.compile, timing: true, colorSpace: 'srgb', ...scene.options,
+          compile: config.compile, timing: true, colorSpace: config.hero ? 'display-p3' : 'srgb',
+          variants: config.hero ? (lib === Before || config.control ? false : 'shared') : true, ...scene.options,
         });
         r.resize(w, h);
         const gl = canvas.getContext('webgl');
         if (!r.available || !gl) throw new Error('WebGL unavailable');
         const s = lib.resolveConditions(scene.conditions);
         const camera = { ...lib.DEFAULT_CAMERA, ...scene.camera };
+        if (config.hero) {
+          const half = Math.atan(Math.tan(camera.fov / 2) * w / h);
+          if (scene.look === 'rainbow') {
+            const foot = Math.acos(Math.min(1, Math.cos(0.733) / Math.cos(s.sunElevation)));
+            camera.yaw = s.sunAzimuth + Math.PI - Math.max(0.075, foot - 0.75 * half);
+            camera.pitch = Math.min(0.5, Math.max(0.24, (0.733 - s.sunElevation) * 0.6));
+          } else if (s.sunElevation > -0.06 || s.moonElevation > 0.04) {
+            const sun = s.sunElevation > -0.06;
+            camera.yaw = (sun ? s.sunAzimuth : s.moonAzimuth) - half * 0.55;
+            camera.pitch = Math.min(0.9, Math.max(0.24, (sun ? s.sunElevation : s.moonElevation) * 0.72));
+          }
+        }
         return { canvas, r, gl, s, camera };
       };
       const pair = [make(Before), make(After)];
