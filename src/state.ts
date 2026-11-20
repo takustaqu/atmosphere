@@ -14,6 +14,7 @@ import { resolvePolarizer, type Polarizer, type PolarizerInput } from './polariz
 import {
   lunarEclipse, lunarPosition, nominalLunarPosition, nominalSolarPosition, solarPosition, type GeoLocation,
 } from './sun.js';
+import { resolveScenery, type Scenery, type SceneryInput } from './scenery.js';
 import { toDate, toTimeOfDay, type TimeInput } from './time.js';
 import { resolveTone, type ToneCurve, type ToneInput } from './tone.js';
 import { resolveWeather, type WeatherInput, type WeatherState } from './weather.js';
@@ -72,6 +73,7 @@ export interface Conditions {
   particles?: ParticlesInput;
   /** what lies below the horizon: the plain ground, or a sea that mirrors the sky */
   ground?: GroundInput;
+  scenery?: SceneryInput | null;
   /** how hard the sky burns at sunset and magic hour */
   sunset?: SunsetInput;
   /** how big the sun's disc is drawn, and how much it glares */
@@ -106,6 +108,7 @@ export interface AtmosphereState extends WeatherState {
   lens: Lens;
   particles: Particles;
   ground: Ground;
+  scenery?: Scenery;
   sunset: Sunset;
   sun: Sun;
 }
@@ -152,6 +155,7 @@ export function resolveConditions(c: Conditions): AtmosphereState {
     lens: resolveLens(c.lens),
     particles: resolveParticles(c.particles),
     ground: resolveGround(c.ground),
+    scenery: resolveScenery(c.scenery),
     sunset: resolveSunset(c.sunset),
     sun: resolveSun(c.sun),
   };

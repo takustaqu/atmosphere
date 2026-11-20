@@ -3,6 +3,7 @@
 // Independent of the renderer (no DOM dependency), so it can be used from any
 // custom render loop.
 
+import { copyScenery, followScenery } from './scenery.js';
 import { CLOUD_GENERA_IDS } from './clouds.js';
 import type { AtmosphereState } from './state.js';
 
@@ -44,7 +45,7 @@ const FALL_STOP = 0.25;
  * array). `current` is mutated in place every frame, so sharing any of these
  * with the caller's target would make the target drift along with it.
  */
-function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone' | 'polarizer' | 'celestial' | 'lens' | 'particles' | 'ground' | 'sunset' | 'sun' | 'clouds' | 'features'> {
+function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone' | 'polarizer' | 'celestial' | 'lens' | 'particles' | 'scenery' | 'ground' | 'sunset' | 'sun' | 'clouds' | 'features'> {
   return {
     filter: { ...s.filter, tint: [s.filter.tint[0], s.filter.tint[1], s.filter.tint[2]] },
     tone: { ...s.tone },
@@ -53,6 +54,7 @@ function copyNested(s: AtmosphereState): Pick<AtmosphereState, 'filter' | 'tone'
     lens: { ...s.lens },
     particles: { ...s.particles },
     ground: { ...s.ground },
+    scenery: copyScenery(s.scenery),
     sunset: { ...s.sunset },
     sun: { ...s.sun },
     clouds: { ...s.clouds },
@@ -181,6 +183,7 @@ export class StateAnimator {
     c.particles.precipitation += (target.particles.precipitation - c.particles.precipitation) * k;
     c.particles.contrails += (target.particles.contrails - c.particles.contrails) * k;
     // the sea rises or drains over the same seconds, and the swell settles
+    c.scenery = followScenery(c.scenery, target.scenery, k);
     c.ground.sea += (target.ground.sea - c.ground.sea) * k;
     c.ground.swell += (target.ground.swell - c.ground.swell) * k;
     c.sunset.warmth += (target.sunset.warmth - c.sunset.warmth) * k;

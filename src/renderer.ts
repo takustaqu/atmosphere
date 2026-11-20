@@ -133,6 +133,7 @@ const UNIFORM_NAMES = [
   'u_windOff', 'u_evo',
   'u_filtAmt', 'u_filtTint', 'u_filtSat', 'u_filtLift',
   'u_p3', 'u_headroom', 'u_tone', 'u_pol', 'u_sky', 'u_radiant', 'u_lensDrops', 'u_lensFx', 'u_fall', 'u_snowRun', 'u_snowVel',
+  'u_lighthouse', 'u_lamp0', 'u_lamp1', 'u_bank0', 'u_bank1',
   'u_sea', 'u_aurora', 'u_contrails', 'u_rays', 'u_sunset', 'u_sunLook',
   'u_cloudMode', 'u_clouds', 'u_xfade', 'u_parhelia',
   'u_map0', 'u_map1', 'u_mapStep', 'u_mapMix', 'u_clouds2',
@@ -572,6 +573,7 @@ export class AtmosphereRenderer {
     if (s && this.opts.variants === 'shared') {
       // These independent controls stay off through interpolation if both endpoints
       // are off. Keep all interacting cloud, solar and lunar effects together.
+      if (!s.scenery) features &= ~FEATURE.SCENERY;
       if (s.celestial.aurora === 0) features &= ~FEATURE.AURORA;
       if (s.particles.contrails === 0) features &= ~FEATURE.CONTRAILS;
       if (s.polarizer.strength === 0) features &= ~FEATURE.POLARIZER;
@@ -1957,6 +1959,16 @@ export class AtmosphereRenderer {
     uniform1f(gl, u.u_rain, s.rain);
     uniform1f(gl, u.u_snow, s.snow);
     uniform1f(gl, u.u_fall, s.particles.precipitation);
+    if (u.u_lighthouse || u.u_lamp0 || u.u_bank0) {
+      const scene = s.scenery;
+      const beacon = scene?.lighthouse;
+      uniform4f(gl, u.u_lighthouse, beacon?.azimuth ?? 0, beacon?.elevation ?? 0, beacon?.radius ?? 1, beacon?.strength ?? 0);
+      for (let i = 0; i < 2; i++) {
+        const light = scene?.lights[i], cloud = scene?.clouds[i];
+        uniform4f(gl, i ? u.u_lamp1 : u.u_lamp0, light?.azimuth ?? 0, light?.elevation ?? 0, light?.radius ?? 1, light?.strength ?? 0);
+        uniform4f(gl, i ? u.u_bank1 : u.u_bank0, cloud?.azimuth ?? 0, cloud?.elevation ?? 0, cloud?.radius ?? 1, cloud?.strength ?? 0);
+      }
+    }
     uniform2f(gl, u.u_sea, s.ground.sea, s.ground.swell);
     uniform2f(gl, u.u_sunset, s.sunset.warmth, s.sunset.glow);
     {

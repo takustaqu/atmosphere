@@ -545,6 +545,29 @@ Changing it eases like everything else, so the water rises over the ground
 rather than appearing. With a [light probe](#light-for-the-foreground) on,
 `environment.ground` becomes the sea's light.
 
+### Lights and placed clouds
+
+Optional `scenery` places warm lights and cloud banks in world space.
+Azimuth and elevation are radians (north = 0, east = π/2).
+
+```ts
+sky.set({
+  time: 19, camera: { yaw: Math.PI, pitch: 0.06 },
+  ground: { swell: 0.08 },
+  scenery: {
+    lights: [{ azimuth: 3.05, elevation: 0.025 }],
+    clouds: [{ azimuth: 3.35, elevation: 0.22, radius: 0.13 }],
+  },
+});
+```
+
+Set `scenery.lighthouse` to e.g. `{ azimuth: 3.2, elevation: 0.09, radius: 0.006 }` for a distant tower with a rotating beacon. Elevation sets the lantern height above the horizon (0.006–0.65 radians), radius its apparent light size. The beam turns once every eight seconds.
+
+Lights reflect on visible water. Cloud centers stay in place as their edges evolve.
+Each list uses its first two entries. Keep their order stable to animate positions.
+Both accept an angular `radius` and a `strength` from 0 to 1.
+Pass `scenery: null` to fade them out.
+
 ## Light for the foreground
 
 Something usually stands in front of the sky — an avatar, a product shot, a

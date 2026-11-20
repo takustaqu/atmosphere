@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.0 — 2026-11-20
+
+- Added optional world-space scenery: a lighthouse with a rotating beacon, two independently placed lights with water reflections, and two cloud banks with fixed centers.
+- Added playground sheets for scenery and snowfall, and linked the lighthouse demo from the landing page.
+
 ## 0.14.0 — 2026-11-18
 
 - Added `variants: 'shared'` for scenes that frequently change the weather or time. The landing page now reuses one program throughout its eight-scene rotation.

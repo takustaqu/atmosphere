@@ -41,6 +41,40 @@ const SHEETS: Record<string, () => Tile[]> = {
     conditions: { time: 14, weather: id },
   })),
 
+  snow: () => [
+    ...[0, 0.25, 1, 3, 5].map((precipitation) => ({
+      caption: `昼の曇り空 / 降水量 ${precipitation} mm/h（水換算）`,
+      conditions: { time: 14, weather: { ...WEATHER_PRESETS.snow, clouds: { stratus: 0.7 }, precipitation } },
+    })),
+    ...[
+      { name: '朝焼けに舞う淡雪', time: 6.5, precipitation: 0.4, windSpeed: 1, visibility: 22, cloudCover: 0.2 },
+      { name: '夕暮れの風雪', time: 17.5, precipitation: 4, windSpeed: 16, visibility: 2, cloudCover: 0.75 },
+      { name: '夜更けの静かな雪', time: 23, precipitation: 1.5, windSpeed: 0.5, visibility: 8, cloudCover: 0.4 },
+    ].map(({ name, time, precipitation, windSpeed, visibility, cloudCover }) => ({
+      caption: `${name} / ${precipitation} mm/h・風速 ${windSpeed} m/s`,
+      conditions: { time, weather: { precipitationType: 'snow' as const, precipitation, windSpeed, visibility, cloudCover } },
+    })),
+  ],
+
+  scenery: () => [
+    {
+      caption: '薄暮の海を照らす灯台',
+      conditions: { time: 18.65, weather: { cloudCover: 0.2, visibility: 14 },
+        ground: { swell: 0.18 }, camera: { yaw: 4.32, pitch: 0.055, fov: 0.62 },
+        scenery: { lighthouse: { azimuth: 4.45, elevation: 0.09, radius: 0.006 } } },
+    },
+    {
+      caption: '夜の海に映る灯り',
+      conditions: { time: 21, ground: { swell: 0.08 }, camera: { pitch: 0 },
+        scenery: { lights: [{ azimuth: 3.02 }, { azimuth: 3.30, elevation: 0.035 }] } },
+    },
+    {
+      caption: '夕空の二つの雲',
+      conditions: { time: 17.6, camera: { pitch: 0.22 },
+        scenery: { clouds: [{ azimuth: 2.88, elevation: 0.20 }, { azimuth: 3.42, elevation: 0.32, radius: 0.11 }] } },
+    },
+  ],
+
   // real-photo benchmark. The reference photos look up at the sky, so match the camera to that
   // (the default framing sits near the horizon; using it as-is crushes the foreground and breaks the comparison)
   nimbostratus: () => [

@@ -108,6 +108,9 @@ uniform vec2  u_lensFx;    // 0..1 the flare's strength, the vignette's (both 0 
 uniform float u_fall;      // 0..1 ceiling on the falling rain streaks and snowflakes
 uniform float u_snowRun;   // how far the snow has come along its way, integrated on the CPU (see snowVelocity)
 uniform vec3 u_snowVel;    // and how fast it is coming now: a calm fall is 1 long
+#ifdef FEAT_SCENERY
+uniform vec4 u_lighthouse, u_lamp0, u_lamp1, u_bank0, u_bank1;
+#endif
 uniform vec2  u_sea;       // ground: how much is open water, how much it heaves
 uniform vec2  u_sunset;    // sunset: the warmth of the band on the sun's side, the glow all round
 uniform vec4  u_sunLook;   // the sun's disc and glare (sunShape): its core's falloff in the sky, and on the sea; the glare's strength; the limb the corona is measured from (radians)
@@ -390,6 +393,82 @@ float fbmCoarse(vec2 p, out float b) {
 }
 // ── Camera ──────────────────────────────────────────────
 // World space is x=east, y=up, z=north. yaw=0 faces north; pitch>0 looks up.
+
+#ifdef FEAT_SCENERY
+// A local tangent frame keeps the placement continuous across north.
+vec3 placementRay(vec4 p) {
+  return vec3(sin(p.x) * cos(p.y), sin(p.y), cos(p.x) * cos(p.y));
+}
+
+vec3 placedCloud(vec3 color, vec3 rd, vec4 p, vec3 sunDir, float day, float dusk) {
+  if (p.w <= 0.0 || rd.y <= 0.0) return color;
+  vec3 center = placementRay(p);
+  if (dot(center, rd) < cos(p.z * 1.25)) return color;
+  vec3 right = vec3(cos(p.x), 0.0, -sin(p.x));
+  vec2 uv = vec2(dot(rd, right), dot(rd, cross(center, right))) / sin(p.z);
+  uv.y *= 1.9;
+  float noise = fbm4(uv * 3.0 + vec2(sin(p.x) * 11.0, cos(p.x) * 7.0 + u_evo * 0.07));
+  float density = 1.0 - smoothstep(0.64, 1.0, length(uv) + (noise - 0.5) * 0.55);
+  float facing = clamp(0.55 + uv.x * dot(sunDir, right) * 0.3 + uv.y * 0.2 + (noise - 0.5) * 0.35, 0.0, 1.0);
+  vec3 lit = mix(vec3(0.055, 0.066, 0.10), mix(vec3(0.58, 0.63, 0.69), vec3(0.99), facing), day);
+  lit = mix(lit, vec3(0.79, 0.55, 0.47) * (0.65 + 0.35 * facing), dusk * 0.6);
+  return mix(color, lit, density * p.w * smoothstep(0.0, 0.02, rd.y));
+}
+
+float placedLight(vec3 rd, vec4 p, float water) {
+  if (p.w <= 0.0) return 0.0;
+  vec3 dir = placementRay(p);
+  vec3 delta = rd - dir;
+  float core = exp(-dot(delta, delta) / (p.z * p.z));
+  float reflection = 0.0;
+  if (water > 0.0 && rd.y < 0.0) {
+    dir.y = -dir.y;
+    delta = rd - dir;
+    delta.y *= 0.17;
+    float spread = p.z + 0.012 * u_sea.y;
+    reflection = exp(-dot(delta, delta) / (spread * spread))
+               * (0.55 + 0.3 * sin(rd.y * 370.0 + u_time * 1.8)) * water;
+  }
+  return (core + reflection) * p.w;
+}
+
+vec3 drawLighthouse(vec3 color, vec3 rd, float day, float pixelAngle) {
+  vec4 p = u_lighthouse;
+  if (p.w <= 0.001) return color;
+  vec2 axis = vec2(sin(p.x), cos(p.x));
+  float forward = dot(rd.xz, axis);
+  if (forward < 0.65) return color;
+  // Project onto a vertical plane through the tower. Its foot stays on
+  // the horizon as the camera turns; all dimensions follow its height.
+  float h = tan(clamp(p.y, 0.006, 0.65));
+  vec2 q = vec2(dot(rd.xz, vec2(axis.y, -axis.x)), rd.y) / (forward * h);
+  float aa = max(pixelAngle / h, 0.002);
+  float halfWidth = mix(0.115, 0.068, clamp(q.y, 0.0, 1.0));
+  float shaft = max(abs(q.x) - halfWidth, max(-q.y, q.y - 0.94));
+  float gallery = max(abs(q.x) - 0.135, abs(q.y - 0.92) - 0.024);
+  float lantern = max(abs(q.x) - 0.079, abs(q.y - 1.0) - 0.07);
+  float roof = max(abs(q.x) + (q.y - 1.075) * 1.45 - 0.125, 1.075 - q.y);
+  float rock = max(abs(q.x) * 0.18 + abs(q.y) - 0.072, -q.y - 0.025);
+  float outline = min(min(shaft, gallery), min(min(lantern, roof), rock));
+  float cover = 1.0 - smoothstep(-aa, aa, outline);
+  vec3 stone = mix(vec3(0.046, 0.055, 0.073), vec3(0.57, 0.56, 0.52), day);
+  if (q.y > 0.90 || q.y < 0.06) stone *= 0.45;
+  color = mix(color, stone, cover * p.w);
+  // One revolution in eight seconds: the projected shaft sweeps sideways,
+  // while the lantern and its reflection peak when it faces the observer.
+  float phase = u_time * 0.78539816;
+  float side = sin(phase);
+  float flash = pow(max(cos(phase), 0.0), 18.0);
+  float reach = max(0.02, 3.8 * abs(side));
+  float along = q.x * sign(side);
+  float spread = 0.046 + max(along, 0.0) * 0.045;
+  float beam = exp(-pow(abs(q.y - 1.0) / spread, 2.0))
+             * smoothstep(0.0, 0.10, along) * (1.0 - smoothstep(0.0, reach, along));
+  vec4 lamp = vec4(p.x, atan(h), p.z, p.w * (0.28 + 0.72 * flash));
+  return color + vec3(1.0, 0.86, 0.62) * (placedLight(rd, lamp, u_sea.x)
+       + beam * abs(side) * p.w * (0.17 - 0.12 * day));
+}
+#endif
 
 vec3 viewRay(vec2 ndc, float yaw, float pitch, float fov, float aspect) {
   float t = tan(fov * 0.5);
@@ -7121,6 +7200,11 @@ void main() {
 #endif
 #endif
 
+#ifdef FEAT_SCENERY
+  disp = placedCloud(disp, rd, u_bank0, sunDir, dayF, sunsetF);
+  disp = placedCloud(disp, rd, u_bank1, sunDir, dayF, sunsetF);
+#endif
+
   // ── Below the horizon ──
   // Out of frame with the default framing; there when looking down and for the
   // skybox's lower hemisphere. A plate of ground, or — u_sea — open water.
@@ -7397,6 +7481,12 @@ void main() {
     }
     disp = mix(disp, encodeSrgb(seaLin), smoothstep(0.0, -0.012, rd.y) * u_sea.x);
   }
+#endif
+
+#ifdef FEAT_SCENERY
+  disp = drawLighthouse(disp, rd, dayF, 2.0 * tan(0.5 * u_cam.z) / max(u_frame.w, 1.0));
+  float lamps = placedLight(rd, u_lamp0, u_sea.x) + placedLight(rd, u_lamp1, u_sea.x);
+  disp += vec3(1.0, 0.74, 0.41) * lamps;
 #endif
 
   // ── Rain ──

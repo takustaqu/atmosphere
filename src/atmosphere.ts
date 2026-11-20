@@ -1,3 +1,4 @@
+import { copyScenery } from './scenery.js';
 // atmosphere.ts — atmosphere, as seen by the caller
 //
 //   const sky = new Atmosphere(canvas, { time: new Date(), weather: 'rain' });
@@ -252,6 +253,7 @@ export class Atmosphere {
       lens: options.lens,
       particles: options.particles,
       ground: options.ground,
+      scenery: options.scenery,
       sunset: options.sunset,
       sun: options.sun,
       camera: options.camera,
@@ -466,6 +468,7 @@ export class Atmosphere {
       lens: { ...c.lens },
       particles: { ...c.particles },
       ground: { ...c.ground },
+      scenery: copyScenery(c.scenery),
       sunset: { ...c.sunset },
       sun: { ...c.sun },
     };

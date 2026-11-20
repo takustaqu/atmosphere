@@ -155,6 +155,8 @@ export {
   type SunsetInput,
 } from './sunset.js';
 
+export type { SceneryInput, Scenery, SkyPlacement } from './scenery.js';
+
 export {
   resolveGround,
   DEFAULT_GROUND,

@@ -22,6 +22,7 @@ import { sunShape } from './sundisc.js';
  * next links.
  */
 export const FEATURE = {
+  SCENERY: 1 << 24,
   SEA: 1,
   AURORA: 2,
   CONTRAILS: 4,
@@ -82,6 +83,7 @@ export const FEATURE = {
 } as const;
 
 export const FEATURE_DEFINES: [number, string][] = [
+  [FEATURE.SCENERY, 'FEAT_SCENERY'],
   [FEATURE.SEA, 'FEAT_SEA'],
   [FEATURE.AURORA, 'FEAT_AURORA'],
   [FEATURE.CONTRAILS, 'FEAT_CONTRAILS'],
@@ -111,7 +113,7 @@ export const FEATURE_DEFINES: [number, string][] = [
  * bit from its own cumulonimbus option, not from here)
  */
 export const CLOUD_FEATURES = FEATURE.CUMULUS | FEATURE.CLOUD_LAYERS;
-export const ALL_FEATURES = 65535 | 524288 | 1048576 | CLOUD_FEATURES;
+export const ALL_FEATURES = 65535 | 524288 | 1048576 | CLOUD_FEATURES | FEATURE.SCENERY;
 
 /** how the cumulonimbus's towers are drawn — see {@link RendererOptions.cumulonimbus} */
 export type CumulonimbusMode = 'auto' | '2d' | 'volumetric';
@@ -157,6 +159,7 @@ export function cbVolumetricShare(distance: number): number {
  */
 export function featureKey(s: AtmosphereState, rays = 0, cumulonimbus: CumulonimbusMode = 'auto', evo?: number): number {
   let k = 0;
+  if (s.scenery) k |= FEATURE.SCENERY;
   if (s.ground.sea > 0.001) k |= FEATURE.SEA;
   if (s.celestial.aurora > 0.001) k |= FEATURE.AURORA;
   if (s.particles.contrails > 0.001) k |= FEATURE.CONTRAILS;
