@@ -412,9 +412,6 @@ onScroll();   // reloading part-way down the page must not start out wrong
 begin();
 startCamera();
 
-// The preset tiles borrow a second WebGL context for as long as it takes to
-// draw nine frames. Do it after the hero has its own, so if a browser is at
-// its context limit the one that matters is the one that survives.
 buildGallery(getLang());
 
 // expose for headless checks (the Browser pane never fires rAF)

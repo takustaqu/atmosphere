@@ -166,10 +166,8 @@ export function relabelGallery(lang: Locale): void {
  * shader never compiles, so it stays absent rather than showing twenty-two black
  * rectangles.
  *
- * The shader compiles off the main thread, so this can't draw the moment the
- * renderer exists — the figures go into the DOM up front (holding the layout)
- * and the tiles fill in when the compile lands, usually behind a warm shader
- * cache and imperceptible.
+ * Reserve the figures' layout immediately. Their renderer starts as the
+ * gallery approaches the viewport and fills one figure per animation frame.
  */
 export function buildGallery(lang: Locale): void {
   const host = document.querySelector<HTMLElement>('#gallery');
@@ -193,37 +191,47 @@ export function buildGallery(lang: Locale): void {
     return canvas;
   });
 
+  // Leave the GPU to the animated hero until the gallery approaches the
+  // viewport. Captions and canvas dimensions are already in the document.
+  const observer = new IntersectionObserver(entries => {
+    if (!entries.some(entry => entry.isIntersecting)) return;
+    observer.disconnect();
+    renderTiles(host, outputs, w, h);
+  }, { rootMargin: '120px' });
+  observer.observe(host);
+}
+
+function renderTiles(host: HTMLElement, outputs: HTMLCanvasElement[], w: number, h: number): void {
   const source = document.createElement('canvas');
-  // null rather than declared-later: a compile failure calls back
-  // synchronously, before the assignment below has happened
-  let renderer: AtmosphereRenderer | null = null;
-  renderer = new AtmosphereRenderer(source, {
-    // one program with every feature: the tiles are each drawn once, so a
-    // variant per tile would be a dozen compiles for a dozen frames
+  let index = 0;
+  const renderer: AtmosphereRenderer = new AtmosphereRenderer(source, {
     variants: false,
-    onReady: (ok) => {
-      if (!ok || !renderer) {
-        renderer?.dispose({ loseContext: true });
+    // Some drivers report readiness in the constructor. Schedule the first
+    // draw after assignment, then give scrolling a paint between tiles.
+    onReady: ok => queueMicrotask(() => {
+      if (ok) {
+        renderer.resize(w, h);
+        requestAnimationFrame(drawNext);
+      } else {
         host.closest('section')?.remove();
-        return;
-      }
-      renderer.resize(w, h);
-      try {
-        TILES.forEach((tile, i) => {
-          // vary the evolution offset per tile so the skies aren't twenty-two
-          // shots of one cloud field — the same weather, different afternoons
-          const k = tile.seed ?? i;
-          renderer!.render(tile.t ?? 0, resolveConditions(tile.conditions),
-            { ...DEFAULT_CAMERA, ...tile.camera }, 41.7 + k * 5.7, 7.3 + k * 3.1);
-          // copy synchronously: the drawing buffer is cleared once we yield.
-          // Match the renderer's space or the wide-gamut pixels clip here
-          outputs[i].getContext('2d', { colorSpace: renderer!.colorSpace })
-            ?.drawImage(source, 0, 0);
-        });
-      } finally {
-        // hand the context straight back — see the note at the top
         renderer.dispose({ loseContext: true });
       }
-    },
+    }),
   });
+
+  function drawNext(): void {
+    try {
+      const tile = TILES[index];
+      const k = tile.seed ?? index;
+      renderer.render(tile.t ?? 0, resolveConditions(tile.conditions),
+        { ...DEFAULT_CAMERA, ...tile.camera }, 41.7 + k * 5.7, 7.3 + k * 3.1);
+      outputs[index].getContext('2d', { colorSpace: renderer.colorSpace })?.drawImage(source, 0, 0);
+      index++;
+      if (index < TILES.length) requestAnimationFrame(drawNext);
+      else renderer.dispose({ loseContext: true });
+    } catch (error) {
+      renderer.dispose({ loseContext: true });
+      throw error;
+    }
+  }
 }
